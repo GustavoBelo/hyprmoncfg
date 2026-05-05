@@ -1,3 +1,27 @@
+{% assign seo_page_title = page.title | default: site.title %}
+{% capture seo_title %}{% if seo_page_title and seo_page_title != site.title %}{{ seo_page_title }} | {{ site.title }}{% else %}{{ site.title }}{% endif %}{% endcapture %}
+{% assign seo_description = page.description | default: site.description %}
+{% assign seo_image = page.image | default: site.image %}
+{% assign canonical_url = page.canonical_url | default: page.url | absolute_url %}
+
+<link rel="canonical" href="{{ canonical_url }}">
+<meta property="og:site_name" content="{{ site.title | escape }}">
+<meta property="og:type" content="{% if page.layout == 'post' %}article{% else %}website{% endif %}">
+<meta property="og:title" content="{{ seo_title | strip | escape }}">
+<meta property="og:description" content="{{ seo_description | strip | escape }}">
+<meta property="og:url" content="{{ canonical_url }}">
+{% if seo_image %}
+<meta property="og:image" content="{{ seo_image | absolute_url }}">
+{% endif %}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:site" content="@paolino">
+<meta name="twitter:title" content="{{ seo_title | strip | escape }}">
+<meta name="twitter:description" content="{{ seo_description | strip | escape }}">
+{% if seo_image %}
+<meta name="twitter:image" content="{{ seo_image | absolute_url }}">
+{% endif %}
+{% ai_json_ld %}
+
 <link rel="stylesheet" href="{{ '/assets/css/custom.css' | relative_url }}">
 <!-- Privacy-friendly analytics by Plausible -->
 <script async src="https://stats.paolino.me/js/pa-hwGcrGT_WWtU6VKyOhc1G.js"></script>

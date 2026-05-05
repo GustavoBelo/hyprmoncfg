@@ -1,6 +1,6 @@
 ---
 layout: home
-title: Home
+title: hyprmoncfg
 description: Hyprland monitor configuration that actually works.
 permalink: /
 hero:

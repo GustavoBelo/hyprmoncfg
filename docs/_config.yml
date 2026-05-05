@@ -4,6 +4,8 @@ lang: en-US
 timezone: Europe/Berlin
 url: https://hyprmoncfg.dev
 baseurl: ""
+logo: /assets/images/logo.svg
+image: /assets/images/screenshots/layout-dark.png
 
 markdown: kramdown
 kramdown:
@@ -25,6 +27,12 @@ defaults:
       path: ""
     values:
       layout: default
+      image: /assets/images/screenshots/layout-dark.png
+      topics:
+        - Hyprland
+        - monitor configuration
+        - Linux desktop automation
+        - Wayland
   - scope:
       type: guide
     values:
@@ -75,6 +83,126 @@ jekyll_vitepress:
 plugins:
   - jekyll-vitepress-theme
   - jekyll-redirect-from
+  - jekyll-ai-visible-content
+  - jekyll-sitemap
+
+ai_visible_content:
+  enabled: true
+  entity:
+    type: Organization
+    id_slug: hyprmoncfg
+    name: hyprmoncfg
+    alternate_names:
+      - Hyprland monitor configuration
+      - Hyprland monitor config
+    description: >-
+      an open source terminal UI and daemon for editing, saving, and
+      automatically applying Hyprland monitor layouts.
+    image: /assets/images/logo.svg
+    knows_about:
+      - Hyprland
+      - Wayland
+      - monitor configuration
+      - monitor profiles
+      - hotplug automation
+      - lid-aware monitor switching
+      - workspace management
+      - terminal user interfaces
+    same_as:
+      - https://github.com/crmne/hyprmoncfg
+      - https://aur.archlinux.org/packages/hyprmoncfg
+      - https://aur.archlinux.org/packages/hyprmoncfg-git
+      - https://terminaltrove.com/hyprmoncfg/
+  json_ld:
+    auto_inject: true
+    include_website_schema: true
+    include_breadcrumbs: true
+    include_blog_posting: true
+    include_faq: true
+    include_how_to: true
+    article_body: excerpt
+    compact: true
+  crawlers:
+    allow_gptbot: true
+    allow_perplexitybot: true
+    allow_claudebot: true
+    allow_googlebot: true
+    allow_bingbot: true
+    generate_robots_txt: true
+    custom_rules:
+      - user_agent: OAI-SearchBot
+        directive: Allow
+        path: /
+      - user_agent: ChatGPT-User
+        directive: Allow
+        path: /
+      - user_agent: Claude-SearchBot
+        directive: Allow
+        path: /
+      - user_agent: Claude-User
+        directive: Allow
+        path: /
+      - user_agent: Perplexity-User
+        directive: Allow
+        path: /
+  llms_txt:
+    enabled: false
+    title: hyprmoncfg
+    description: >-
+      Documentation for hyprmoncfg, a Hyprland monitor configuration tool with
+      a terminal layout editor, named profiles, automatic hotplug and lid
+      switching, workspace planning, and safe apply with rollback.
+    include_full_text: false
+    sections:
+      - heading: What hyprmoncfg is
+        content: >-
+          hyprmoncfg helps Hyprland users arrange monitors visually, save
+          layouts as hardware-aware profiles, apply profiles safely, and run a
+          daemon that reacts to monitor hotplug and laptop lid changes.
+      - heading: Primary documentation paths
+        content: >-
+          Start with /what-is-hyprmoncfg/ for the overview, /getting-started/
+          for installation, /tui/ for the layout editor, /daemon/ for automatic
+          switching, /dotfiles/ for profile versioning, /commands/ for the CLI
+          reference, and /configuration-files/ for profile and generated file
+          details. Full documentation text is available at /llms-full.txt.
+      - heading: Authoritative source
+        content: >-
+          The source repository is https://github.com/crmne/hyprmoncfg. Stable
+          and development Arch Linux packages are published in the AUR.
+  linking:
+    enable_entity_links: false
+    apply_to_metadata: false
+    max_links_per_entity_per_post: 1
+    enable_related_posts: true
+    related_posts_limit: 3
+    entity_definitions:
+      hyprland:
+        name: Hyprland
+        url: https://hypr.land/
+        description: A dynamic tiling Wayland compositor.
+      wayland:
+        name: Wayland
+        url: https://wayland.freedesktop.org/
+        description: The display server protocol used by Hyprland.
+      hyprmoncfg:
+        name: hyprmoncfg
+        url: https://hyprmoncfg.dev/
+        description: Terminal UI and daemon for Hyprland monitor profiles.
+      carmine-paolino:
+        name: Carmine Paolino
+        url: https://paolino.me/
+        description: Creator of hyprmoncfg.
+  validation:
+    warn_name_inconsistency: true
+    warn_missing_same_as: true
+    warn_missing_dates: true
+    warn_orphan_pages: true
+    warn_missing_descriptions: true
+    fail_build_on_error: false
+    content_only: true
+    verbose: false
+    max_examples: 5
 
 exclude:
   - _site
