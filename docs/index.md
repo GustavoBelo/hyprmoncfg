@@ -5,15 +5,15 @@ description: Hyprland monitor configuration that actually works.
 permalink: /
 hero:
   name: hyprmoncfg
-  text: Stop editing Hyprland monitor lines by hand
-  tagline: A spatial layout editor, named profiles, automatic hotplug and lid switching, and workspace planning. From the terminal. No Python, no GTK, no nonsense.
+  text: Arrange Hyprland monitors without doing coordinate math
+  tagline: Drag displays into place, save hardware-aware profiles, and let hyprmoncfg switch them automatically when monitors or your laptop lid change.
   actions:
     - theme: brand
-      text: What is hyprmoncfg?
-      link: /what-is-hyprmoncfg/
-    - theme: alt
-      text: Guide
+      text: Install hyprmoncfg
       link: /getting-started/
+    - theme: alt
+      text: Watch demo
+      link: /what-is-hyprmoncfg/#demo
     - theme: alt
       text: GitHub
       link: https://github.com/crmne/hyprmoncfg
@@ -25,14 +25,14 @@ hero:
 features:
   - icon: 🖥️
     title: Spatial Layout Editor
-    details: Drag monitors on a canvas, tweak mode, scale, VRR, mirror, and exact position in the inspector. See the result before you apply it.
+    details: Drag monitors on a canvas, edit mode, scale, VRR, mirror, and position in the inspector, then preview the result before applying.
   - icon: 🔌
     title: Hotplug and Lid-Aware Daemon
-    details: Plug in a monitor, close the lid, and walk away. The daemon picks the best hardware profile and forces the internal laptop panel off when the lid is closed.
+    details: Save profiles for your real setups. The daemon picks the best match when monitors change or the laptop lid closes.
   - icon: 🔁
     title: Safe Apply with Revert
-    details: Every apply writes monitors.conf atomically, reloads Hyprland, and verifies the result. A 10-second confirmation window means you never get locked out.
+    details: hyprmoncfg writes monitors.conf atomically, reloads Hyprland, verifies the result, and reverts unless you confirm.
   - icon: 🗂️
     title: Workspace Planning
-    details: Assign workspaces across monitors with sequential, interleave, or manual strategies. Stored inside each profile, applied together with the layout.
+    details: Assign workspaces with sequential, interleave, or manual strategies and apply them together with the monitor layout.
 ---

@@ -4,30 +4,6 @@ description: Install hyprmoncfg and go from zero to a saved profile in two minut
 nav_order: 1
 ---
 
-## Prerequisites
-
-- A running Hyprland session
-- `hyprctl` in `PATH`
-- A `source` line in your `hyprland.conf` that includes a `monitors.conf` file
-
-That last point matters. Hyprland doesn't read `monitors.conf` on its own -- your main config has to tell it to. Most setups already have a line like this in `~/.config/hypr/hyprland.conf`:
-
-```
-source = ~/.config/hypr/monitors.conf
-```
-
-If yours doesn't, add one now. hyprmoncfg writes your monitor layout to `monitors.conf`, and Hyprland needs to know about it. If the `source` line is missing, hyprmoncfg will refuse to write and tell you exactly what's wrong.
-
-You don't need to create `monitors.conf` yourself -- hyprmoncfg creates it when you apply your first profile.
-
-Treat `monitors.conf` as generated output. hyprmoncfg rewrites it on every apply, so keep unrelated Hyprland settings in other sourced files.
-
-If your config files live somewhere other than the defaults:
-
-```bash
-hyprmoncfg --monitors-conf /path/to/monitors.conf --hypr-config /path/to/hyprland.conf
-```
-
 ## Install
 
 ### Arch Linux
@@ -49,7 +25,6 @@ The package installs:
 - `hyprmoncfg` to launch the TUI or use the CLI
 - `hyprmoncfgd` for automatic profile switching
 - a user service unit at `/usr/lib/systemd/user/hyprmoncfgd.service`
-
 
 ### Void Linux
 
@@ -86,7 +61,31 @@ install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
 
-## Your first profile
+## Configure Hyprland
+
+hyprmoncfg needs:
+
+- A running Hyprland session
+- `hyprctl` in `PATH`
+- A `source` line in `hyprland.conf` that includes `monitors.conf`
+
+Most setups already have this in `~/.config/hypr/hyprland.conf`:
+
+```text
+source = ~/.config/hypr/monitors.conf
+```
+
+If yours does not, add it now. Hyprland does not read `monitors.conf` automatically, so hyprmoncfg checks this before writing. If the `source` line is missing, it refuses to write and tells you what to fix.
+
+You do not need to create `monitors.conf` yourself. hyprmoncfg creates it when you apply your first profile, then rewrites it on each apply. Keep unrelated Hyprland settings in other sourced files.
+
+If your config files live somewhere other than the defaults:
+
+```bash
+hyprmoncfg --monitors-conf /path/to/monitors.conf --hypr-config /path/to/hyprland.conf
+```
+
+## Create your first profile
 
 Launch the TUI:
 
@@ -107,17 +106,7 @@ Drag monitors on the canvas to rearrange them. Click on the inspector fields to 
 
 That's it. Your monitor layout is now a named profile.
 
-{% include alert.html type="important" title="Clean Up Before You Enable The Daemon" content="`hyprmoncfgd` scores **every** profile in `~/.config/hyprmoncfg/profiles/`. Old experiments, duplicate layouts, and half-finished saves are part of matching until you delete them." %}
-
-Before you turn on automatic switching, make sure your profile library reflects real setups you actually want auto-applied:
-
-- Save one profile for each real desk, dock, projector, or travel setup you use
-- Delete throwaway profiles you created while experimenting
-- Re-save the profile you actually use instead of keeping old variants around
-
-On laptops, you do not need a separate closed-lid profile. Save the profile for the monitors you attach at that desk. When the lid is closed and an external monitor is connected, hyprmoncfg forces the internal laptop panel off for the apply and moves workspaces away from it.
-
-## Apply from the command line
+## Apply a saved profile
 
 ```bash
 hyprmoncfg apply desk
@@ -131,9 +120,19 @@ For scripts and automation, skip the countdown:
 hyprmoncfg apply desk --confirm-timeout 0
 ```
 
-## Start the daemon
+## Enable automatic switching
 
 The daemon watches for monitor changes and applies the best matching profile automatically. Set it up once and forget about it.
+
+{% include alert.html type="important" title="Clean Up Before You Enable The Daemon" content="`hyprmoncfgd` scores **every** profile in `~/.config/hyprmoncfg/profiles/`. Old experiments, duplicate layouts, and half-finished saves are part of matching until you delete them." %}
+
+Before you turn on automatic switching, make sure your profile library reflects real setups you actually want auto-applied:
+
+- Save one profile for each real desk, dock, projector, or travel setup you use
+- Delete throwaway profiles you created while experimenting
+- Re-save the profile you actually use instead of keeping old variants around
+
+On laptops, you do not need a separate closed-lid profile. Save the profile for the monitors you attach at that desk. When the lid is closed and an external monitor is connected, hyprmoncfg forces the internal laptop panel off for the apply and moves workspaces away from it.
 
 If you installed from AUR:
 

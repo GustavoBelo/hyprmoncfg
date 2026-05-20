@@ -34,19 +34,66 @@
 .VPHero .image-src {
   display: block;
   margin: 0 auto;
+  padding: 0;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1199px) {
+  .VPHero.has-image .container {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .VPHero.has-image .main {
+    order: 2;
+    width: 100%;
+    max-width: none;
+  }
+
+  .VPHero.has-image .name,
+  .VPHero.has-image .text,
+  .VPHero.has-image .tagline {
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .VPHero.has-image .actions {
+    justify-content: center;
+  }
+
+  .VPHero.has-image .image {
+    order: 1;
+    margin: 0 0 32px;
+    min-height: auto;
+  }
+
+  .VPHero.has-image .image-container {
+    width: min(calc(100vw - 48px), 680px);
+    height: auto;
+    aspect-ratio: 7 / 4;
+    transform: none;
+  }
+
   .VPHero .image-src {
-    width: 106%;
-    max-width: 106%;
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    height: auto;
   }
 }
 
-@media (min-width: 961px) {
+@media (min-width: 1200px) {
+  .VPHero.has-image .image-container {
+    width: clamp(420px, 42vw, 680px);
+    height: auto;
+    aspect-ratio: 7 / 4;
+    transform: translate(0, -8px);
+  }
+
   .VPHero .image-src {
-    width: 112%;
-    max-width: 112%;
+    width: 100%;
+    max-width: none;
+    max-height: none;
+    height: auto;
   }
 }
 

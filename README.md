@@ -25,58 +25,24 @@
 
 ---
 
-You know the drill. You plug in a monitor. Nothing happens the way you want. You open `hyprland.conf`, squint at coordinate math, guess at `monitor=` lines, reload, realize the positions are wrong, edit again. You go to a conference, plug into a projector, and start the whole dance over.
+Arrange Hyprland monitors without coordinate math.
 
-hyprmoncfg fixes this.
-
-Open a terminal. See your monitors laid out spatially. Drag them where you want. Save the layout as a profile. Next time you plug in the same monitors, the daemon applies it automatically.
-
-Two binaries. One runtime dependency: Hyprland. Runs over SSH. No Python, no GTK, no D-Bus.
+hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-aware daemon for Hyprland monitor setups. Drag displays into place, save hardware-aware profiles, apply them safely, and let the daemon switch profiles when monitors or laptop lid state changes.
 
 ![hyprmoncfg demo](docs/assets/images/demo.gif)
 
-## The problem with Hyprland monitor configuration
+## What you get
 
-Configuring monitors in Hyprland is painful:
+- **Spatial layout editor** -- drag monitors on a canvas and tune mode, scale, VRR, mirror, transform, and exact position
+- **Named profiles** -- save setups like `desk`, `conference`, or `home-office`
+- **Hardware-identity matching** -- profiles follow monitor make, model, and serial instead of unstable connector names
+- **Hotplug and lid-aware daemon** -- apply the right profile automatically when monitors change or the laptop lid closes
+- **Workspace planner** -- assign workspaces across monitors with sequential, interleave, or manual strategies
+- **Safe apply with revert** -- reload Hyprland, verify the result, and revert unless you confirm
+- **Source-chain verification** -- refuse to write a `monitors.conf` that Hyprland is not reading
+- **One hard runtime dependency** -- Hyprland; UPower is optional for immediate lid events
 
-- **No visual editor.** You write `monitor=` lines by hand and pray the coordinates are right.
-- **No profiles.** Unplug your laptop from your desk, plug into a projector at a conference, and you're manually editing config files backstage.
-- **No automatic switching.** Hotplug a monitor and Hyprland does its best guess. Your careful layout? Gone.
-- **Connector names are unstable.** `DP-1` and `DP-2` swap randomly between boots. Workspace bindings break.
-- **Existing tools pull in the world.** Python runtimes, GTK libraries, GObject introspection. Just to move a rectangle on a screen.
-
-## The solution
-
-hyprmoncfg ships two binaries:
-
-| | |
-|---|---|
-| `hyprmoncfg` | TUI + CLI for layout editing, profile management, and workspace planning |
-| `hyprmoncfgd` | Background daemon that auto-applies the best matching profile on hotplug and lid changes |
-
-Both use the same apply engine: write `monitors.conf` atomically, reload Hyprland, verify the result, revert if anything is wrong.
-
-## Features
-
-- **Spatial layout editor** -- drag monitors on a canvas, see them move in real time
-- **Per-monitor inspector** -- mode, scale, VRR, transform, mirror, exact position
-- **Named profiles** -- save "desk", "conference", "home-office", switch between them instantly
-- **Hardware-identity matching** -- profiles follow your monitors, not connector names
-- **Hotplug and lid-aware daemon** -- plug in, close the lid, walk away, the right profile is applied automatically and the internal laptop panel is forced off
-- **Monitor mirroring** -- mirror any monitor to another, with configurable resolution to avoid pixelation
-- **Workspace planner** -- sequential, interleave, or manual workspace placement across monitors
-- **Safe apply with revert** -- a 10-second confirmation window so you never get locked out
-- **Source-chain verification** -- refuses to write a `monitors.conf` that Hyprland isn't even reading
-- **Only one hard runtime dependency: Hyprland** -- UPower is optional but recommended for the best lid-event behavior
-## Screenshots
-
-hyprmoncfg adapts to your theme. Here are some examples:
-
-| Layout editor | Save dialog |
-| --- | --- |
-| ![Layout editor](docs/assets/images/screenshots/layout-dark.png) | ![Save profile dialog](docs/assets/images/screenshots/save-profile-dark.png) |
-
-## Quick start
+## Install
 
 Arch Linux:
 
@@ -84,7 +50,7 @@ Arch Linux:
 yay -S hyprmoncfg
 ```
 
-For the latest `main` branch:
+Latest `main` from AUR:
 
 ```bash
 yay -S hyprmoncfg-git
@@ -100,33 +66,48 @@ sudo xbps-install -S hyprmoncfg
 Build from source:
 
 ```bash
-go build -o bin/hyprmoncfg ./cmd/hyprmoncfg
+git clone https://github.com/crmne/hyprmoncfg.git
+cd hyprmoncfg
+go build -o bin/hyprmoncfg  ./cmd/hyprmoncfg
 go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
-```
-
-Install:
-
-```bash
 install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
 
-Use:
+## Configure Hyprland
 
-```bash
-hyprmoncfg                 # open the TUI
-hyprmoncfg save desk       # save current layout as "desk"
-hyprmoncfg apply desk      # apply it later
+Make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
+
+```text
+source = ~/.config/hypr/monitors.conf
 ```
 
-Start the daemon after an AUR install:
+Hyprland does not read that file automatically. hyprmoncfg creates and rewrites `monitors.conf`, then refuses to write if the source chain is missing so you do not edit a file Hyprland ignores.
+
+## Create your first profile
+
+```bash
+hyprmoncfg
+```
+
+Drag monitors into place, press `s`, type a profile name like `desk`, and press `Enter`.
+
+Apply it later from the CLI:
+
+```bash
+hyprmoncfg apply desk
+```
+
+## Enable automatic switching
+
+After an AUR install:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
 
-If you installed manually into `~/.local/bin`, copy the local unit first:
+After a manual install:
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -134,6 +115,45 @@ cp packaging/systemd/hyprmoncfgd.local.service ~/.config/systemd/user/hyprmoncfg
 systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
+
+The daemon scores every profile in `~/.config/hyprmoncfg/profiles/`, so delete throwaway profiles before relying on automatic switching.
+
+## Screenshots
+
+hyprmoncfg adapts to your theme. Here are some examples:
+
+| Layout editor | Save dialog |
+| --- | --- |
+| ![Layout editor](docs/assets/images/screenshots/layout-dark.png) | ![Save profile dialog](docs/assets/images/screenshots/save-profile-dark.png) |
+
+## Why it exists
+
+Configuring monitors in Hyprland means writing `monitor=` lines by hand. A 4K display at 1.33x scale is effectively 2880x1620 pixels, so the monitor next to it needs to start at x=2880. Vertically centering a 1080p panel against it means doing division in your head, reloading, noticing the layout is wrong, and editing again.
+
+It gets worse when setups change:
+
+- **No visual editor.** You write `monitor=` lines by hand and hope the coordinates are right.
+- **No profiles.** Desk, projector, travel, and docked setups all need different layouts.
+- **No automatic switching.** Hotplug a monitor and Hyprland guesses again.
+- **Connector names are unstable.** `DP-1` and `DP-2` can swap between boots.
+- **Some tools pull in too much.** Python, GTK, and GObject introspection are a lot of stack just to move a rectangle.
+
+## How it works
+
+hyprmoncfg ships two binaries:
+
+| | |
+|---|---|
+| `hyprmoncfg` | TUI + CLI for layout editing, profile management, and workspace planning |
+| `hyprmoncfgd` | Background daemon that auto-applies the best matching profile on hotplug and lid changes |
+
+Both use the same apply engine:
+
+```bash
+write monitors.conf -> reload Hyprland -> verify live state -> confirm or revert
+```
+
+There is no separate best-effort daemon path. If the TUI can apply a profile correctly, the daemon uses the same machinery.
 
 ## Dotfiles integration
 
