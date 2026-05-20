@@ -5,7 +5,7 @@
   <img src="docs/assets/images/logotype.svg" alt="hyprmoncfg" height="120">
 </picture>
 
-<strong>Hyprland monitor configuration that actually works.</strong>
+<strong>Arrange Hyprland monitors without coordinate math.</strong>
 
 [![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
 [![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)
@@ -25,9 +25,7 @@
 
 ---
 
-Arrange Hyprland monitors without coordinate math.
-
-hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-aware daemon for Hyprland monitor setups. Drag displays into place, save hardware-aware profiles, apply them safely, and let the daemon switch profiles when monitors or laptop lid state changes.
+hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-aware daemon for Hyprland monitor setups. Drag displays into place, save hardware-aware profiles, apply them safely, and let the daemon switch profiles when monitors or your laptop lid changes.
 
 ![hyprmoncfg demo](docs/assets/images/demo.gif)
 
