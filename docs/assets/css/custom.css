@@ -23,6 +23,31 @@
   border-radius: 12px;
 }
 
+.VPHero .action:has(.terminal-trove) {
+  flex-basis: 100%;
+  padding-top: 12px;
+}
+
+.VPHero .VPButton.terminal-trove {
+  border: 0;
+  padding: 0;
+  height: auto;
+  background: transparent;
+  box-shadow: none;
+  transition: transform 0.2s ease;
+}
+
+.VPHero .VPButton.terminal-trove:hover {
+  background: transparent;
+  transform: translateY(-1px);
+}
+
+.VPHero .terminal-trove-badge-image {
+  display: block;
+  height: 48px;
+  width: auto;
+}
+
 .VPHero.has-image .image {
   justify-content: center;
 }

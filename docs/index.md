@@ -17,6 +17,10 @@ hero:
     - theme: alt
       text: GitHub
       link: https://github.com/crmne/hyprmoncfg
+    - theme: terminal-trove
+      text: >-
+        <img class="theme-image light terminal-trove-badge-image" src="/assets/images/terminal-trove-tool-of-the-week-light.svg" alt="Terminal Trove Tool of the Week" width="220" height="58"><img class="theme-image dark terminal-trove-badge-image" src="/assets/images/terminal-trove-tool-of-the-week-dark.svg" alt="Terminal Trove Tool of the Week" width="220" height="58">
+      link: https://terminaltrove.com/hyprmoncfg/
   image:
     src: /assets/images/demo.gif
     alt: hyprmoncfg demo
