@@ -3,14 +3,8 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bin_dir="$(mktemp -d)"
 
-cleanup() {
-  rm -rf "$bin_dir"
-}
-trap cleanup EXIT
-
-for cmd in go vhs; do
+for cmd in hyprmoncfg vhs; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "missing: $cmd" >&2
     exit 1
@@ -19,12 +13,7 @@ done
 
 (
   cd "$repo_root"
-  go build -o "$bin_dir/hyprmoncfg" ./cmd/hyprmoncfg
+  env -u NO_COLOR -u FORCE_COLOR -u CLICOLOR_FORCE CLICOLOR=1 COLORTERM=truecolor TERM=xterm-256color vhs scripts/demo.tape
 )
 
-(
-  cd "$repo_root"
-  PATH="$bin_dir:$PATH" vhs scripts/demo.tape
-)
-
-APP_BIN="$bin_dir/hyprmoncfg" "$repo_root/scripts/capture_screenshots.sh" "$@"
+"$repo_root/scripts/capture_screenshots.sh" "$@"

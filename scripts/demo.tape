@@ -9,6 +9,12 @@ Set Height 800
 Set Padding 12
 Set Theme "tokyonight"
 
+Hide
+Type "set -e NO_COLOR; set -e FORCE_COLOR; set -e CLICOLOR_FORCE; set -gx TERM xterm-256color; set -gx COLORTERM truecolor; set -gx CLICOLOR 1; clear"
+Enter
+Sleep 300ms
+Show
+
 Type "hyprmoncfg"
 Enter
 Sleep 1.5s

@@ -4,7 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_dir="${1:-$repo_root/docs/assets/images/screenshots}"
-app_bin="${APP_BIN:-go run $repo_root/cmd/hyprmoncfg}"
+app_bin="${APP_BIN:-hyprmoncfg}"
 terminal_bin="${TERMINAL_BIN:-alacritty}"
 window_class="${WINDOW_CLASS:-hyprmoncfg-docshot}"
 window_width="${WINDOW_WIDTH:-1800}"
@@ -87,7 +87,7 @@ capture_state() {
     -o "window.padding.y=10"
   )
 
-  env -u NO_COLOR COLORTERM=truecolor TERM=xterm-256color "$terminal_bin" \
+  env -u NO_COLOR -u FORCE_COLOR -u CLICOLOR_FORCE CLICOLOR=1 COLORTERM=truecolor TERM=xterm-256color "$terminal_bin" \
     "${terminal_args[@]}" \
     -e bash -lc "cd '$repo_root' && $app_bin" >/dev/null 2>&1 &
   local term_pid=$!
