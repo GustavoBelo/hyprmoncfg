@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/buildkite/shellwords"
 	"github.com/crmne/hyprmoncfg/internal/config"
@@ -22,6 +23,11 @@ type applyMode int
 const (
 	ApplyModeInteractive applyMode = iota
 	ApplyModeNonInteractive
+)
+
+const (
+	applyValidationTimeout      = 3 * time.Second
+	applyValidationPollInterval = 100 * time.Millisecond
 )
 
 type Engine struct {
@@ -195,13 +201,8 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		return RevertState{}, err
 	}
 
-	applied, err := e.Client.Monitors(ctx)
+	applied, err := e.waitForAppliedProfile(ctx, p, monitors)
 	if err != nil {
-		_ = backup.Restore()
-		_ = e.Client.Reload(ctx)
-		return RevertState{}, err
-	}
-	if err := ValidateAppliedProfile(p, monitors, applied); err != nil {
 		_ = backup.Restore()
 		_ = e.Client.Reload(ctx)
 		return RevertState{}, err
@@ -223,6 +224,41 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	}
 
 	return revertState, nil
+}
+
+func (e Engine) waitForAppliedProfile(ctx context.Context, p profile.Profile, before []hypr.Monitor) ([]hypr.Monitor, error) {
+	deadline := time.NewTimer(applyValidationTimeout)
+	defer deadline.Stop()
+
+	ticker := time.NewTicker(applyValidationPollInterval)
+	defer ticker.Stop()
+
+	var lastErr error
+
+	for {
+		applied, err := e.Client.Monitors(ctx)
+		if err != nil {
+			lastErr = err
+		} else if err := ValidateAppliedProfile(p, before, applied); err != nil {
+			lastErr = err
+		} else {
+			return applied, nil
+		}
+
+		select {
+		case <-ctx.Done():
+			if lastErr != nil {
+				return nil, fmt.Errorf("%w: %v", ctx.Err(), lastErr)
+			}
+			return nil, ctx.Err()
+		case <-deadline.C:
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, fmt.Errorf("timed out waiting for Hyprland monitor reload")
+		case <-ticker.C:
+		}
+	}
 }
 
 func (e Engine) PostApply(ctx context.Context, target profile.Profile) error {

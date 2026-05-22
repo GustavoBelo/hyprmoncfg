@@ -540,6 +540,126 @@ func TestEngineApplyAndRevertReplayWorkspacePlacement(t *testing.T) {
 	}
 }
 
+func TestEngineApplyWaitsForDeferredMonitorReload(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "hyprctl.log")
+	statePath := filepath.Join(dir, "monitor-query-count")
+	stalePath := filepath.Join(dir, "stale-monitors.json")
+	appliedPath := filepath.Join(dir, "applied-monitors.json")
+	monitorsConfPath := filepath.Join(dir, "monitors.conf")
+	hyprlandConfigPath := filepath.Join(dir, "hyprland.conf")
+	hyprctlPath := filepath.Join(dir, "hyprctl")
+
+	targetMonitors := append([]hypr.Monitor(nil), monitors...)
+	targetMonitors[0].Width = 2560
+	targetMonitors[0].Height = 1440
+	targetMonitors[0].RefreshRate = 60
+
+	writeJSON := func(path string, value any) {
+		t.Helper()
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	writeJSON(stalePath, monitors)
+	writeJSON(appliedPath, targetMonitors)
+
+	hyprctlScript := fmt.Sprintf(`#!/usr/bin/env bash
+set -eu
+STATE=%q
+STALE=%q
+APPLIED=%q
+if [ "${1-}" = "--instance" ]; then
+  shift 2
+fi
+cmd1="${1-}"
+cmd2="${2-}"
+cmd3="${3-}"
+printf '%%s\n' "$*" >> "$HYPRCTL_LOG"
+
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "version" ]; then
+  printf '{"version":"0.54.0"}'
+  exit 0
+fi
+
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "monitors" ] && [ "$cmd3" = "all" ]; then
+  count=0
+  if [ -f "$STATE" ]; then
+    count=$(cat "$STATE")
+  fi
+  count=$((count + 1))
+  printf '%%s' "$count" > "$STATE"
+  if [ "$count" -eq 1 ]; then
+    cat "$STALE"
+  else
+    cat "$APPLIED"
+  fi
+  exit 0
+fi
+
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "workspacerules" ]; then
+  printf '[]'
+  exit 0
+fi
+
+if [ "$cmd1" = "-j" ] && [ "$cmd2" = "workspaces" ]; then
+  printf '[]'
+  exit 0
+fi
+
+if [ "$cmd1" = "reload" ]; then
+  exit 0
+fi
+
+if [ "$cmd1" = "--batch" ]; then
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+`, statePath, stalePath, appliedPath)
+	if err := os.WriteFile(hyprctlPath, []byte(hyprctlScript), 0o755); err != nil {
+		t.Fatalf("write fake hyprctl: %v", err)
+	}
+	if err := os.WriteFile(monitorsConfPath, []byte("# initial\n"), 0o644); err != nil {
+		t.Fatalf("write monitors.conf: %v", err)
+	}
+	if err := os.WriteFile(hyprlandConfigPath, []byte("source = "+monitorsConfPath+"\n"), 0o644); err != nil {
+		t.Fatalf("write hyprland.conf: %v", err)
+	}
+
+	t.Setenv("HYPRCTL_LOG", logPath)
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig-test")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	client, err := hypr.NewClient()
+	if err != nil {
+		t.Fatalf("new hypr client: %v", err)
+	}
+	engine := Engine{Client: client, MonitorsConfPath: monitorsConfPath, HyprlandConfigPath: hyprlandConfigPath}
+
+	p := newTestProfile()
+	p.Outputs[0].Width = 2560
+	p.Outputs[0].Height = 1440
+	p.Outputs[0].Refresh = 60
+
+	if _, err := engine.Apply(context.Background(), p, monitors, ApplyModeNonInteractive); err != nil {
+		t.Fatalf("apply should wait for deferred monitor reload: %v", err)
+	}
+
+	countBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("read monitor query count: %v", err)
+	}
+	if got := strings.TrimSpace(string(countBytes)); got != "2" {
+		t.Fatalf("expected two monitor validation queries, got %s", got)
+	}
+}
+
 func TestEnginePostApply(t *testing.T) {
 	engine, logPath, err := initTestEngine(t)
 	if err != nil {
