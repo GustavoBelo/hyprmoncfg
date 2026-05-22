@@ -199,7 +199,13 @@ ln -sf "$(pwd)/scripts/pre-commit" .git/hooks/pre-commit
 
 The hook runs `go mod tidy`, `go vet`, `go test`, and `go build`.
 
-Regenerate screenshots:
+Regenerate demo videos and screenshots:
+
+```bash
+./scripts/capture_media.sh
+```
+
+Regenerate only screenshots:
 
 ```bash
 ./scripts/capture_screenshots.sh
