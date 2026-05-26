@@ -73,6 +73,8 @@ install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
 
+Distro packagers should use [PACKAGING.md](PACKAGING.md).
+
 ## Configure Hyprland
 
 Make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
