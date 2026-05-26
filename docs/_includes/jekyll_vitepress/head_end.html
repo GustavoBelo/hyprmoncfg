@@ -20,7 +20,9 @@
 {% if seo_image %}
 <meta name="twitter:image" content="{{ seo_image | absolute_url }}">
 {% endif %}
-{% ai_json_ld %}
+{% if page.url == '/' or page.url == '/index.html' %}
+  {% ai_json_ld %}
+{% endif %}
 
 <link rel="stylesheet" href="{{ '/assets/css/custom.css' | relative_url }}">
 <!-- Privacy-friendly analytics by Plausible -->
