@@ -861,7 +861,11 @@ func TestProfileExecEditorEnterSavesExecutableCommand(t *testing.T) {
 }
 
 func TestProfileExecEditorRejectsNonExecutablePath(t *testing.T) {
-	execPath := filepath.Join(t.TempDir(), "post-apply.sh")
+	longDir := filepath.Join(t.TempDir(), strings.Repeat("very-long-build-path-", 7))
+	if err := os.MkdirAll(longDir, 0o755); err != nil {
+		t.Fatalf("create long temp path: %v", err)
+	}
+	execPath := filepath.Join(longDir, "post-apply.sh")
 	if err := os.WriteFile(execPath, []byte("#!/bin/sh\nexit 0\n"), 0o644); err != nil {
 		t.Fatalf("write non-executable script: %v", err)
 	}

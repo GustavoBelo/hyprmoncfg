@@ -304,7 +304,7 @@ func ValidatePostApplyExec(command string) error {
 			return fmt.Errorf("%s is a directory", executable)
 		}
 		if info.Mode().Perm()&0o111 == 0 {
-			return fmt.Errorf("%s is not executable", executable)
+			return fmt.Errorf("not executable: %s", executable)
 		}
 		return nil
 	}
