@@ -9,16 +9,20 @@ import (
 )
 
 type MonitorResolver struct {
-	byName     map[string]hypr.Monitor
-	byMatchKey map[string][]hypr.Monitor
+	byOutputKey map[string]hypr.Monitor
+	byName      map[string]hypr.Monitor
+	byMatchKey  map[string][]hypr.Monitor
 }
 
 func NewMonitorResolver(monitors []hypr.Monitor) MonitorResolver {
 	resolver := MonitorResolver{
-		byName:     make(map[string]hypr.Monitor, len(monitors)),
-		byMatchKey: make(map[string][]hypr.Monitor, len(monitors)),
+		byOutputKey: make(map[string]hypr.Monitor, len(monitors)),
+		byName:      make(map[string]hypr.Monitor, len(monitors)),
+		byMatchKey:  make(map[string][]hypr.Monitor, len(monitors)),
 	}
+	matchCounts := hypr.MonitorMatchCounts(monitors)
 	for _, monitor := range monitors {
+		resolver.byOutputKey[hypr.MonitorOutputKey(monitor, matchCounts)] = monitor
 		resolver.byName[strings.TrimSpace(monitor.Name)] = monitor
 		matchKey := strings.TrimSpace(monitor.HardwareKey())
 		resolver.byMatchKey[matchKey] = append(resolver.byMatchKey[matchKey], monitor)
@@ -57,6 +61,11 @@ func (r MonitorResolver) Resolve(matchKey string, name string) (hypr.Monitor, bo
 }
 
 func (r MonitorResolver) ResolveOutput(output OutputConfig) (hypr.Monitor, bool) {
+	if output.Key != "" {
+		if monitor, ok := r.byOutputKey[strings.TrimSpace(output.Key)]; ok {
+			return monitor, true
+		}
+	}
 	return r.Resolve(output.MatchIdentity(), output.Name)
 }
 
@@ -114,7 +123,7 @@ func normalizeIdentityRefs(outputs []OutputConfig, workspaces *WorkspaceSettings
 
 	seenKeys := make(map[string]int, len(outputs))
 	for i := range outputs {
-		key := hypr.UniqueOutputKey(entries[i].MatchKey, outputs[i].Name, matchCounts[entries[i].MatchKey])
+		key := hypr.UniqueOutputKey(entries[i].MatchKey, outputDisambiguator(outputs[i], entries[i].OldKey), matchCounts[entries[i].MatchKey])
 		if key == "" {
 			key = fmt.Sprintf("output-%d", i+1)
 		}
@@ -360,6 +369,20 @@ func outputMatchKeyFromFields(output OutputConfig) string {
 		return strings.Join(nonEmpty, "|")
 	}
 	return ""
+}
+
+func outputDisambiguator(output OutputConfig, oldKey string) string {
+	matchKey := strings.TrimSpace(output.MatchKey)
+	oldKey = strings.TrimSpace(oldKey)
+	if matchKey != "" && oldKey != "" {
+		prefix := matchKey + "@"
+		if strings.HasPrefix(oldKey, prefix) {
+			if suffix := strings.TrimSpace(strings.TrimPrefix(oldKey, prefix)); suffix != "" {
+				return suffix
+			}
+		}
+	}
+	return output.Name
 }
 
 func cleanProfileIDPart(value string) string {

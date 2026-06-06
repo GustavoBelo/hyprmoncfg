@@ -68,6 +68,7 @@ func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
 			monitors[i].MirrorOf = ""
 		}
 	}
+	enrichMonitorConnectorPaths(monitors)
 	return monitors, nil
 }
 

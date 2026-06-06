@@ -80,6 +80,7 @@ type Monitor struct {
 	SDRMaxLuminance       int       `json:"sdrMaxLuminance"`
 	AvailableModes        []string  `json:"availableModes"`
 	ActiveWorkspace       Workspace `json:"activeWorkspace"`
+	ConnectorPath         string    `json:"-"`
 }
 
 func (m Monitor) Bitdepth() int {
@@ -145,7 +146,14 @@ func UniqueOutputKey(matchKey string, connector string, duplicates int) string {
 
 func MonitorOutputKey(m Monitor, matchCounts map[string]int) string {
 	matchKey := m.HardwareKey()
-	return UniqueOutputKey(matchKey, m.Name, matchCounts[matchKey])
+	return UniqueOutputKey(matchKey, m.OutputDisambiguator(), matchCounts[matchKey])
+}
+
+func (m Monitor) OutputDisambiguator() string {
+	if path := stableConnectorPathID(m.ConnectorPath); path != "" {
+		return path
+	}
+	return m.Name
 }
 
 func (m Monitor) ModeString() string {
@@ -177,6 +185,21 @@ func cleanIDPart(v string) string {
 	v = strings.TrimSpace(strings.ToLower(v))
 	v = strings.Join(strings.Fields(v), " ")
 	return v
+}
+
+func stableConnectorPathID(path string) string {
+	path = strings.TrimSpace(strings.ToLower(path))
+	if path == "" {
+		return ""
+	}
+
+	if rest, ok := strings.CutPrefix(path, "mst:"); ok {
+		if _, suffix, ok := strings.Cut(rest, "-"); ok && strings.TrimSpace(suffix) != "" {
+			return "mst-" + strings.TrimSpace(suffix)
+		}
+	}
+
+	return strings.NewReplacer(":", "-", "/", "-", " ", "-").Replace(path)
 }
 
 func FormatMode(width, height int, refresh float64) string {

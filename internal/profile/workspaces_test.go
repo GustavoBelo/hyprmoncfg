@@ -70,6 +70,52 @@ func TestNormalizeAssignsUniqueKeysToDuplicateOutputs(t *testing.T) {
 	}
 }
 
+func TestNormalizePreservesStableDuplicateOutputKeys(t *testing.T) {
+	prof := Profile{
+		Name: "desk",
+		Outputs: []OutputConfig{
+			{Key: "sceptre tech inc|sceptre z27@mst-3", MatchKey: "sceptre tech inc|sceptre z27", Name: "DP-8", Make: "Sceptre Tech Inc", Model: "Sceptre Z27", Enabled: true, Scale: 1},
+			{Key: "sceptre tech inc|sceptre z27@mst-2", MatchKey: "sceptre tech inc|sceptre z27", Name: "DP-5", Make: "Sceptre Tech Inc", Model: "Sceptre Z27", Enabled: true, Scale: 1},
+		},
+		Workspaces: WorkspaceSettings{
+			Enabled:      true,
+			Strategy:     WorkspaceStrategySequential,
+			MonitorOrder: []string{"sceptre tech inc|sceptre z27@mst-3", "sceptre tech inc|sceptre z27@mst-2"},
+		},
+	}
+
+	prof.Normalize()
+
+	keys := prof.Keys()
+	if keys[0] != "sceptre tech inc|sceptre z27@mst-2" || keys[1] != "sceptre tech inc|sceptre z27@mst-3" {
+		t.Fatalf("expected stable keys to survive normalization, got %v", keys)
+	}
+	if prof.Workspaces.MonitorOrder[0] != "sceptre tech inc|sceptre z27@mst-3" ||
+		prof.Workspaces.MonitorOrder[1] != "sceptre tech inc|sceptre z27@mst-2" {
+		t.Fatalf("expected stable monitor order to survive normalization, got %v", prof.Workspaces.MonitorOrder)
+	}
+}
+
+func TestMonitorResolverMatchesStableKeyAfterConnectorRename(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-10", Make: "Sceptre Tech Inc", Model: "Sceptre Z27", ConnectorPath: "mst:532-3"},
+		{Name: "DP-6", Make: "Sceptre Tech Inc", Model: "Sceptre Z27", ConnectorPath: "mst:519-2"},
+	}
+	resolver := NewMonitorResolver(monitors)
+
+	monitor, ok := resolver.ResolveOutput(OutputConfig{
+		Key:      "sceptre tech inc|sceptre z27@mst-2",
+		MatchKey: "sceptre tech inc|sceptre z27",
+		Name:     "DP-5",
+	})
+	if !ok {
+		t.Fatal("expected stable key to resolve after connector rename")
+	}
+	if monitor.Name != "DP-6" {
+		t.Fatalf("expected stable key to resolve to DP-6, got %q", monitor.Name)
+	}
+}
+
 func TestGeneratedInterleaveWorkspaceRules(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{Name: "DP-1", Make: "Dell", Model: "U2720Q", Serial: "A1", X: 0},
