@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -20,6 +23,16 @@ const (
 )
 
 const DefaultPollInterval = time.Second
+
+const (
+	inputSysRoot      = "/sys/class/input"
+	inputDevRoot      = "/dev/input"
+	inputIoctlBase    = uintptr('E')
+	inputIoctlRead    = uintptr(2)
+	inputIoctlGetSWNr = uintptr(0x1b)
+)
+
+var inputIoctlGetSW = inputIoctlRequest(inputIoctlRead, inputIoctlBase, inputIoctlGetSWNr, 1)
 
 type State string
 
@@ -42,9 +55,14 @@ func ReadState(ctx context.Context) (State, error) {
 		return state, nil
 	}
 
-	state, err := readACPIState()
-	if err != nil {
-		return Unknown, fmt.Errorf("no lid state source found: %w", err)
+	state, acpiErr := readACPIState()
+	if acpiErr == nil {
+		return state, nil
+	}
+
+	state, inputErr := readInputState()
+	if inputErr != nil {
+		return Unknown, fmt.Errorf("no lid state source found: %w", errors.Join(acpiErr, inputErr))
 	}
 	return state, nil
 }
@@ -289,4 +307,94 @@ func parseACPIState(value string) State {
 	default:
 		return Unknown
 	}
+}
+
+func readInputState() (State, error) {
+	events, err := inputLidEventDevices(inputSysRoot)
+	if err != nil {
+		return Unknown, err
+	}
+	if len(events) == 0 {
+		return Unknown, errors.New("input lid switch not found")
+	}
+
+	var lastErr error
+	for _, event := range events {
+		state, err := readInputEventLidState(filepath.Join(inputDevRoot, event))
+		if err == nil {
+			return state, nil
+		}
+		lastErr = err
+	}
+	if lastErr == nil {
+		lastErr = errors.New("input lid switch state not readable")
+	}
+	return Unknown, lastErr
+}
+
+func inputLidEventDevices(sysRoot string) ([]string, error) {
+	paths, err := filepath.Glob(filepath.Join(sysRoot, "event*", "device"))
+	if err != nil {
+		return nil, err
+	}
+
+	events := make([]string, 0, len(paths))
+	for _, path := range paths {
+		caps, err := os.ReadFile(filepath.Join(path, "capabilities", "sw"))
+		if err != nil || !inputSwitchCapabilitySet(string(caps), 0) {
+			continue
+		}
+		events = append(events, filepath.Base(filepath.Dir(path)))
+	}
+	return events, nil
+}
+
+func inputSwitchCapabilitySet(mask string, bit int) bool {
+	if bit < 0 {
+		return false
+	}
+	words := strings.Fields(mask)
+	if len(words) == 0 {
+		return false
+	}
+
+	wordIndexFromRight := bit / 64
+	wordIndex := len(words) - 1 - wordIndexFromRight
+	if wordIndex < 0 || wordIndex >= len(words) {
+		return false
+	}
+	value, err := strconv.ParseUint(words[wordIndex], 16, 64)
+	if err != nil {
+		return false
+	}
+	return value&(uint64(1)<<(bit%64)) != 0
+}
+
+func readInputEventLidState(path string) (State, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Unknown, err
+	}
+	defer file.Close()
+
+	var switches [1]byte
+	if err := inputIoctl(file.Fd(), inputIoctlGetSW, unsafe.Pointer(&switches[0])); err != nil {
+		return Unknown, err
+	}
+	if switches[0]&1 != 0 {
+		return Closed, nil
+	}
+	return Open, nil
+}
+
+func inputIoctlRequest(dir uintptr, typ uintptr, nr uintptr, size uintptr) uintptr {
+	return (dir << 30) | (size << 16) | (typ << 8) | nr
+}
+
+func inputIoctl(fd uintptr, request uintptr, arg unsafe.Pointer) error {
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, request, uintptr(arg))
+	if errno != 0 {
+		return errno
+	}
+	return nil
 }
