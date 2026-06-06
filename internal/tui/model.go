@@ -1495,8 +1495,13 @@ func (m *Model) syncSelections() {
 	m.selectedOutput = clampIndex(m.selectedOutput, len(m.editOutputs))
 	m.selectedProfile = clampIndex(m.selectedProfile, len(m.profiles))
 	m.inspectorField = clampIndex(m.inspectorField, len(layoutFields))
-	m.workspaceEdit.SelectedField = clampIndex(m.workspaceEdit.SelectedField, len(workspaceFields))
-	m.workspaceEdit.SelectedOrder = clampIndex(m.workspaceEdit.SelectedOrder, len(m.workspaceEdit.MonitorOrder))
+	workspaceItems := len(workspaceFields) + len(m.workspaceEdit.MonitorOrder)
+	m.workspaceEdit.SelectedField = clampIndex(m.workspaceEdit.SelectedField, workspaceItems)
+	if m.workspaceEdit.SelectedField >= len(workspaceFields) {
+		m.workspaceEdit.SelectedOrder = m.workspaceEdit.SelectedField - len(workspaceFields)
+	} else {
+		m.workspaceEdit.SelectedOrder = clampIndex(m.workspaceEdit.SelectedOrder, len(m.workspaceEdit.MonitorOrder))
+	}
 }
 
 func (m Model) profileExists(name string) bool {

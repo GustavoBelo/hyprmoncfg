@@ -380,6 +380,26 @@ func TestWorkspaceMouseIgnoresPreviewPaneInCompactLayout(t *testing.T) {
 	}
 }
 
+func TestSyncSelectionsPreservesWorkspaceOrderSelection(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		workspaceEdit: workspaceEditor{
+			MonitorOrder:  []string{"mon-a", "mon-b"},
+			SelectedField: len(workspaceFields) + 1,
+			SelectedOrder: 1,
+		},
+	}
+
+	m.syncSelections()
+
+	if m.workspaceEdit.SelectedField != len(workspaceFields)+1 {
+		t.Fatalf("expected monitor-order field selection to survive sync, got %d", m.workspaceEdit.SelectedField)
+	}
+	if m.workspaceEdit.SelectedOrder != 1 {
+		t.Fatalf("expected selected order 1 to survive sync, got %d", m.workspaceEdit.SelectedOrder)
+	}
+}
+
 func TestLayoutMouseOpensScaleEditorAtVisibleField(t *testing.T) {
 	m := Model{
 		styles:         newStyles(),
