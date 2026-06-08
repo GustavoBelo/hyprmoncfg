@@ -13,6 +13,7 @@ type OutputConfig struct {
 	Key               string  `json:"key"`
 	MatchKey          string  `json:"match_key,omitempty"`
 	Name              string  `json:"name"`
+	Description       string  `json:"description,omitempty"`
 	Make              string  `json:"make,omitempty"`
 	Model             string  `json:"model,omitempty"`
 	Serial            string  `json:"serial,omitempty"`
@@ -110,6 +111,7 @@ func FromState(name string, monitors []hypr.Monitor, rules []hypr.WorkspaceRule)
 			Key:             hypr.MonitorOutputKey(m, matchCounts),
 			MatchKey:        m.HardwareKey(),
 			Name:            m.Name,
+			Description:     m.Description,
 			Make:            m.Make,
 			Model:           m.Model,
 			Serial:          m.Serial,

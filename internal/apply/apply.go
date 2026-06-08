@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -16,6 +15,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/render"
 )
 
 type applyMode int
@@ -42,10 +42,7 @@ type RevertState struct {
 	Commands     []string
 }
 
-type RenderOptions struct {
-	Format       config.HyprConfigFormat
-	UseMonitorV2 bool
-}
+type RenderOptions = render.Options
 
 func SnapshotState(monitors []hypr.Monitor, rules []hypr.WorkspaceRule, workspaces []hypr.WorkspaceState) []string {
 	commands := SnapshotCommands(monitors)
@@ -71,7 +68,7 @@ func CommandsForProfile(p profile.Profile, monitors []hypr.Monitor) ([]string, e
 				mirrorTarget = target.monitor.Name
 			}
 		}
-		commands = append(commands, commandForOutput(item.monitor.Name, item.config, mirrorTarget))
+		commands = append(commands, render.CommandForOutput(item.monitor.Name, item.config, mirrorTarget))
 	}
 
 	if len(commands) == 0 {
@@ -107,7 +104,7 @@ func WorkspaceCommandsForProfile(p profile.Profile, monitors []hypr.Monitor) []s
 		}
 
 		selector := resolver.SelectorForOutput(output, monitor)
-		commands = append(commands, "keyword workspace "+workspaceRuleCommand(rule.Workspace, selector, rule.Default, rule.Persistent))
+		commands = append(commands, "keyword workspace "+render.WorkspaceRuleCommand(rule.Workspace, selector, rule.Default, rule.Persistent))
 		commands = append(commands, fmt.Sprintf("dispatch moveworkspacetomonitor %s %s", shellEscape(rule.Workspace), monitor.Name))
 	}
 	return commands
@@ -138,7 +135,7 @@ func SnapshotCommands(monitors []hypr.Monitor) []string {
 			SDRMinLuminance: m.SDRMinLuminance,
 			SDRMaxLuminance: m.SDRMaxLuminance,
 		}
-		commands = append(commands, commandForOutput(m.Name, out, m.MirrorOf))
+		commands = append(commands, render.CommandForOutput(m.Name, out, m.MirrorOf))
 	}
 	return commands
 }
@@ -189,7 +186,7 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		Commands:     SnapshotState(monitors, currentRules, currentWorkspaces),
 	}
 
-	rendered, err := RenderConfig(p, monitors, RenderOptions{Format: resolvedConfig.Format, UseMonitorV2: supportsV2})
+	rendered, err := render.RenderConfig(p, monitors, render.Options{Format: resolvedConfig.Format, UseMonitorV2: supportsV2})
 	if err != nil {
 		return RevertState{}, err
 	}
@@ -362,76 +359,6 @@ func (e Engine) Revert(ctx context.Context, state RevertState) error {
 	return e.applyLiveCommands(ctx, state.Commands)
 }
 
-func commandForOutput(name string, out profile.OutputConfig, mirrorTarget string) string {
-	if !out.Enabled {
-		return fmt.Sprintf("%s,disable", name)
-	}
-	mode := strings.TrimSpace(out.NormalizedMode())
-	if mode == "" {
-		mode = "preferred"
-	}
-	mode = strings.TrimSuffix(mode, "Hz")
-
-	x := out.X
-	y := out.Y
-	scale := out.Scale
-	if scale <= 0 {
-		scale = 1.0
-	}
-	transform := out.Transform
-	if transform < 0 || transform > 7 {
-		transform = 0
-	}
-
-	vrr := out.VRR
-	if vrr < 0 || vrr > 2 {
-		vrr = 0
-	}
-
-	cmd := fmt.Sprintf("%s,%s,%dx%d,%s,transform,%d,vrr,%d", name, mode, x, y, formatFloat(scale, 3), transform, vrr)
-	if out.Bitdepth > 0 && out.Bitdepth != 8 {
-		cmd += fmt.Sprintf(",bitdepth,%d", out.Bitdepth)
-	}
-	if out.CM != "" && out.CM != "srgb" {
-		cmd += ",cm," + out.CM
-	}
-	if out.SDRBrightness != 0 && out.SDRBrightness != 1.0 {
-		cmd += ",sdrbrightness," + formatFloat(out.SDRBrightness, 2)
-	}
-	if out.SDRSaturation != 0 && out.SDRSaturation != 1.0 {
-		cmd += ",sdrsaturation," + formatFloat(out.SDRSaturation, 2)
-	}
-	if out.SDREOTF != "" && out.SDREOTF != "default" {
-		// v1 uses numeric: 0=default, 1=srgb, 2=gamma22
-		switch out.SDREOTF {
-		case "srgb":
-			cmd += ",sdr_eotf,1"
-		case "gamma22":
-			cmd += ",sdr_eotf,2"
-		}
-	}
-	if out.ICC != "" {
-		cmd += ",icc," + out.ICC
-	}
-	if mirrorTarget != "" {
-		cmd += ",mirror," + mirrorTarget
-	}
-	return cmd
-}
-
-func formatFloat(v float64, precision int) string {
-	if math.IsNaN(v) || math.IsInf(v, 0) {
-		return "0"
-	}
-	s := strconv.FormatFloat(v, 'f', precision, 64)
-	s = strings.TrimRight(s, "0")
-	s = strings.TrimRight(s, ".")
-	if s == "" || s == "-0" {
-		return "0"
-	}
-	return s
-}
-
 func keywordifyMonitorCommands(commands []string) []string {
 	batch := make([]string, 0, len(commands))
 	for _, cmd := range commands {
@@ -447,7 +374,7 @@ func keywordifyMonitorCommands(commands []string) []string {
 func snapshotWorkspaceRuleCommands(rules []hypr.WorkspaceRule) []string {
 	commands := make([]string, 0, len(rules))
 	for _, rule := range rules {
-		commands = append(commands, "keyword workspace "+workspaceRuleCommand(rule.WorkspaceString, rule.Monitor, rule.Default, rule.Persistent))
+		commands = append(commands, "keyword workspace "+render.WorkspaceRuleCommand(rule.WorkspaceString, rule.Monitor, rule.Default, rule.Persistent))
 	}
 	return commands
 }
@@ -461,20 +388,6 @@ func snapshotWorkspaceMoveCommands(workspaces []hypr.WorkspaceState) []string {
 		commands = append(commands, fmt.Sprintf("dispatch moveworkspacetomonitor %s %s", shellEscape(workspace.Name), workspace.Monitor))
 	}
 	return commands
-}
-
-func workspaceRuleCommand(workspace string, monitorSelector string, isDefault bool, persistent bool) string {
-	parts := []string{
-		workspace,
-		"monitor:" + monitorSelector,
-	}
-	if isDefault {
-		parts = append(parts, "default:true")
-	}
-	if persistent {
-		parts = append(parts, "persistent:true")
-	}
-	return strings.Join(parts, ", ")
 }
 
 func shellEscape(value string) string {
@@ -506,115 +419,11 @@ func (e Engine) applyLiveCommands(ctx context.Context, commands []string) error 
 }
 
 func RenderHyprlandConfig(p profile.Profile, monitors []hypr.Monitor, useV2 bool) (string, error) {
-	return RenderConfig(p, monitors, RenderOptions{Format: config.HyprConfigLegacy, UseMonitorV2: useV2})
+	return render.RenderHyprlandConfig(p, monitors, useV2)
 }
 
 func RenderConfig(p profile.Profile, monitors []hypr.Monitor, opts RenderOptions) (string, error) {
-	if opts.Format == config.HyprConfigLua {
-		return renderLuaConfig(p, monitors, opts.UseMonitorV2)
-	}
-	return renderLegacyConfig(p, monitors, opts.UseMonitorV2)
-}
-
-func renderLegacyConfig(p profile.Profile, monitors []hypr.Monitor, useV2 bool) (string, error) {
-	p.Normalize()
-	resolver := profile.NewMonitorResolver(monitors)
-	matched, matchedByKey := resolveProfileOutputs(p, resolver)
-	if len(matched) == 0 {
-		return "", fmt.Errorf("profile %q does not match any connected monitor", p.Name)
-	}
-
-	monitorBlocks := make([]string, 0, len(matched))
-	for _, item := range matched {
-		mirrorTarget := ""
-		if item.config.MirrorOf != "" {
-			if target, ok := matchedByKey[item.config.MirrorOf]; ok {
-				mirrorTarget = resolver.SelectorForOutput(target.config, target.monitor)
-			}
-		}
-		identifier := resolver.SelectorForOutput(item.config, item.monitor)
-		if useV2 {
-			monitorBlocks = append(monitorBlocks, renderMonitorV2Block(identifier, item.config, mirrorTarget))
-			continue
-		}
-		monitorBlocks = append(monitorBlocks, "monitor = "+commandForOutput(identifier, item.config, mirrorTarget))
-	}
-
-	workspaceLines := make([]string, 0)
-	rules := profile.ResolveWorkspaceRules(p, monitors)
-	for _, rule := range rules {
-		output, ok := p.OutputByKey(rule.OutputKey)
-		if !ok {
-			output = profile.OutputConfig{
-				Key:  rule.OutputKey,
-				Name: rule.OutputName,
-			}
-		}
-		monitor, ok := resolver.ResolveOutput(output)
-		if !ok {
-			monitor, ok = resolver.Resolve(output.MatchIdentity(), rule.OutputName)
-		}
-		if !ok {
-			continue
-		}
-		selector := resolver.SelectorForOutput(output, monitor)
-		workspaceLines = append(workspaceLines, "workspace = "+workspaceRuleCommand(rule.Workspace, selector, rule.Default, rule.Persistent))
-	}
-
-	sections := []string{"# Generated by hyprmoncfg", strings.Join(monitorBlocks, "\n\n")}
-	if len(workspaceLines) > 0 {
-		sections = append(sections, strings.Join(workspaceLines, "\n"))
-	}
-	return strings.Join(sections, "\n\n") + "\n", nil
-}
-
-func renderLuaConfig(p profile.Profile, monitors []hypr.Monitor, useV2 bool) (string, error) {
-	p.Normalize()
-	resolver := profile.NewMonitorResolver(monitors)
-	matched, matchedByKey := resolveProfileOutputs(p, resolver)
-	if len(matched) == 0 {
-		return "", fmt.Errorf("profile %q does not match any connected monitor", p.Name)
-	}
-
-	monitorBlocks := make([]string, 0, len(matched))
-	for _, item := range matched {
-		mirrorTarget := ""
-		if item.config.MirrorOf != "" {
-			if target, ok := matchedByKey[item.config.MirrorOf]; ok {
-				mirrorTarget = resolver.SelectorForOutput(target.config, target.monitor)
-			}
-		}
-		identifier := resolver.SelectorForOutput(item.config, item.monitor)
-		if useV2 {
-			monitorBlocks = append(monitorBlocks, renderLuaMonitorCall(identifier, item.config, mirrorTarget))
-			continue
-		}
-		monitorBlocks = append(monitorBlocks, "hl.monitor("+luaQuote(commandForOutput(identifier, item.config, mirrorTarget))+")")
-	}
-
-	workspaceLines := make([]string, 0)
-	rules := profile.ResolveWorkspaceRules(p, monitors)
-	for _, rule := range rules {
-		output, ok := p.OutputByKey(rule.OutputKey)
-		if !ok {
-			output = profile.OutputConfig{Key: rule.OutputKey, Name: rule.OutputName}
-		}
-		monitor, ok := resolver.ResolveOutput(output)
-		if !ok {
-			monitor, ok = resolver.Resolve(output.MatchIdentity(), rule.OutputName)
-		}
-		if !ok {
-			continue
-		}
-		selector := resolver.SelectorForOutput(output, monitor)
-		workspaceLines = append(workspaceLines, renderLuaWorkspaceRule(rule.Workspace, selector, rule.Default, rule.Persistent))
-	}
-
-	sections := []string{"-- Generated by hyprmoncfg", strings.Join(monitorBlocks, "\n\n")}
-	if len(workspaceLines) > 0 {
-		sections = append(sections, strings.Join(workspaceLines, "\n"))
-	}
-	return strings.Join(sections, "\n\n") + "\n", nil
+	return render.RenderConfig(p, monitors, opts)
 }
 
 func ValidateLayout(outputs []profile.OutputConfig) error {
@@ -706,152 +515,6 @@ func ValidateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hy
 	}
 
 	return nil
-}
-
-func renderMonitorV2Block(identifier string, output profile.OutputConfig, mirrorTarget string) string {
-	lines := []string{
-		"monitorv2 {",
-		"  output = " + identifier,
-	}
-	if !output.Enabled {
-		lines = append(lines, "  disabled = 1", "}")
-		return strings.Join(lines, "\n")
-	}
-	mode := strings.TrimSpace(strings.TrimSuffix(output.NormalizedMode(), "Hz"))
-	if mode == "" {
-		mode = "preferred"
-	}
-	lines = append(lines, "  mode = "+mode)
-	lines = append(lines, fmt.Sprintf("  position = %dx%d", output.X, output.Y))
-	lines = append(lines, "  scale = "+formatFloat(clampScale(output.Scale), 3))
-	if output.Transform != 0 {
-		lines = append(lines, fmt.Sprintf("  transform = %d", output.Transform))
-	}
-	if output.VRR != 0 {
-		lines = append(lines, fmt.Sprintf("  vrr = %d", output.VRR))
-	}
-	if output.Bitdepth > 0 && output.Bitdepth != 8 {
-		lines = append(lines, fmt.Sprintf("  bitdepth = %d", output.Bitdepth))
-	}
-	if output.CM != "" && output.CM != "srgb" {
-		lines = append(lines, "  cm = "+output.CM)
-	}
-	if output.SDRBrightness != 0 && output.SDRBrightness != 1.0 {
-		lines = append(lines, "  sdrbrightness = "+formatFloat(output.SDRBrightness, 2))
-	}
-	if output.SDRSaturation != 0 && output.SDRSaturation != 1.0 {
-		lines = append(lines, "  sdrsaturation = "+formatFloat(output.SDRSaturation, 2))
-	}
-	if output.SDRMinLuminance != 0 || output.SDRMaxLuminance != 0 {
-		lines = append(lines, "  sdr_min_luminance = "+formatFloat(output.SDRMinLuminance, 3))
-		lines = append(lines, fmt.Sprintf("  sdr_max_luminance = %d", output.SDRMaxLuminance))
-	}
-	if output.MinLuminance != 0 || output.MaxLuminance != 0 {
-		lines = append(lines, "  min_luminance = "+formatFloat(output.MinLuminance, 3))
-		lines = append(lines, fmt.Sprintf("  max_luminance = %d", output.MaxLuminance))
-	}
-	if output.MaxAvgLuminance != 0 {
-		lines = append(lines, fmt.Sprintf("  max_avg_luminance = %d", output.MaxAvgLuminance))
-	}
-	if output.SupportsWideColor != 0 {
-		lines = append(lines, fmt.Sprintf("  supports_wide_color = %d", output.SupportsWideColor))
-	}
-	if output.SupportsHDR != 0 {
-		lines = append(lines, fmt.Sprintf("  supports_hdr = %d", output.SupportsHDR))
-	}
-	if output.SDREOTF != "" && output.SDREOTF != "default" {
-		lines = append(lines, "  sdr_eotf = "+output.SDREOTF)
-	}
-	if output.ICC != "" {
-		lines = append(lines, "  icc = "+output.ICC)
-	}
-	if mirrorTarget != "" {
-		lines = append(lines, "  mirror = "+mirrorTarget)
-	}
-	lines = append(lines, "}")
-	return strings.Join(lines, "\n")
-}
-
-func renderLuaMonitorCall(identifier string, output profile.OutputConfig, mirrorTarget string) string {
-	lines := []string{
-		"hl.monitor({",
-		"  output = " + luaQuote(identifier) + ",",
-	}
-	if !output.Enabled {
-		lines = append(lines, "  disabled = true,", "})")
-		return strings.Join(lines, "\n")
-	}
-	mode := strings.TrimSpace(strings.TrimSuffix(output.NormalizedMode(), "Hz"))
-	if mode == "" {
-		mode = "preferred"
-	}
-	lines = append(lines, "  mode = "+luaQuote(mode)+",")
-	lines = append(lines, fmt.Sprintf("  position = %s,", luaQuote(fmt.Sprintf("%dx%d", output.X, output.Y))))
-	lines = append(lines, "  scale = "+formatFloat(clampScale(output.Scale), 3)+",")
-	if output.Transform != 0 {
-		lines = append(lines, fmt.Sprintf("  transform = %d,", output.Transform))
-	}
-	if output.VRR != 0 {
-		lines = append(lines, fmt.Sprintf("  vrr = %d,", output.VRR))
-	}
-	if output.Bitdepth > 0 && output.Bitdepth != 8 {
-		lines = append(lines, fmt.Sprintf("  bitdepth = %d,", output.Bitdepth))
-	}
-	if output.CM != "" && output.CM != "srgb" {
-		lines = append(lines, "  cm = "+luaQuote(output.CM)+",")
-	}
-	if output.SDRBrightness != 0 && output.SDRBrightness != 1.0 {
-		lines = append(lines, "  sdrbrightness = "+formatFloat(output.SDRBrightness, 2)+",")
-	}
-	if output.SDRSaturation != 0 && output.SDRSaturation != 1.0 {
-		lines = append(lines, "  sdrsaturation = "+formatFloat(output.SDRSaturation, 2)+",")
-	}
-	if output.SDRMinLuminance != 0 || output.SDRMaxLuminance != 0 {
-		lines = append(lines, "  sdr_min_luminance = "+formatFloat(output.SDRMinLuminance, 3)+",")
-		lines = append(lines, fmt.Sprintf("  sdr_max_luminance = %d,", output.SDRMaxLuminance))
-	}
-	if output.MinLuminance != 0 || output.MaxLuminance != 0 {
-		lines = append(lines, "  min_luminance = "+formatFloat(output.MinLuminance, 3)+",")
-		lines = append(lines, fmt.Sprintf("  max_luminance = %d,", output.MaxLuminance))
-	}
-	if output.MaxAvgLuminance != 0 {
-		lines = append(lines, fmt.Sprintf("  max_avg_luminance = %d,", output.MaxAvgLuminance))
-	}
-	if output.SupportsWideColor != 0 {
-		lines = append(lines, fmt.Sprintf("  supports_wide_color = %d,", output.SupportsWideColor))
-	}
-	if output.SupportsHDR != 0 {
-		lines = append(lines, fmt.Sprintf("  supports_hdr = %d,", output.SupportsHDR))
-	}
-	if output.SDREOTF != "" && output.SDREOTF != "default" {
-		lines = append(lines, "  sdr_eotf = "+luaQuote(output.SDREOTF)+",")
-	}
-	if output.ICC != "" {
-		lines = append(lines, "  icc = "+luaQuote(output.ICC)+",")
-	}
-	if mirrorTarget != "" {
-		lines = append(lines, "  mirror = "+luaQuote(mirrorTarget)+",")
-	}
-	lines = append(lines, "})")
-	return strings.Join(lines, "\n")
-}
-
-func renderLuaWorkspaceRule(workspace string, monitorSelector string, isDefault bool, persistent bool) string {
-	parts := []string{
-		"workspace = " + luaQuote(workspace),
-		"monitor = " + luaQuote(monitorSelector),
-	}
-	if isDefault {
-		parts = append(parts, "default = true")
-	}
-	if persistent {
-		parts = append(parts, "persistent = true")
-	}
-	return "hl.workspace_rule({ " + strings.Join(parts, ", ") + " })"
-}
-
-func luaQuote(value string) string {
-	return strconv.Quote(value)
 }
 
 func logicalOutputSize(output profile.OutputConfig) (int, int) {

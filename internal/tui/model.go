@@ -17,6 +17,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/profileio"
 )
 
 type uiMode int
@@ -1940,7 +1941,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 func (m Model) saveCmd(p profile.Profile) tea.Cmd {
 	store := m.store
 	return func() tea.Msg {
-		if err := store.Save(p); err != nil {
+		if err := profileio.SaveWithSidecars(store, p); err != nil {
 			return saveMsg{err: err}
 		}
 		return saveMsg{name: p.Name}
@@ -1950,7 +1951,7 @@ func (m Model) saveCmd(p profile.Profile) tea.Cmd {
 func (m Model) saveProfileCmd(p profile.Profile) tea.Cmd {
 	store := m.store
 	return func() tea.Msg {
-		if err := store.Save(p); err != nil {
+		if err := profileio.SaveWithSidecars(store, p); err != nil {
 			return saveMsg{name: p.Name, err: err, profileTab: true}
 		}
 		return saveMsg{name: p.Name, profileTab: true}
@@ -2239,6 +2240,7 @@ func editableOutputFromProfile(saved profile.OutputConfig, live hypr.Monitor, ha
 		Key:               saved.Key,
 		MatchKey:          saved.MatchIdentity(),
 		Name:              saved.Name,
+		Description:       saved.Description,
 		Make:              saved.Make,
 		Model:             saved.Model,
 		Serial:            saved.Serial,
@@ -2425,6 +2427,7 @@ func (o editableOutput) profileOutput() profile.OutputConfig {
 		Key:               o.Key,
 		MatchKey:          o.MatchKey,
 		Name:              o.Name,
+		Description:       o.Description,
 		Make:              o.Make,
 		Model:             o.Model,
 		Serial:            o.Serial,

@@ -105,6 +105,7 @@ func normalizeIdentityRefs(outputs []OutputConfig, workspaces *WorkspaceSettings
 		outputs[i].Key = strings.TrimSpace(outputs[i].Key)
 		outputs[i].MatchKey = strings.TrimSpace(outputs[i].MatchKey)
 		outputs[i].Name = strings.TrimSpace(outputs[i].Name)
+		outputs[i].Description = strings.TrimSpace(outputs[i].Description)
 
 		matchKey := outputMatchKeyFromFields(outputs[i])
 		if matchKey == "" {

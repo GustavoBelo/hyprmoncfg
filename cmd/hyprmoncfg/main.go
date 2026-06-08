@@ -19,6 +19,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/profileio"
 	"github.com/crmne/hyprmoncfg/internal/tui"
 )
 
@@ -156,7 +157,7 @@ func newSaveCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			p.Exec = existing.Exec
-			if err := store.Save(p); err != nil {
+			if err := profileio.SaveWithSidecars(store, p); err != nil {
 				return err
 			}
 			fmt.Printf("Saved profile %q\n", p.Name)

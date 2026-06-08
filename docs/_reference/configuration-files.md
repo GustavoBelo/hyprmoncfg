@@ -6,15 +6,15 @@ nav_order: 2
 
 ## Profile storage
 
-Profiles live in:
+Canonical profile JSON files live in:
 
 ```
 ~/.config/hyprmoncfg/profiles/*.json
 ```
 
-Each profile is a single JSON file. The filename is a simplified version of the profile name -- spaces become hyphens, special characters are dropped. For example, a profile named "Home Office" becomes `home-office.json`.
+Each profile has a canonical JSON file. The filename is a simplified version of the profile name -- spaces become hyphens, special characters are dropped. For example, a profile named "Home Office" becomes `home-office.json`.
 
-These files are managed by hyprmoncfg. You can read them, but there's no reason to edit them by hand -- the TUI and CLI handle that for you.
+hyprmoncfg also writes generated `home-office.conf` and `home-office.lua` sidecars next to the JSON file. These are fallback exports for people who want to stop using hyprmoncfg but keep the saved layouts as Hyprland config snippets. The JSON remains the source of truth used by hyprmoncfg and `hyprmoncfgd`.
 
 {% include alert.html type="warning" title="Every Profile File Is A Match Candidate" content="`hyprmoncfgd` scans every `*.json` file in this directory. Old backups, temporary experiments, and duplicate layouts are not ignored just because you forgot about them." %}
 
@@ -88,12 +88,14 @@ When you apply a profile (via TUI, CLI, or daemon), hyprmoncfg writes the active
 
 `monitors.conf` and `monitors.lua` are generated output. hyprmoncfg fully manages and rewrites the active target file on every apply.
 
+Per-profile `*.conf` and `*.lua` files in `~/.config/hyprmoncfg/profiles/` are different: they are exported copies of each saved profile. Applying a profile still regenerates the active target from JSON and the current monitor state so lid handling, duplicate monitor resolution, Hyprland version detection, verification, and rollback keep working.
+
 Do not put unrelated Hyprland settings in that file. Keep blocks like `render`, `cursor`, `misc`, and `env` in other sourced config files.
 
 The file is written atomically (temp file + rename) to prevent partial writes from corrupting your config.
 
 ## Portability
 
-Profile JSON files are portable across machines. The daemon uses hardware identity matching to score profiles, so a profile saved on your desktop will work on your laptop if the same monitors are connected.
+Profile JSON files are portable across machines. The daemon uses hardware identity matching to score profiles, so a profile saved on your desktop will work on your laptop if the same monitors are connected. The generated `.conf` and `.lua` sidecars are useful fallback snippets, but JSON is the portable profile format hyprmoncfg reads.
 
 Add `~/.config/hyprmoncfg` to your dotfile manager to share profiles across all your machines. See the [dotfiles guide](/dotfiles/) for details.

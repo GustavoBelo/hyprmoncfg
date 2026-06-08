@@ -8,7 +8,7 @@ nav_order: 4
 
 You have a desktop, a laptop, maybe a Raspberry Pi. Each one connects to different monitors. But your preferred layouts -- the positions, scales, workspace assignments -- those are yours. They should travel with you.
 
-hyprmoncfg stores profiles as plain JSON files in `~/.config/hyprmoncfg/profiles/`. One file per profile. Add this directory to your dotfile manager and every machine gets your full profile library.
+hyprmoncfg stores profiles in `~/.config/hyprmoncfg/profiles/`. Each profile has a canonical JSON file plus generated `.conf` and `.lua` sidecars. Add this directory to your dotfile manager and every machine gets your full profile library.
 
 The daemon on each machine looks at what's actually plugged in and picks the right profile. Your desktop applies "desk". Your laptop at a conference applies "projector". Your Raspberry Pi applies "tv". Same dotfiles, different hardware, correct layout every time.
 
@@ -16,7 +16,7 @@ The daemon on each machine looks at what's actually plugged in and picks the rig
 
 **Commit**: `~/.config/hyprmoncfg/` -- your profile library.
 
-**Don't commit**: `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua` -- this is generated output. hyprmoncfg rewrites the active target from the active profile. Committing it causes conflicts between machines with different monitors.
+**Don't commit**: the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua` -- hyprmoncfg rewrites the active target from the selected JSON profile and current monitor state. Committing it causes conflicts between machines with different monitors.
 
 ## chezmoi
 

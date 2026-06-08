@@ -158,7 +158,7 @@ There is no separate best-effort daemon path. If the TUI can apply a profile cor
 
 ## Dotfiles integration
 
-Profiles live in `~/.config/hyprmoncfg/profiles/`. They're plain JSON files, one per profile. Add the directory to your dotfile manager and your layouts roam across every machine you own.
+Profiles live in `~/.config/hyprmoncfg/profiles/`. Each profile has a canonical JSON file plus generated `.conf` and `.lua` sidecars you can keep as plain Hyprland snippets if you stop using hyprmoncfg. Add the directory to your dotfile manager and your layouts roam across every machine you own.
 
 With [chezmoi](https://www.chezmoi.io/):
 
@@ -168,7 +168,7 @@ chezmoi add ~/.config/hyprmoncfg
 
 Now your desk at home, your laptop on the road, and your Raspberry Pi in the closet all share the same profile library. The daemon picks the right one based on what's actually plugged in.
 
-You don't commit `monitors.conf` or `monitors.lua`. You commit your profiles. The tool writes the active generated monitor config for you.
+You don't commit the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua`. You commit your profiles. The tool writes the active generated monitor config for you.
 
 ## How it compares
 

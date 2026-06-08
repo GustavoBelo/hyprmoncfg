@@ -14,6 +14,12 @@ type Store struct {
 	dir string
 }
 
+type FilePaths struct {
+	JSON string
+	Conf string
+	Lua  string
+}
+
 func NewStore(baseDir string) *Store {
 	return &Store{dir: filepath.Join(baseDir, "profiles")}
 }
@@ -52,7 +58,7 @@ func (s *Store) Load(name string) (Profile, error) {
 	if err := s.Ensure(); err != nil {
 		return Profile{}, err
 	}
-	path := s.pathForName(name)
+	path := s.PathsForName(name).JSON
 	return s.loadFromPath(path)
 }
 
@@ -65,7 +71,7 @@ func (s *Store) Save(p Profile) error {
 		return err
 	}
 
-	path := s.pathForName(p.Name)
+	path := s.PathsForName(p.Name).JSON
 	if existing, err := s.loadFromPath(path); err == nil {
 		p.CreatedAt = existing.CreatedAt
 	}
@@ -92,19 +98,26 @@ func (s *Store) Save(p Profile) error {
 }
 
 func (s *Store) Delete(name string) error {
-	path := s.pathForName(name)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	paths := s.PathsForName(name)
+	for _, path := range []string{paths.JSON, paths.Conf, paths.Lua} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
 
-func (s *Store) pathForName(name string) string {
+func (s *Store) PathsForName(name string) FilePaths {
 	slug := slugify(name)
 	if slug == "" {
 		slug = "profile"
 	}
-	return filepath.Join(s.dir, slug+".json")
+	base := filepath.Join(s.dir, slug)
+	return FilePaths{
+		JSON: base + ".json",
+		Conf: base + ".conf",
+		Lua:  base + ".lua",
+	}
 }
 
 func (s *Store) loadFromPath(path string) (Profile, error) {

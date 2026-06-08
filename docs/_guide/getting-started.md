@@ -177,7 +177,7 @@ If the daemon ever applies a layout you didn't expect, the most common cause is 
 
 ## Add profiles to your dotfiles
 
-Profiles are plain JSON files stored in `~/.config/hyprmoncfg/profiles/`. Add the whole config directory to your dotfile manager and your layouts roam across every machine.
+Profiles are stored in `~/.config/hyprmoncfg/profiles/`. Each profile has a canonical JSON file plus generated `.conf` and `.lua` sidecars, so you can keep the layouts as plain Hyprland snippets even if you stop using hyprmoncfg. Add the whole config directory to your dotfile manager and your layouts roam across every machine.
 
 With [chezmoi](https://www.chezmoi.io/):
 
@@ -187,7 +187,7 @@ chezmoi add ~/.config/hyprmoncfg
 
 Your desk at home, your laptop bag setup, your conference projector layout -- all versioned, all portable. The daemon on each machine picks the right profile based on what's actually plugged in.
 
-You never commit `monitors.conf` or `monitors.lua`. You commit your profiles. hyprmoncfg writes the active generated monitor config for you.
+You never commit the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua`. You commit your profiles. hyprmoncfg writes the active generated monitor config for you.
 
 ## Next steps
 
