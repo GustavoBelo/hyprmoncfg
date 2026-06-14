@@ -289,6 +289,34 @@ func TestRenderLuaConfigUsesMonitorV2WithWorkspaceRules(t *testing.T) {
 	}
 }
 
+func TestRenderLuaConfigQuotesDescriptionSelector(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-1", Description: `Dell, Inc. #A $B "{{raw}}" \Panel`, Make: "Dell", Model: "Panel", Serial: "A1"},
+	}
+	p := profile.New("desk", []profile.OutputConfig{{
+		Key:      monitors[0].HardwareKey(),
+		MatchKey: monitors[0].HardwareKey(),
+		Name:     "DP-1",
+		Enabled:  true,
+		Width:    2560,
+		Height:   1440,
+		Refresh:  60,
+		Scale:    1,
+	}})
+
+	rendered, err := RenderConfig(p, monitors, RenderOptions{Format: config.HyprConfigLua, UseMonitorV2: true})
+	if err != nil {
+		t.Fatalf("unexpected render error: %v", err)
+	}
+	want := `output = "desc:Dell, Inc. #A $B \"{{raw}}\" \\Panel",`
+	if !strings.Contains(rendered, want) {
+		t.Fatalf("expected lua render to contain %q, got:\n%s", want, rendered)
+	}
+	if strings.Contains(rendered, `output = "DP-1"`) {
+		t.Fatalf("expected lua render to keep desc selector, got:\n%s", rendered)
+	}
+}
+
 func TestRenderHyprlandConfigUsesConnectorsForAmbiguousDuplicateMonitors(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{Name: "DP-5", Description: "VIE C24PULSE 0x01010101", Make: "VIE", Model: "C24PULSE", Serial: "0x01010101"},
@@ -325,6 +353,88 @@ func TestRenderHyprlandConfigUsesConnectorsForAmbiguousDuplicateMonitors(t *test
 	}
 	if strings.Contains(rendered, "output = desc:VIE C24PULSE 0x01010101") {
 		t.Fatalf("expected duplicate monitors to avoid desc selectors, got:\n%s", rendered)
+	}
+}
+
+func TestRenderHyprlandConfigEscapesDescriptionCommentMarker(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-1", Description: "Dell Inc. Dell S2716DG #ASMy+EjOdybd {{raw}}", Make: "Dell Inc.", Model: "Dell S2716DG", Serial: "#ASMy+EjOdybd"},
+		{Name: "DP-2", Description: "Dell Inc. Dell S2716DG #ASO9n2jmng3d", Make: "Dell Inc.", Model: "Dell S2716DG", Serial: "#ASO9n2jmng3d"},
+	}
+	p := profile.New("desk", []profile.OutputConfig{
+		{Key: monitors[0].HardwareKey(), MatchKey: monitors[0].HardwareKey(), Name: "DP-1", Enabled: true, Width: 2560, Height: 1440, Refresh: 143.96, X: 0, Y: 0, Scale: 1},
+		{Key: monitors[1].HardwareKey(), MatchKey: monitors[1].HardwareKey(), Name: "DP-2", Enabled: true, Width: 2560, Height: 1440, Refresh: 143.96, X: 2560, Y: 0, Scale: 1},
+	})
+	p.Workspaces = profile.WorkspaceSettings{
+		Enabled:  true,
+		Strategy: profile.WorkspaceStrategyManual,
+		Rules: []profile.WorkspaceRule{
+			{Workspace: "1", OutputKey: monitors[0].HardwareKey(), OutputName: "DP-1", Default: true, Persistent: true},
+			{Workspace: "2", OutputKey: monitors[1].HardwareKey(), OutputName: "DP-2", Default: true, Persistent: true},
+		},
+	}
+
+	rendered, err := RenderHyprlandConfig(p, monitors, true)
+	if err != nil {
+		t.Fatalf("unexpected render error: %v", err)
+	}
+	for _, want := range []string{
+		`output = desc:Dell Inc. Dell S2716DG ##ASMy+EjOdybd \{\{raw}}`,
+		"output = desc:Dell Inc. Dell S2716DG ##ASO9n2jmng3d",
+		`workspace = 1, monitor:desc:Dell Inc. Dell S2716DG ##ASMy+EjOdybd \{\{raw}}, default:true, persistent:true`,
+		"workspace = 2, monitor:desc:Dell Inc. Dell S2716DG ##ASO9n2jmng3d, default:true, persistent:true",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected escaped render to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	for _, raw := range []string{
+		"desc:Dell Inc. Dell S2716DG #ASMy+EjOdybd",
+		"desc:Dell Inc. Dell S2716DG #ASO9n2jmng3d",
+		" {{raw}}",
+	} {
+		if strings.Contains(rendered, raw) {
+			t.Fatalf("expected raw comment marker %q to be escaped, got:\n%s", raw, rendered)
+		}
+	}
+}
+
+func TestRenderHyprlandConfigFallsBackToConnectorForUnsafeHyprlangDescSelector(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-1", Description: "Dell, Inc. $PANEL", Make: "Dell", Model: "S2716DG", Serial: "A1"},
+	}
+	p := profile.New("desk", []profile.OutputConfig{{
+		Key:      monitors[0].HardwareKey(),
+		MatchKey: monitors[0].HardwareKey(),
+		Name:     "DP-1",
+		Enabled:  true,
+		Width:    2560,
+		Height:   1440,
+		Refresh:  143.96,
+		Scale:    1,
+	}})
+	p.Workspaces = profile.WorkspaceSettings{
+		Enabled:  true,
+		Strategy: profile.WorkspaceStrategyManual,
+		Rules: []profile.WorkspaceRule{
+			{Workspace: "1", OutputKey: monitors[0].HardwareKey(), OutputName: "DP-1", Default: true, Persistent: true},
+		},
+	}
+
+	rendered, err := RenderHyprlandConfig(p, monitors, true)
+	if err != nil {
+		t.Fatalf("unexpected render error: %v", err)
+	}
+	for _, want := range []string{
+		"output = DP-1",
+		"workspace = 1, monitor:DP-1, default:true, persistent:true",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected connector fallback render to contain %q, got:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "desc:Dell, Inc. $PANEL") {
+		t.Fatalf("expected unsafe desc selector to be avoided, got:\n%s", rendered)
 	}
 }
 

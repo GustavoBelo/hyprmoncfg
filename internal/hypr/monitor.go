@@ -164,7 +164,7 @@ func (m Monitor) MonitorSelector() string {
 	if desc := strings.TrimSpace(m.Description); desc != "" {
 		return "desc:" + desc
 	}
-	return m.Name
+	return strings.TrimSpace(m.Name)
 }
 
 func (m Monitor) LogicalSize() (int, int) {

@@ -144,6 +144,14 @@ func TestMonitorOutputKeyFallsBackToConnectorNameWithoutPath(t *testing.T) {
 	}
 }
 
+func TestMonitorSelectorUsesDescriptionContainingCommentMarker(t *testing.T) {
+	monitor := Monitor{Name: "DP-2", Description: "Dell Inc. Dell S2716DG #ASMy+EjOdybd"}
+
+	if got := monitor.MonitorSelector(); got != "desc:Dell Inc. Dell S2716DG #ASMy+EjOdybd" {
+		t.Fatalf("expected desc selector to preserve monitor description, got %q", got)
+	}
+}
+
 func TestDRMConnectorEntriesParseSysfsConnectors(t *testing.T) {
 	tmp := t.TempDir()
 	connectorDir := filepath.Join(tmp, "card1-DP-10")
