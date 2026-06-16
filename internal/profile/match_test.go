@@ -227,6 +227,53 @@ func TestExactStateMatchIgnoresConfigOnlyFields(t *testing.T) {
 	}
 }
 
+func TestExactStateMatchAcceptsRoundedHyprlandScaleReadback(t *testing.T) {
+	monitors := []hypr.Monitor{{
+		Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "A1",
+		Width: 3840, Height: 2160, RefreshRate: 144,
+		Scale: 1.33,
+	}}
+
+	saved := FromState("desk", []hypr.Monitor{{
+		Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "A1",
+		Width: 3840, Height: 2160, RefreshRate: 144,
+		Scale: 1.33333,
+	}}, nil)
+
+	if _, ok := ExactStateMatch([]Profile{saved}, monitors, nil); !ok {
+		t.Fatal("expected ExactStateMatch to accept Hyprland's rounded scale readback")
+	}
+}
+
+func TestRoundedScaleReadbackRequiresSharpSavedScale(t *testing.T) {
+	if ScaleMatchesRoundedReadback(3840, 2160, 1.37, 1.368) {
+		t.Fatal("expected rounded readback matching to require a sharp saved scale")
+	}
+}
+
+func TestExactStateMatchTreatsOmittedDefaultsAsLiveDefaults(t *testing.T) {
+	monitors := []hypr.Monitor{{
+		Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "A1",
+		Width: 3840, Height: 2160, RefreshRate: 144,
+		Scale: 1.33, CurrentFormat: "XRGB8888", ColorManagementPreset: "srgb",
+		SDRBrightness: 1, SDRSaturation: 1,
+	}}
+
+	saved := FromState("desk", []hypr.Monitor{{
+		Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "A1",
+		Width: 3840, Height: 2160, RefreshRate: 144,
+		Scale: 1.33333,
+	}}, nil)
+	saved.Outputs[0].Bitdepth = 0
+	saved.Outputs[0].CM = ""
+	saved.Outputs[0].SDRBrightness = 0
+	saved.Outputs[0].SDRSaturation = 0
+
+	if _, ok := ExactStateMatch([]Profile{saved}, monitors, nil); !ok {
+		t.Fatal("expected ExactStateMatch to treat omitted defaults as live defaults")
+	}
+}
+
 func TestExactStateMatchDetectsBitdepthAndCMDifference(t *testing.T) {
 	monitors := []hypr.Monitor{{
 		Name: "DP-1", Make: "Dell", Model: "U2720Q", Serial: "A1",

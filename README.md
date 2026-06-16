@@ -129,7 +129,7 @@ hyprmoncfg adapts to your theme. Here are some examples:
 
 ## Why it exists
 
-Configuring monitors in Hyprland means writing `monitor=` lines by hand. A 4K display at 1.33x scale is effectively 2880x1620 pixels, so the monitor next to it needs to start at x=2880. Vertically centering a 1080p panel against it means doing division in your head, reloading, noticing the layout is wrong, and editing again.
+Configuring monitors in Hyprland means writing `monitor=` lines by hand. A 4K display at 1.33333x scale is effectively 2880x1620 pixels, so the monitor next to it needs to start at x=2880. Vertically centering a 1080p panel against it means doing division in your head, reloading, noticing the layout is wrong, and editing again.
 
 It gets worse when setups change:
 

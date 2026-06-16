@@ -9,6 +9,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 type Options struct {
@@ -79,10 +80,6 @@ func CommandForOutput(name string, out profile.OutputConfig, mirrorTarget string
 
 	x := out.X
 	y := out.Y
-	scale := out.Scale
-	if scale <= 0 {
-		scale = 1.0
-	}
 	transform := out.Transform
 	if transform < 0 || transform > 7 {
 		transform = 0
@@ -93,7 +90,7 @@ func CommandForOutput(name string, out profile.OutputConfig, mirrorTarget string
 		vrr = 0
 	}
 
-	cmd := fmt.Sprintf("%s,%s,%dx%d,%s,transform,%d,vrr,%d", name, mode, x, y, formatFloat(scale, 3), transform, vrr)
+	cmd := fmt.Sprintf("%s,%s,%dx%d,%s,transform,%d,vrr,%d", name, mode, x, y, scaling.Format(out.Scale), transform, vrr)
 	if out.Bitdepth > 0 && out.Bitdepth != 8 {
 		cmd += fmt.Sprintf(",bitdepth,%d", out.Bitdepth)
 	}
@@ -254,7 +251,7 @@ func renderMonitorV2Block(identifier string, output profile.OutputConfig, mirror
 	}
 	lines = append(lines, "  mode = "+hyprlangEscape(mode))
 	lines = append(lines, fmt.Sprintf("  position = %dx%d", output.X, output.Y))
-	lines = append(lines, "  scale = "+formatFloat(clampScale(output.Scale), 3))
+	lines = append(lines, "  scale = "+scaling.Format(output.Scale))
 	if output.Transform != 0 {
 		lines = append(lines, fmt.Sprintf("  transform = %d", output.Transform))
 	}
@@ -318,7 +315,7 @@ func renderLuaMonitorCall(identifier string, output profile.OutputConfig, mirror
 	}
 	lines = append(lines, "  mode = "+luaQuote(mode)+",")
 	lines = append(lines, fmt.Sprintf("  position = %s,", luaQuote(fmt.Sprintf("%dx%d", output.X, output.Y))))
-	lines = append(lines, "  scale = "+formatFloat(clampScale(output.Scale), 3)+",")
+	lines = append(lines, "  scale = "+scaling.Format(output.Scale)+",")
 	if output.Transform != 0 {
 		lines = append(lines, fmt.Sprintf("  transform = %d,", output.Transform))
 	}
@@ -469,13 +466,6 @@ func legacyHyprlangSelector(selector string, monitor hypr.Monitor) string {
 func hyprlangDescSelectorNeedsConnector(selector string) bool {
 	desc, ok := strings.CutPrefix(strings.TrimSpace(selector), "desc:")
 	return ok && strings.ContainsAny(desc, "$,\r\n")
-}
-
-func clampScale(scale float64) float64 {
-	if scale <= 0 {
-		return 1
-	}
-	return scale
 }
 
 type matchedOutput struct {

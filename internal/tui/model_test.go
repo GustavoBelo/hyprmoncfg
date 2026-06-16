@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -490,6 +491,43 @@ func TestCanvasLegendMatchesCanvasCardColors(t *testing.T) {
 	}
 }
 
+func TestCanvasShowsWarningsOnMonitorCards(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		tab:    tabLayout,
+		editOutputs: []editableOutput{
+			{
+				Name:    "DP-1",
+				Enabled: true,
+				Width:   3840,
+				Height:  2160,
+				Scale:   1.33,
+				X:       0,
+				Y:       0,
+			},
+			{
+				Name:    "eDP-1",
+				Enabled: true,
+				Width:   2880,
+				Height:  1800,
+				Scale:   1.67,
+				X:       2887,
+				Y:       546,
+			},
+		},
+	}
+
+	view := ansi.Strip(m.renderCanvas(100, 20))
+	for _, want := range []string{"DP-1 ⚠", "eDP-1 ⚠"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected canvas warning marker %q, got:\n%s", want, view)
+		}
+	}
+	if got := strings.Count(view, "⚠ fractional px"); got < 2 {
+		t.Fatalf("expected both canvas cards to show fractional warnings, got %d:\n%s", got, view)
+	}
+}
+
 func TestActivateInspectorFieldOpensEditors(t *testing.T) {
 	base := Model{
 		styles:      newStyles(),
@@ -532,6 +570,156 @@ func TestActivateInspectorFieldOpensEditors(t *testing.T) {
 	base.activateInspectorField()
 	if base.mode != modeNumericInput || base.input == nil || base.input.Kind != numericInputPositionY {
 		t.Fatalf("expected position Y input to open, got mode %v input %+v", base.mode, base.input)
+	}
+}
+
+func TestScaleInputShowsClosestSharpSuggestion(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 28,
+		mode:   modeNumericInput,
+		input: &numericInputState{
+			Kind:        numericInputScale,
+			OutputIndex: 0,
+			Title:       "Set Scale for DP-1",
+			Hint:        "Scale hint",
+			Input:       textInputWithValue("1.33"),
+		},
+		editOutputs: []editableOutput{{
+			Name:    "DP-1",
+			Enabled: true,
+			Width:   3840,
+			Height:  2160,
+			Scale:   1,
+		}},
+	}
+
+	view := ansi.Strip(m.renderNumericInput())
+	for _, want := range []string{
+		"⚠ Not sharp:",
+		"3840 / 1.33 = 2887.22",
+		"2160 / 1.33 = 1624.06",
+		"fractional px",
+		"Closest sharp: 1.33333 -> 2880 x 1620 logical px",
+		"Enter applies it",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected scale input feedback to include %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestInspectorHighlightsNonSharpScale(t *testing.T) {
+	m := Model{
+		styles:         newStyles(),
+		tab:            tabLayout,
+		layoutFocus:    layoutFocusInspector,
+		inspectorField: 2,
+		editOutputs: []editableOutput{{
+			Name:      "DP-1",
+			Enabled:   true,
+			Modes:     []string{"3840x2160@143.99Hz"},
+			ModeIndex: 0,
+			Width:     3840,
+			Height:    2160,
+			Refresh:   143.99,
+			Scale:     1.33,
+		}},
+	}
+
+	view := ansi.Strip(m.renderInspectorPane(64, 30, false))
+	for _, want := range []string{"Scale", "1.33", "⚠ fractional px"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected inspector warning to include %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestInspectorFieldWarningsCoverInvalidValues(t *testing.T) {
+	m := Model{
+		editOutputs: []editableOutput{{
+			Key:             "dp-1",
+			Name:            "DP-1",
+			Enabled:         true,
+			ModeUnsupported: true,
+			Bitdepth:        12,
+			MirrorOf:        "missing",
+			Scale:           1,
+		}},
+	}
+	output := m.editOutputs[0]
+
+	for _, tt := range []struct {
+		field int
+		want  string
+	}{
+		{field: 1, want: "unsupported"},
+		{field: 3, want: "invalid"},
+		{field: 9, want: "missing target"},
+	} {
+		got, ok := m.layoutFieldIssue(output, tt.field)
+		if !ok || got != tt.want {
+			t.Fatalf("field %d issue = %q, %v; want %q, true", tt.field, got, ok, tt.want)
+		}
+	}
+}
+
+func TestCommitScaleInputAppliesShownSharpSuggestion(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		mode:   modeNumericInput,
+		input: &numericInputState{
+			Kind:        numericInputScale,
+			OutputIndex: 0,
+			Input:       textInputWithValue("1.33"),
+		},
+		editOutputs: []editableOutput{{
+			Name:    "DP-1",
+			Enabled: true,
+			Width:   3840,
+			Height:  2160,
+			Scale:   1,
+		}},
+	}
+
+	cmd := m.commitNumericInput()
+	if cmd != nil {
+		t.Fatal("expected scale commit not to return a command")
+	}
+	if got := m.editOutputs[0].Scale; got != 1.33333 {
+		t.Fatalf("expected 1.33 scale input to apply shown 1.33333 suggestion, got %v", got)
+	}
+	if !strings.Contains(m.status, "closest sharp scale for 1.33") {
+		t.Fatalf("expected status to explain sharp suggestion, got %q", m.status)
+	}
+}
+
+func TestScaleInputShowsInvalidIncompleteScale(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 28,
+		mode:   modeNumericInput,
+		input: &numericInputState{
+			Kind:        numericInputScale,
+			OutputIndex: 0,
+			Title:       "Set Scale for DP-1",
+			Hint:        "Scale hint",
+			Input:       textInputWithValue("1."),
+		},
+		editOutputs: []editableOutput{{
+			Name:    "DP-1",
+			Enabled: true,
+			Width:   3840,
+			Height:  2160,
+			Scale:   1,
+		}},
+	}
+
+	view := ansi.Strip(m.renderNumericInput())
+	if !strings.Contains(view, "scale must be a number") {
+		t.Fatalf("expected incomplete scale to render validation feedback, got:\n%s", view)
 	}
 }
 
@@ -736,6 +924,26 @@ func TestCardLinesShowMakeModelAndPosition(t *testing.T) {
 	}
 }
 
+func TestCardLinesPrioritizeWarningWhenPresent(t *testing.T) {
+	output := editableOutput{
+		Name:   "DP-1",
+		Width:  3840,
+		Height: 2160,
+		Scale:  1.33,
+	}
+
+	lines := output.cardLinesWithIssue(3, "", "", "fractional px", "3")
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 card lines, got %d", len(lines))
+	}
+	if lines[0].text != "DP-1 ⚠" {
+		t.Fatalf("expected connector warning marker, got %q", lines[0].text)
+	}
+	if lines[1].text != "⚠ fractional px" {
+		t.Fatalf("expected warning line, got %q", lines[1].text)
+	}
+}
+
 func TestOpenSaveDialogShowsExistingProfiles(t *testing.T) {
 	m := Model{
 		styles:   newStyles(),
@@ -777,6 +985,37 @@ func TestOpenSaveDialogPrefillsCurrentDraftProfileName(t *testing.T) {
 	}
 }
 
+func TestOpenSaveDialogPrefillsMatchedProfileNameAndMovesItToTop(t *testing.T) {
+	m := Model{
+		styles:             newStyles(),
+		height:             30,
+		matchedProfileName: "Laptop Home",
+		profiles:           []profile.Profile{{Name: "Desk Dock"}, {Name: "Laptop Home"}},
+	}
+
+	updatedModel, _ := m.openSaveDialog()
+	got := updatedModel.(*Model)
+	if got.saveDialog == nil {
+		t.Fatal("expected save dialog to be initialized")
+	}
+	if got.saveDialog.Input.Value() != "Laptop Home" {
+		t.Fatalf("expected save dialog to prefill matched profile name, got %q", got.saveDialog.Input.Value())
+	}
+	if len(got.saveDialog.List.Items()) != 2 {
+		t.Fatalf("expected 2 visible profiles, got %d", len(got.saveDialog.List.Items()))
+	}
+	first, ok := got.saveDialog.List.Items()[0].(profileListItem)
+	if !ok {
+		t.Fatalf("expected first save-list item to be a profileListItem, got %T", got.saveDialog.List.Items()[0])
+	}
+	if first.name != "Laptop Home" {
+		t.Fatalf("expected matched profile to be first in save dialog, got %q", first.name)
+	}
+	if got.saveDialog.List.Index() != 0 {
+		t.Fatalf("expected matched profile to be selected, got index %d", got.saveDialog.List.Index())
+	}
+}
+
 func TestLoadLiveStateInfersDraftProfileNameFromExactCurrentProfile(t *testing.T) {
 	monitors := []hypr.Monitor{{
 		Name:        "DP-1",
@@ -803,6 +1042,109 @@ func TestLoadLiveStateInfersDraftProfileNameFromExactCurrentProfile(t *testing.T
 
 	if m.draftProfileName != "Desk Dock" {
 		t.Fatalf("expected live state to infer current profile name, got %q", m.draftProfileName)
+	}
+}
+
+func TestLoadLiveStateRecoversPreciseScaleFromRoundedHyprlandReadback(t *testing.T) {
+	monitors := []hypr.Monitor{{
+		Name:                  "DP-1",
+		Make:                  "Microstep",
+		Model:                 "MPG321UR-QD",
+		Serial:                "A1",
+		Width:                 3840,
+		Height:                2160,
+		RefreshRate:           144,
+		X:                     0,
+		Y:                     0,
+		Scale:                 1.33,
+		CurrentFormat:         "XRGB8888",
+		ColorManagementPreset: "srgb",
+		SDRBrightness:         1,
+		SDRSaturation:         1,
+		Focused:               true,
+		DPMSStatus:            true,
+	}}
+	saved := profile.FromState("Laptop Home", []hypr.Monitor{{
+		Name:        "DP-1",
+		Make:        "Microstep",
+		Model:       "MPG321UR-QD",
+		Serial:      "A1",
+		Width:       3840,
+		Height:      2160,
+		RefreshRate: 144,
+		X:           0,
+		Y:           0,
+		Scale:       1.33333,
+	}}, nil)
+	saved.Outputs[0].Bitdepth = 0
+	saved.Outputs[0].CM = ""
+	saved.Outputs[0].SDRBrightness = 0
+	saved.Outputs[0].SDRSaturation = 0
+
+	m := Model{
+		styles:   newStyles(),
+		monitors: monitors,
+		profiles: []profile.Profile{saved},
+	}
+
+	m.loadLiveState()
+
+	if m.draftProfileName != "Laptop Home" {
+		t.Fatalf("expected rounded live readback to match profile, got %q", m.draftProfileName)
+	}
+	if got := m.editOutputs[0].Scale; got != 1.33333 {
+		t.Fatalf("expected editor to recover precise saved scale, got %v", got)
+	}
+	if issue, ok := m.layoutFieldIssue(m.editOutputs[0], 2); ok {
+		t.Fatalf("expected recovered precise scale to clear warning, got %q", issue)
+	}
+}
+
+func TestLoadLiveStateKeepsBestMatchForSaveDialogWhenStateDiffers(t *testing.T) {
+	monitors := []hypr.Monitor{{
+		Name:        "DP-1",
+		Make:        "Microstep",
+		Model:       "MPG321UR-QD",
+		Serial:      "A1",
+		Width:       3840,
+		Height:      2160,
+		RefreshRate: 144,
+		X:           100,
+		Scale:       1.33,
+		Focused:     true,
+		DPMSStatus:  true,
+	}}
+	prof := profile.FromState("Laptop Home", []hypr.Monitor{{
+		Name:        "DP-1",
+		Make:        "Microstep",
+		Model:       "MPG321UR-QD",
+		Serial:      "A1",
+		Width:       3840,
+		Height:      2160,
+		RefreshRate: 144,
+		X:           0,
+		Scale:       1.33333,
+	}}, nil)
+
+	m := Model{
+		styles:   newStyles(),
+		monitors: monitors,
+		profiles: []profile.Profile{prof},
+	}
+
+	m.loadLiveState()
+
+	if m.draftProfileName != "" {
+		t.Fatalf("expected shifted live state not to be exact draft match, got %q", m.draftProfileName)
+	}
+	if m.matchedProfileName != "Laptop Home" {
+		t.Fatalf("expected best hardware match to be remembered, got %q", m.matchedProfileName)
+	}
+
+	updatedModel, _ := m.openSaveDialog()
+	got := updatedModel.(*Model)
+	if got.saveDialog.Input.Value() != "Laptop Home" {
+		t.Fatalf("expected save dialog to fall back to best matched profile, got %q", got.saveDialog.Input.Value())
 	}
 }
 
@@ -1079,6 +1421,107 @@ func TestSaveDialogTabCyclesExplicitActions(t *testing.T) {
 	if back.saveDialog.Action != saveActionApply {
 		t.Fatalf("expected Shift+Tab to cycle back to Save & Apply, got %v", back.saveDialog.Action)
 	}
+}
+
+func TestDirtyQuitOpensSaveBeforeQuitDialog(t *testing.T) {
+	m := Model{
+		styles:           newStyles(),
+		mode:             modeMain,
+		dirty:            true,
+		height:           30,
+		draftProfileName: "Laptop Home",
+		profiles:         []profile.Profile{{Name: "Laptop Home"}, {Name: "Desk Dock"}},
+	}
+
+	updatedModel, _ := m.updateMainKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got := updatedModel.(*Model)
+	if got.mode != modeSave || got.saveDialog == nil {
+		t.Fatalf("expected dirty quit to open save dialog, mode=%v dialog=%+v", got.mode, got.saveDialog)
+	}
+	if got.saveDialog.Purpose != saveDialogQuit {
+		t.Fatalf("expected quit save dialog purpose, got %v", got.saveDialog.Purpose)
+	}
+	if got.saveDialog.Action != saveActionSaveQuit {
+		t.Fatalf("expected quit dialog to default to Save, Apply & Quit, got %v", got.saveDialog.Action)
+	}
+	if got.saveDialog.Input.Value() != "Laptop Home" {
+		t.Fatalf("expected quit dialog to reuse save suggestion, got %q", got.saveDialog.Input.Value())
+	}
+
+	view := got.View()
+	for _, want := range []string{"Save Before Quitting", "Save, Apply & Quit", "Quit Without Saving", "Cancel"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected quit dialog to include %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestQuitSaveDialogDiscardQuitsWithoutSaving(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		mode:   modeSave,
+		saveDialog: &saveDialogState{
+			Action:  saveActionDiscardQuit,
+			Purpose: saveDialogQuit,
+		},
+	}
+
+	_, cmd := m.updateSaveKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	assertQuitCmd(t, cmd)
+}
+
+func TestSaveMsgWithQuitActionAppliesBeforeQuit(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		mode:   modeSave,
+		dirty:  true,
+		saveDialog: &saveDialogState{
+			Action:  saveActionSaveQuit,
+			Purpose: saveDialogQuit,
+		},
+	}
+
+	updatedModel, cmd := m.Update(saveMsg{name: "Desk Home"})
+	got := updatedModel.(Model)
+	if got.mode != modeMain {
+		t.Fatalf("expected saved quit to return to main mode before applying, got %v", got.mode)
+	}
+	if got.saveDialog != nil {
+		t.Fatalf("expected saved quit to clear dialog, got %+v", got.saveDialog)
+	}
+	if !got.quitAfterApply {
+		t.Fatal("expected saved quit to mark quit after apply")
+	}
+	if cmd == nil {
+		t.Fatal("expected saved quit to start apply command")
+	}
+}
+
+func TestQuitAfterApplyQuitsOnlyAfterConfirmation(t *testing.T) {
+	m := Model{
+		styles:         newStyles(),
+		mode:           modeConfirm,
+		quitAfterApply: true,
+		pending: &pendingApply{
+			profile:  profile.New("Desk Home", nil),
+			deadline: time.Now().Add(10 * time.Second),
+		},
+	}
+
+	view := m.renderConfirm()
+	if !strings.Contains(view, "keeps the change and quits") {
+		t.Fatalf("expected confirm dialog to explain keep-and-quit, got:\n%s", view)
+	}
+
+	updatedModel, cmd := m.updateConfirmKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updatedModel.(Model)
+	if got.quitAfterApply {
+		t.Fatal("expected quit-after-apply flag to clear after confirmation")
+	}
+	if got.pending != nil {
+		t.Fatalf("expected pending apply to clear, got %+v", got.pending)
+	}
+	assertQuitCmd(t, cmd)
 }
 
 func TestSaveMsgWithApplyActionSkipsSecondPrompt(t *testing.T) {
@@ -1720,6 +2163,17 @@ func runModelUpdate(t *testing.T, model tea.Model, msg tea.Msg) tea.Model {
 	}
 }
 
+func assertQuitCmd(t *testing.T, cmd tea.Cmd) {
+	t.Helper()
+
+	if cmd == nil {
+		t.Fatal("expected quit command, got nil")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("expected quit command to return tea.QuitMsg")
+	}
+}
+
 func mustModel(t *testing.T, model tea.Model) Model {
 	t.Helper()
 
@@ -1732,6 +2186,12 @@ func mustModel(t *testing.T, model tea.Model) Model {
 		t.Fatalf("unexpected model type %T", model)
 		return Model{}
 	}
+}
+
+func textInputWithValue(value string) textinput.Model {
+	input := textinput.New()
+	input.SetValue(value)
+	return input
 }
 
 func testProfile(name string, outputCount int) profile.Profile {

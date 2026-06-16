@@ -16,6 +16,7 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 type pickerItem string
@@ -94,11 +95,12 @@ func (d arrowDelegate) Render(w io.Writer, m list.Model, index int, item list.It
 }
 
 type saveDialogState struct {
-	Input  textinput.Model
-	List   list.Model
-	All    []profileListItem
-	Filter string
-	Action saveAction
+	Input   textinput.Model
+	List    list.Model
+	All     []profileListItem
+	Filter  string
+	Action  saveAction
+	Purpose saveDialogPurpose
 }
 
 type saveAction int
@@ -106,7 +108,16 @@ type saveAction int
 const (
 	saveActionOnly saveAction = iota
 	saveActionApply
+	saveActionSaveQuit
+	saveActionDiscardQuit
 	saveActionCancel
+)
+
+type saveDialogPurpose int
+
+const (
+	saveDialogProfile saveDialogPurpose = iota
+	saveDialogQuit
 )
 
 type canvasDragState struct {
@@ -293,8 +304,8 @@ func (m *Model) activateInspectorField() tea.Cmd {
 			numericInputScale,
 			m.selectedOutput,
 			fmt.Sprintf("Set Scale for %s", output.Name),
-			"Type a scale like 1, 1.25, or 1.67. Enter applies. Esc cancels.",
-			strconv.FormatFloat(output.Scale, 'f', 2, 64),
+			"Type a scale. Enter applies. Esc cancels.",
+			scaling.Format(output.Scale),
 		)
 	case 7, 8:
 		output := m.editOutputs[m.selectedOutput]
@@ -485,10 +496,77 @@ func (m Model) renderNumericInput() string {
 		m.styles.label.Render("Value"),
 		inputBox,
 	}
-	if m.input.Input.Err != nil {
+	if m.input.Input.Err != nil && m.input.Kind != numericInputScale {
 		body = append(body, "", m.styles.statusError.Render(m.input.Input.Err.Error()))
 	}
+	if m.input.Kind == numericInputScale {
+		body = append(body, m.scaleInputFeedback()...)
+	}
 	return m.renderModalFrame(m.input.Title, body)
+}
+
+func (m Model) scaleInputFeedback() []string {
+	if m.input == nil || m.input.OutputIndex < 0 || m.input.OutputIndex >= len(m.editOutputs) {
+		return nil
+	}
+
+	output := m.editOutputs[m.input.OutputIndex]
+	value, err := parseScaleInput(m.input.Input.Value())
+	if err != nil {
+		return []string{"", m.styles.statusError.Render(err.Error())}
+	}
+
+	logicalW, logicalH := scaling.LogicalSize(output.Width, output.Height, value)
+	if scaling.Sharp(output.Width, output.Height, value) {
+		return []string{
+			"",
+			m.styles.statusOK.Render(fmt.Sprintf(
+				"Sharp: %d / %s = %d, %d / %s = %d logical px.",
+				output.Width,
+				scaling.Format(value),
+				int(math.Round(logicalW)),
+				output.Height,
+				scaling.Format(value),
+				int(math.Round(logicalH)),
+			)),
+		}
+	}
+
+	suggestion, ok := scaling.ClosestSharp(output.Width, output.Height, value)
+	if !ok {
+		return []string{
+			"",
+			m.styles.warning.Render(fmt.Sprintf(
+				"⚠ Not sharp: final size has fractional px (%d / %s = %.2f, %d / %s = %.2f).",
+				output.Width,
+				scaling.Format(value),
+				logicalW,
+				output.Height,
+				scaling.Format(value),
+				logicalH,
+			)),
+		}
+	}
+
+	suggestedW, suggestedH := scaling.LogicalSize(output.Width, output.Height, suggestion)
+	return []string{
+		"",
+		m.styles.warning.Render(fmt.Sprintf(
+			"⚠ Not sharp: final size has fractional px (%d / %s = %.2f, %d / %s = %.2f).",
+			output.Width,
+			scaling.Format(value),
+			logicalW,
+			output.Height,
+			scaling.Format(value),
+			logicalH,
+		)),
+		m.styles.statusOK.Render(fmt.Sprintf(
+			"Closest sharp: %s -> %d x %d logical px. Enter applies it.",
+			scaling.Format(suggestion),
+			int(math.Round(suggestedW)),
+			int(math.Round(suggestedH)),
+		)),
+	}
 }
 
 func (m *Model) openProfileExecInput() tea.Cmd {
@@ -536,6 +614,14 @@ func (m Model) renderProfileExecInput() string {
 }
 
 func (m *Model) openSaveDialog() (tea.Model, tea.Cmd) {
+	return m.openSaveDialogFor(saveDialogProfile)
+}
+
+func (m *Model) openQuitSaveDialog() (tea.Model, tea.Cmd) {
+	return m.openSaveDialogFor(saveDialogQuit)
+}
+
+func (m *Model) openSaveDialogFor(purpose saveDialogPurpose) (tea.Model, tea.Cmd) {
 	input := textinput.New()
 	input.Prompt = ""
 	input.CharLimit = 64
@@ -543,10 +629,7 @@ func (m *Model) openSaveDialog() (tea.Model, tea.Cmd) {
 	input.TextStyle = m.styles.value
 	input.PlaceholderStyle = m.styles.subtle
 	input.Cursor.Style = lipgloss.NewStyle()
-	name := defaultProfileName()
-	if suggested := strings.TrimSpace(m.draftProfileName); suggested != "" {
-		name = suggested
-	}
+	name := m.saveDialogSuggestedName()
 	input.SetValue(name)
 	cmd := input.Focus()
 
@@ -554,6 +637,7 @@ func (m *Model) openSaveDialog() (tea.Model, tea.Cmd) {
 	for _, prof := range m.profiles {
 		items = append(items, profileListItem{name: prof.Name, updated: prof.UpdatedAt, outputs: len(prof.Outputs)})
 	}
+	prioritizeProfileListItem(items, name)
 
 	inner := list.NewDefaultDelegate()
 	inner.Styles.NormalTitle = m.styles.value
@@ -580,11 +664,12 @@ func (m *Model) openSaveDialog() (tea.Model, tea.Cmd) {
 	profileList.Styles.NoItems = m.styles.subtle
 
 	m.saveDialog = &saveDialogState{
-		Input:  input,
-		List:   profileList,
-		All:    items,
-		Filter: "",
-		Action: saveActionApply,
+		Input:   input,
+		List:    profileList,
+		All:     items,
+		Filter:  "",
+		Action:  defaultSaveAction(purpose),
+		Purpose: purpose,
 	}
 	m.mode = modeSave
 	m.saveOverwrite = ""
@@ -592,11 +677,39 @@ func (m *Model) openSaveDialog() (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) saveDialogSuggestedName() string {
+	if suggested := strings.TrimSpace(m.draftProfileName); suggested != "" {
+		return suggested
+	}
+	if suggested := strings.TrimSpace(m.matchedProfileName); suggested != "" {
+		return suggested
+	}
+	return defaultProfileName()
+}
+
+func prioritizeProfileListItem(items []profileListItem, name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for idx, item := range items {
+		if !strings.EqualFold(strings.TrimSpace(item.name), name) {
+			continue
+		}
+		if idx == 0 {
+			return
+		}
+		copy(items[1:idx+1], items[:idx])
+		items[0] = item
+		return
+	}
+}
+
 func (m *Model) cycleSaveAction(delta int) {
 	if m.saveDialog == nil {
 		return
 	}
-	actions := []saveAction{saveActionOnly, saveActionApply, saveActionCancel}
+	actions := saveActionsForPurpose(m.saveDialog.Purpose)
 	current := 0
 	for idx, action := range actions {
 		if action == m.saveDialog.Action {
@@ -618,6 +731,10 @@ func (m Model) saveActionLabel(action saveAction) string {
 	switch action {
 	case saveActionApply:
 		return "Save & Apply"
+	case saveActionSaveQuit:
+		return "Save, Apply & Quit"
+	case saveActionDiscardQuit:
+		return "Quit Without Saving"
 	case saveActionCancel:
 		return "Cancel"
 	default:
@@ -626,7 +743,11 @@ func (m Model) saveActionLabel(action saveAction) string {
 }
 
 func (m Model) renderSaveActionButtons() string {
-	actions := []saveAction{saveActionOnly, saveActionApply, saveActionCancel}
+	purpose := saveDialogProfile
+	if m.saveDialog != nil {
+		purpose = m.saveDialog.Purpose
+	}
+	actions := saveActionsForPurpose(purpose)
 	parts := make([]string, 0, len(actions))
 	for _, action := range actions {
 		style := m.styles.field
@@ -636,6 +757,20 @@ func (m Model) renderSaveActionButtons() string {
 		parts = append(parts, style.Render(m.saveActionLabel(action)))
 	}
 	return lipgloss.JoinHorizontal(lipgloss.Left, parts...)
+}
+
+func defaultSaveAction(purpose saveDialogPurpose) saveAction {
+	if purpose == saveDialogQuit {
+		return saveActionSaveQuit
+	}
+	return saveActionApply
+}
+
+func saveActionsForPurpose(purpose saveDialogPurpose) []saveAction {
+	if purpose == saveDialogQuit {
+		return []saveAction{saveActionSaveQuit, saveActionDiscardQuit, saveActionCancel}
+	}
+	return []saveAction{saveActionOnly, saveActionApply, saveActionCancel}
 }
 
 func (m *Model) rebuildSaveList(resetSelection bool) {
@@ -659,7 +794,7 @@ func (m *Model) rebuildSaveList(resetSelection bool) {
 	if len(filtered) == 0 {
 		return
 	}
-	if resetSelection {
+	if resetSelection || current == "" {
 		m.saveDialog.List.Select(0)
 		return
 	}
@@ -692,6 +827,9 @@ func (m Model) updateSaveKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	case "esc":
+		if m.saveDialog.Purpose == saveDialogQuit {
+			m.setStatusOK("Quit cancelled")
+		}
 		m.mode = modeMain
 		m.saveDialog = nil
 		m.saveOverwrite = ""
@@ -703,7 +841,13 @@ func (m Model) updateSaveKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleSaveAction(-1)
 		return m, nil
 	case "enter":
+		if m.selectedSaveAction() == saveActionDiscardQuit {
+			return m, tea.Quit
+		}
 		if m.selectedSaveAction() == saveActionCancel {
+			if m.saveDialog.Purpose == saveDialogQuit {
+				m.setStatusOK("Quit cancelled")
+			}
 			m.mode = modeMain
 			m.saveDialog = nil
 			m.saveOverwrite = ""
@@ -861,6 +1005,9 @@ func (m *Model) commitModePicker() tea.Cmd {
 	if output.ModeIndex < 0 {
 		output.ModeIndex = 0
 	}
+	if output.ModeUnsupported && output.ModeIndex > 0 {
+		output.ModeUnsupported = false
+	}
 	output.applyMode(output.Modes[output.ModeIndex])
 	m.layoutChanged()
 	m.setStatusOK(fmt.Sprintf("Selected %s for %s", output.DisplayMode(), output.Name))
@@ -944,6 +1091,25 @@ func (m *Model) applyNumericFieldValue(output *editableOutput, field int, value 
 	}
 }
 
+func parseScaleInput(raw string) (float64, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return 0, fmt.Errorf("scale is required")
+	}
+	if strings.HasSuffix(value, ".") {
+		return 0, fmt.Errorf("scale must be a number")
+	}
+
+	scale, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("scale must be a number")
+	}
+	if scale < scaling.MinScale || scale > scaling.MaxScale {
+		return 0, fmt.Errorf("scale must be between %s and %s", scaling.Format(scaling.MinScale), scaling.Format(scaling.MaxScale))
+	}
+	return scaling.Round(scale), nil
+}
+
 func (m *Model) updateNumericInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.input == nil {
 		m.mode = modeMain
@@ -960,7 +1126,11 @@ func (m *Model) updateNumericInputKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmd tea.Cmd
+	before := m.input.Input.Value()
 	m.input.Input, cmd = m.input.Input.Update(msg)
+	if m.input.Input.Value() != before {
+		m.input.Input.Err = nil
+	}
 	return m, cmd
 }
 
@@ -979,14 +1149,24 @@ func (m *Model) commitNumericInput() tea.Cmd {
 	var status string
 	switch m.input.Kind {
 	case numericInputScale:
-		value, err := strconv.ParseFloat(strings.TrimSpace(m.input.Input.Value()), 64)
+		typedValue, err := parseScaleInput(m.input.Input.Value())
 		if err != nil {
-			m.input.Input.Err = fmt.Errorf("scale must be a number")
+			m.input.Input.Err = err
 			return nil
 		}
-		value = clampFloat(value, 0.25, 4.0)
+		value := typedValue
+		if !scaling.Sharp(output.Width, output.Height, typedValue) {
+			if suggestion, ok := scaling.ClosestSharp(output.Width, output.Height, typedValue); ok {
+				value = suggestion
+			}
+		}
 		output.Scale = value
-		status = fmt.Sprintf("Scale set to %.2f for %s", value, output.Name)
+		status = fmt.Sprintf("Scale set to %s for %s", scaling.Format(value), output.Name)
+		if value != typedValue {
+			status += fmt.Sprintf(" (closest sharp scale for %s)", scaling.Format(typedValue))
+		} else if !scaling.Sharp(output.Width, output.Height, value) {
+			status += " (fractional logical size may look blurry)"
+		}
 	case numericInputPositionX:
 		value, err := strconv.Atoi(strings.TrimSpace(m.input.Input.Value()))
 		if err != nil {

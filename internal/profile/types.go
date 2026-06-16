@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 type OutputConfig struct {
@@ -85,8 +86,7 @@ func New(name string, outputs []OutputConfig) Profile {
 		UpdatedAt: now,
 		Outputs:   append([]OutputConfig(nil), outputs...),
 	}
-	p.normalizeIdentityRefs()
-	p.SortOutputs()
+	p.Normalize()
 	return p
 }
 
@@ -223,5 +223,15 @@ func (p *Profile) normalizeIdentityRefs() {
 
 func (p *Profile) Normalize() {
 	p.normalizeIdentityRefs()
+	for i := range p.Outputs {
+		p.Outputs[i].NormalizeScale()
+	}
 	p.SortOutputs()
+}
+
+func (o *OutputConfig) NormalizeScale() {
+	if o.Scale <= 0 {
+		return
+	}
+	o.Scale = scaling.Round(o.Scale)
 }

@@ -2,15 +2,17 @@ package profile
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 func MatchScore(p Profile, monitors []hypr.Monitor) int {
-	p.normalizeIdentityRefs()
+	p.Normalize()
 	if len(monitors) == 0 || len(p.Outputs) == 0 {
 		return 0
 	}
@@ -113,8 +115,8 @@ func ExactStateMatch(profiles []Profile, monitors []hypr.Monitor, rules []hypr.W
 }
 
 func profilesShareEffectiveState(a, b Profile, monitors []hypr.Monitor) bool {
-	a.normalizeIdentityRefs()
-	b.normalizeIdentityRefs()
+	a.Normalize()
+	b.Normalize()
 	if !outputsShareEffectiveState(a.Outputs, b.Outputs) {
 		return false
 	}
@@ -174,15 +176,37 @@ func outputConfigsShareEffectiveState(a, b OutputConfig) bool {
 	return a.NormalizedMode() == b.NormalizedMode() &&
 		a.X == b.X &&
 		a.Y == b.Y &&
-		clampStateScale(a.Scale) == clampStateScale(b.Scale) &&
+		stateScalesEqual(a.Width, a.Height, a.Scale, b.Scale) &&
 		a.Transform == b.Transform &&
-		a.Bitdepth == b.Bitdepth &&
-		a.CM == b.CM &&
-		a.SDRBrightness == b.SDRBrightness &&
-		a.SDRSaturation == b.SDRSaturation &&
+		effectiveBitdepth(a.Bitdepth) == effectiveBitdepth(b.Bitdepth) &&
+		effectiveCM(a.CM) == effectiveCM(b.CM) &&
+		effectiveSDRMultiplier(a.SDRBrightness) == effectiveSDRMultiplier(b.SDRBrightness) &&
+		effectiveSDRMultiplier(a.SDRSaturation) == effectiveSDRMultiplier(b.SDRSaturation) &&
 		a.SDRMinLuminance == b.SDRMinLuminance &&
 		a.SDRMaxLuminance == b.SDRMaxLuminance &&
 		firstNonEmpty(a.MirrorOf, "") == firstNonEmpty(b.MirrorOf, "")
+}
+
+func effectiveBitdepth(value int) int {
+	if value == 0 {
+		return 8
+	}
+	return value
+}
+
+func effectiveCM(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "srgb"
+	}
+	return value
+}
+
+func effectiveSDRMultiplier(value float64) float64 {
+	if value == 0 {
+		return 1
+	}
+	return value
 }
 
 func MonitorSetHash(monitors []hypr.Monitor) string {
@@ -221,7 +245,7 @@ func monitorStateSignature(m hypr.Monitor) string {
 		m.RefreshRate,
 		m.X,
 		m.Y,
-		strconv.FormatFloat(clampStateScale(m.Scale), 'f', 3, 64),
+		strconv.FormatFloat(normalizeStateScale(m.Width, m.Height, m.Scale), 'f', 5, 64),
 		m.Transform,
 		m.VRR,
 		m.CurrentFormat,
@@ -233,9 +257,28 @@ func monitorStateSignature(m hypr.Monitor) string {
 	)
 }
 
-func clampStateScale(scale float64) float64 {
-	if scale <= 0 {
-		return 1
+func normalizeStateScale(width, height int, scale float64) float64 {
+	return scaling.Round(scaling.Default(scale))
+}
+
+func stateScalesEqual(width, height int, a, b float64) bool {
+	a = normalizeStateScale(width, height, a)
+	b = normalizeStateScale(width, height, b)
+	return a == b || ScaleMatchesRoundedReadback(width, height, a, b)
+}
+
+func ScaleMatchesRoundedReadback(width, height int, savedScale, reportedScale float64) bool {
+	savedScale = normalizeStateScale(width, height, savedScale)
+	reportedScale = normalizeStateScale(width, height, reportedScale)
+	if savedScale == reportedScale {
+		return true
 	}
-	return scale
+	if !scaling.Sharp(width, height, savedScale) || scaling.Sharp(width, height, reportedScale) {
+		return false
+	}
+	return roundScaleForHyprlandReadback(savedScale) == roundScaleForHyprlandReadback(reportedScale)
+}
+
+func roundScaleForHyprlandReadback(scale float64) float64 {
+	return math.Round(scale*100) / 100
 }

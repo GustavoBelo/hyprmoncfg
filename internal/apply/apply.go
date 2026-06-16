@@ -16,6 +16,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/render"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 type applyMode int
@@ -505,7 +506,7 @@ func ValidateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hy
 			return fmt.Errorf("%s refresh mismatch: wanted %.2f, got %.2f", monitor.Name, output.Refresh, applied.RefreshRate)
 		}
 		if math.Abs(applied.Scale-output.Scale) > 0.02 {
-			return fmt.Errorf("%s scale mismatch: wanted %.2f, got %.2f", monitor.Name, output.Scale, applied.Scale)
+			return fmt.Errorf("%s scale mismatch: wanted %s, got %s", monitor.Name, scaling.Format(output.Scale), scaling.Format(applied.Scale))
 		}
 		if applied.Transform != output.Transform {
 			return fmt.Errorf("%s transform mismatch: wanted %d, got %d", monitor.Name, output.Transform, applied.Transform)
@@ -518,20 +519,13 @@ func ValidateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hy
 }
 
 func logicalOutputSize(output profile.OutputConfig) (int, int) {
-	scale := clampScale(output.Scale)
+	scale := scaling.Round(scaling.Default(output.Scale))
 	width := int(math.Round(float64(output.Width) / scale))
 	height := int(math.Round(float64(output.Height) / scale))
 	if output.Transform%2 == 1 {
 		width, height = height, width
 	}
 	return max(1, width), max(1, height)
-}
-
-func clampScale(scale float64) float64 {
-	if scale <= 0 {
-		return 1
-	}
-	return scale
 }
 
 func outputName(output profile.OutputConfig) string {

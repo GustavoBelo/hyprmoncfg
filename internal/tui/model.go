@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
+	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
 type uiMode int
@@ -120,6 +122,7 @@ type editableOutput struct {
 	Enabled           bool
 	Modes             []string
 	ModeIndex         int
+	ModeUnsupported   bool
 	Width             int
 	Height            int
 	Refresh           float64
@@ -240,15 +243,17 @@ type Model struct {
 	snapSeq       int
 	toastSeq      int
 
-	resetRequested   bool
-	status           string
-	statusErr        bool
-	dirty            bool
-	draftSaved       bool
-	draftProfileName string
-	draftExec        string
-	daemonOK         bool
-	refreshInFlight  bool
+	resetRequested     bool
+	status             string
+	statusErr          bool
+	dirty              bool
+	draftSaved         bool
+	draftProfileName   string
+	matchedProfileName string
+	draftExec          string
+	daemonOK           bool
+	refreshInFlight    bool
+	quitAfterApply     bool
 
 	width  int
 	height int
@@ -346,6 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case saveMsg:
 		if msg.err != nil {
+			m.quitAfterApply = false
 			m.setStatusErr(msg.err.Error())
 			m.mode = modeMain
 			return m, nil
@@ -361,11 +367,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.saveDialog = nil
 		m.saveOverwrite = ""
 		m.draftProfileName = msg.name
+		m.matchedProfileName = msg.name
 		m.draftSaved = true
 		m.mode = modeMain
+		m.quitAfterApply = false
 		if action == saveActionCancel {
 			m.setStatusOK("Save cancelled")
 			return m, nil
+		}
+		if action == saveActionSaveQuit {
+			m.quitAfterApply = true
+			return m, m.applyCmd(m.currentProfile(msg.name))
 		}
 		if action == saveActionApply {
 			return m, tea.Batch(
@@ -397,12 +409,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.draftProfileName = ""
 			m.draftExec = ""
 		}
+		if strings.EqualFold(strings.TrimSpace(msg.name), strings.TrimSpace(m.matchedProfileName)) {
+			m.matchedProfileName = ""
+		}
 		m.setStatusOK(fmt.Sprintf("Deleted profile %q", msg.name))
 		m.selectedProfile = clampIndex(m.selectedProfile, len(m.profiles))
 		return m, m.refreshCmd(false)
 
 	case applyMsg:
 		if msg.err != nil {
+			m.quitAfterApply = false
 			m.setStatusErr(msg.err.Error())
 			m.mode = modeMain
 			return m, nil
@@ -420,12 +436,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case revertMsg:
 		m.mode = modeMain
 		m.pending = nil
+		m.quitAfterApply = false
 		if msg.err != nil {
 			m.setStatusErr(fmt.Sprintf("Revert failed: %v", msg.err))
 			return m, nil
 		}
 		m.markClean()
 		m.draftProfileName = ""
+		m.matchedProfileName = ""
 		m.draftExec = ""
 		m.setStatusOK("Configuration reverted: " + msg.reason)
 		return m, m.refreshCmd(false)
@@ -501,6 +519,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		if m.dirty {
+			return m.openQuitSaveDialog()
+		}
 		return m, tea.Quit
 	case "1":
 		m.tab = tabLayout
@@ -514,6 +535,7 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.resetRequested = true
 		m.draftProfileName = ""
+		m.matchedProfileName = ""
 		m.draftExec = ""
 		m.markClean()
 		return m, m.refreshCmd(false)
@@ -692,6 +714,7 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		p := m.pending.profile
 		if target := strings.TrimSpace(p.Name); target != "" && target != "draft" {
 			m.draftProfileName = target
+			m.matchedProfileName = target
 		}
 
 		if err := m.postApply(p); err != nil {
@@ -702,6 +725,10 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.pending = nil
 		m.markClean()
 		m.setStatusOK("Configuration kept")
+		if m.quitAfterApply {
+			m.quitAfterApply = false
+			return m, tea.Quit
+		}
 		return m, tea.Batch(m.refreshCmd(false), toastCmd)
 	case "n", "esc":
 		snapshot := m.pending.snapshot
@@ -917,7 +944,8 @@ func (m Model) renderCanvas(width, height int) string {
 	for _, rect := range rects {
 		output := m.editOutputs[rect.index]
 		selected := rect.index == m.selectedOutput
-		paintMonitorCard(grid, rect, output, selected, m.canvasCardStyle(output, selected))
+		issue, _ := m.canvasOutputIssue(output)
+		paintMonitorCard(grid, rect, output, selected, m.canvasCardStyle(output, selected), issue, m.styles.palette.warning)
 	}
 	if m.snap != nil {
 		for _, mark := range m.snap.Marks {
@@ -967,9 +995,21 @@ func (m Model) buildInspectorLayout(output editableOutput, innerWidth int, compa
 		if shortLabels {
 			labelText = layoutFieldShortLabel(idx)
 		}
-		value := m.styles.value.Render(m.layoutFieldValue(output, idx))
+		valueText := m.layoutFieldValue(output, idx)
+		issue, hasIssue := m.layoutFieldIssue(output, idx)
+		valueStyle := m.styles.value
+		if hasIssue {
+			valueStyle = m.styles.warning
+		}
 		if m.layoutFocus == layoutFocusInspector && idx == m.inspectorField && m.tab == tabLayout {
-			value = m.styles.focused.Render(value)
+			valueStyle = m.styles.focused
+			if hasIssue {
+				valueStyle = withFG(valueStyle, m.styles.palette.warning)
+			}
+		}
+		value := valueStyle.Render(valueText)
+		if hasIssue {
+			value = lipgloss.JoinHorizontal(lipgloss.Left, value, " ", m.styles.warning.Render("⚠ "+issue))
 		}
 		label := m.styles.label.Render(fmt.Sprintf("%-*s", labelWidth, labelText))
 		fieldRows[idx] = len(lines)
@@ -1058,7 +1098,7 @@ func (m Model) renderProfilesView(height int) string {
 			if label == "" {
 				label = output.Name
 			}
-			line := fmt.Sprintf("  %s %s %s pos:%dx%d scale:%.2f", label, state, output.NormalizedMode(), output.X, output.Y, output.Scale)
+			line := fmt.Sprintf("  %s %s %s pos:%dx%d scale:%s", label, state, output.NormalizedMode(), output.X, output.Y, scaling.Format(output.Scale))
 			if output.MirrorOf != "" {
 				mirrorLabel := outputDisplayLabel(output.MirrorOf, selected.Outputs)
 				line += fmt.Sprintf(" mirrors:%s", mirrorLabel)
@@ -1193,12 +1233,22 @@ func (m Model) renderSavePrompt() string {
 	if m.saveDialog == nil {
 		return m.renderModalFrame("Save Profile", nil)
 	}
+	title := "Save Profile"
+	body := make([]string, 0, 12)
+	if m.saveDialog.Purpose == saveDialogQuit {
+		title = "Save Before Quitting"
+		body = append(body,
+			m.styles.warning.Render("You have unsaved monitor changes."),
+			m.styles.subtle.Render("Save and apply them before quitting."),
+			"",
+		)
+	}
 	inputBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(m.styles.palette.paneActiveBorder)).
 		Padding(0, 1).
 		Render(m.saveDialog.Input.View())
-	body := []string{
+	body = append(body,
 		m.styles.label.Render("Name"),
 		inputBox,
 		"",
@@ -1207,18 +1257,20 @@ func (m Model) renderSavePrompt() string {
 		m.styles.label.Render("Action"),
 		m.renderSaveActionButtons(),
 		"",
-	}
+	)
 	if status := m.renderErrorStatus(); status != "" {
 		body = append(body, status, "")
 	}
 	body = append(body, m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render("Type to filter names. Up/Down selects an existing profile. Tab switches action. Enter confirms. Esc cancels."))
-	return m.renderModalFrame("Save Profile", body)
+	return m.renderModalFrame(title, body)
 }
 
 func (m Model) renderSaveConfirm() string {
 	consequence := "The existing profile will be replaced with the current draft."
 	if m.saveDialog != nil && m.saveDialog.Action == saveActionApply {
 		consequence = "The existing profile will be replaced and then applied to the live layout."
+	} else if m.saveDialog != nil && m.saveDialog.Action == saveActionSaveQuit {
+		consequence = "The existing profile will be replaced, applied, then hyprmoncfg will quit."
 	}
 
 	body := []string{
@@ -1245,9 +1297,16 @@ func (m Model) renderConfirm() string {
 		m.styles.subtle.Render(fmt.Sprintf("Keep it within %ds or the previous state will be restored.", remaining)),
 		"",
 		m.renderStatus(),
-		m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render("Enter or y keeps the change. Esc or n reverts it."),
+		m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render(m.confirmApplyHelp()),
 	}
 	return m.renderModalFrame("Confirm Apply", body)
+}
+
+func (m Model) confirmApplyHelp() string {
+	if m.quitAfterApply {
+		return "Enter or y keeps the change and quits. Esc or n reverts it."
+	}
+	return "Enter or y keeps the change. Esc or n reverts it."
 }
 
 func (m Model) renderToast() string {
@@ -1382,12 +1441,23 @@ func (m *Model) loadLiveState() {
 
 	settings := profile.WorkspaceSettingsFromHypr(m.monitors, m.workspaceRules)
 	m.workspaceEdit = workspaceEditorFromSettings(settings, m.editOutputs)
+	best, _, bestOK := profile.BestMatch(m.profiles, m.monitors)
+	m.matchedProfileName = ""
+	var matchedProfile *profile.Profile
 	if matched, ok := profile.ExactStateMatch(m.profiles, m.monitors, m.workspaceRules); ok {
 		m.draftProfileName = matched.Name
+		m.matchedProfileName = matched.Name
 		m.draftExec = matched.Exec
+		matchedProfile = &matched
 	} else {
 		m.draftProfileName = ""
 		m.draftExec = ""
+		if bestOK {
+			m.matchedProfileName = best.Name
+		}
+	}
+	if matchedProfile != nil {
+		m.recoverRoundedScaleReadback(*matchedProfile)
 	}
 
 	// Preserve fields that hyprctl cannot accurately report, unless the
@@ -1412,7 +1482,7 @@ func (m *Model) loadLiveState() {
 		}
 	}
 	if len(prevOutputs) == 0 || m.resetRequested {
-		if best, _, ok := profile.BestMatch(m.profiles, m.monitors); ok {
+		if bestOK {
 			for i := range m.editOutputs {
 				if saved, ok := best.OutputByKey(m.editOutputs[i].Key); ok {
 					m.editOutputs[i].VRR = saved.VRR
@@ -1461,6 +1531,7 @@ func (m *Model) loadProfile(p profile.Profile) {
 	m.dirty = true
 	m.draftSaved = true
 	m.draftProfileName = p.Name
+	m.matchedProfileName = p.Name
 	m.draftExec = p.Exec
 	m.setStatusOK(fmt.Sprintf("Loaded profile %q into editor", p.Name))
 
@@ -1488,6 +1559,23 @@ func (m *Model) recoverMirroredIdentity() {
 			if strings.TrimSpace(m.editOutputs[i].Make+" "+m.editOutputs[i].Model) != "" {
 				break
 			}
+		}
+	}
+}
+
+func (m *Model) recoverRoundedScaleReadback(p profile.Profile) {
+	p.Normalize()
+	for i := range m.editOutputs {
+		output := &m.editOutputs[i]
+		if !output.Enabled {
+			continue
+		}
+		saved, ok := p.OutputByKey(output.Key)
+		if !ok || !saved.Enabled {
+			continue
+		}
+		if profile.ScaleMatchesRoundedReadback(output.Width, output.Height, saved.Scale, output.Scale) {
+			output.Scale = scaling.Round(saved.Scale)
 		}
 	}
 }
@@ -1708,9 +1796,12 @@ func (m *Model) adjustInspectorField(delta int) {
 			return
 		}
 		output.ModeIndex = wrapIndex(output.ModeIndex+delta, len(output.Modes))
+		if output.ModeUnsupported && output.ModeIndex > 0 {
+			output.ModeUnsupported = false
+		}
 		output.applyMode(output.Modes[output.ModeIndex])
 	case 2:
-		output.Scale = clampFloat(output.Scale+float64(delta)*0.05, 0.25, 4.0)
+		output.Scale = scaling.Round(clampFloat(output.Scale+float64(delta)*0.05, scaling.MinScale, scaling.MaxScale))
 	case 3:
 		depths := []int{8, 10, 16}
 		current := 0
@@ -2018,7 +2109,7 @@ func (m Model) layoutFieldValue(output editableOutput, field int) string {
 		}
 		return fmt.Sprintf("%s (%d/%d)", output.DisplayMode(), output.ModeIndex+1, len(output.Modes))
 	case 2:
-		return fmt.Sprintf("%.2f", output.Scale)
+		return scaling.Format(output.Scale)
 	case 3:
 		return fmt.Sprintf("%d", output.Bitdepth)
 	case 4:
@@ -2075,6 +2166,109 @@ func (m Model) layoutFieldValue(output editableOutput, field int) string {
 	default:
 		return ""
 	}
+}
+
+func (m Model) layoutFieldIssue(output editableOutput, field int) (string, bool) {
+	switch field {
+	case 1:
+		if output.ModeUnsupported || output.ModeIndex < 0 || (len(output.Modes) > 0 && output.ModeIndex >= len(output.Modes)) {
+			return "unsupported", true
+		}
+	case 2:
+		if output.Enabled && !scaling.Sharp(output.Width, output.Height, output.Scale) {
+			return "fractional px", true
+		}
+	case 3:
+		if output.Bitdepth != 0 && output.Bitdepth != 8 && output.Bitdepth != 10 && output.Bitdepth != 16 {
+			return "invalid", true
+		}
+	case 4:
+		if !validStringOption(output.CM, "", "srgb", "auto", "wide", "hdr", "hdredid", "dcip3", "dp3", "adobe", "edid") {
+			return "invalid", true
+		}
+	case 5:
+		if output.VRR < 0 || output.VRR > 2 {
+			return "invalid", true
+		}
+	case 6:
+		if output.Transform < 0 || output.Transform > 7 {
+			return "invalid", true
+		}
+	case 9:
+		if output.MirrorOf != "" {
+			if output.MirrorOf == output.Key {
+				return "self mirror", true
+			}
+			if !m.outputKeyExists(output.MirrorOf) {
+				return "missing target", true
+			}
+		}
+	case 10:
+		if output.SDRBrightness < 0 || output.SDRBrightness > 3 {
+			return "out of range", true
+		}
+	case 11:
+		if output.SDRSaturation < 0 || output.SDRSaturation > 3 {
+			return "out of range", true
+		}
+	case 12:
+		if output.SDRMinLuminance < 0 || output.SDRMinLuminance > 1 {
+			return "out of range", true
+		}
+	case 13:
+		if output.SDRMaxLuminance < 0 || output.SDRMaxLuminance > 1000 {
+			return "out of range", true
+		}
+	case 14:
+		if !validStringOption(output.SDREOTF, "", "default", "gamma22", "srgb") {
+			return "invalid", true
+		}
+	case 15:
+		if output.MinLuminance < 0 || output.MinLuminance > 1000 {
+			return "out of range", true
+		}
+	case 16:
+		if output.MaxLuminance < 0 || output.MaxLuminance > 2000 {
+			return "out of range", true
+		}
+	case 17:
+		if output.MaxAvgLuminance < 0 || output.MaxAvgLuminance > 2000 {
+			return "out of range", true
+		}
+	case 18:
+		if output.SupportsWideColor < -1 || output.SupportsWideColor > 1 {
+			return "invalid", true
+		}
+	case 19:
+		if output.SupportsHDR < -1 || output.SupportsHDR > 1 {
+			return "invalid", true
+		}
+	case 20:
+		icc := strings.TrimSpace(output.ICC)
+		if icc != "" && !filepath.IsAbs(icc) {
+			return "needs abs path", true
+		}
+	}
+	return "", false
+}
+
+func (m Model) outputKeyExists(key string) bool {
+	for _, output := range m.editOutputs {
+		if output.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+func validStringOption(value string, allowed ...string) bool {
+	value = strings.TrimSpace(value)
+	for _, option := range allowed {
+		if value == option {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) workspaceFieldValue(field int) string {
@@ -2208,7 +2402,7 @@ func editableOutputFromMonitor(m hypr.Monitor, matchCounts map[string]int) edita
 		Refresh:         m.RefreshRate,
 		X:               m.X,
 		Y:               m.Y,
-		Scale:           clampFloat(m.Scale, 0.25, 4.0),
+		Scale:           scaling.Round(scaling.Clamp(m.Scale)),
 		VRR:             int(m.VRR),
 		Transform:       m.Transform,
 		Focused:         m.Focused,
@@ -2225,6 +2419,7 @@ func editableOutputFromMonitor(m hypr.Monitor, matchCounts map[string]int) edita
 	}
 
 	output.Modes = normalizeModes(m.AvailableModes, m.ModeString())
+	output.ModeUnsupported = len(m.AvailableModes) > 0 && indexOf(m.AvailableModes, m.ModeString()) < 0
 	output.ModeIndex = indexOf(output.Modes, m.ModeString())
 	if output.ModeIndex < 0 {
 		output.ModeIndex = 0
@@ -2250,7 +2445,7 @@ func editableOutputFromProfile(saved profile.OutputConfig, live hypr.Monitor, ha
 		Refresh:           saved.Refresh,
 		X:                 saved.X,
 		Y:                 saved.Y,
-		Scale:             clampFloat(saved.Scale, 0.25, 4.0),
+		Scale:             scaling.Round(scaling.Clamp(saved.Scale)),
 		VRR:               saved.VRR,
 		Transform:         saved.Transform,
 		IsInternal:        isInternalOutputName(saved.Name),
@@ -2280,6 +2475,7 @@ func editableOutputFromProfile(saved profile.OutputConfig, live hypr.Monitor, ha
 		output.IsInternal = live.IsInternal()
 		output.ActiveWorkspace = live.ActiveWorkspace.Name
 		output.Modes = normalizeModes(live.AvailableModes, mode)
+		output.ModeUnsupported = len(live.AvailableModes) > 0 && indexOf(live.AvailableModes, mode) < 0
 	} else {
 		output.Modes = normalizeModes(nil, mode)
 	}
@@ -2438,7 +2634,7 @@ func (o editableOutput) profileOutput() profile.OutputConfig {
 		Refresh:           o.Refresh,
 		X:                 o.X,
 		Y:                 o.Y,
-		Scale:             o.Scale,
+		Scale:             scaling.Round(scaling.Clamp(o.Scale)),
 		VRR:               o.VRR,
 		Transform:         o.Transform,
 		MirrorOf:          o.MirrorOf,
@@ -2459,10 +2655,7 @@ func (o editableOutput) profileOutput() profile.OutputConfig {
 }
 
 func (o editableOutput) logicalSize() (int, int) {
-	scale := o.Scale
-	if scale <= 0 {
-		scale = 1
-	}
+	scale := scaling.Round(scaling.Clamp(o.Scale))
 	width := int(math.Round(float64(o.Width) / scale))
 	height := int(math.Round(float64(o.Height) / scale))
 	if o.Transform%2 == 1 {
@@ -2512,18 +2705,52 @@ func (o editableOutput) cardModelLabel() string {
 }
 
 func (o editableOutput) cardLines(maxLines int, fg string, muted string) []cardLine {
+	return o.cardLinesWithIssue(maxLines, fg, muted, "", "")
+}
+
+func (o editableOutput) cardLinesWithIssue(maxLines int, fg string, muted string, issue string, issueFG string) []cardLine {
 	if maxLines <= 0 {
 		return nil
 	}
 
-	scaleLayout := fmt.Sprintf("%.2fx=%s", o.Scale, strings.ReplaceAll(o.layoutSizeLabel(), " ", ""))
+	scaleLayout := fmt.Sprintf("%sx=%s", scaling.Format(o.Scale), strings.ReplaceAll(o.layoutSizeLabel(), " ", ""))
 	position := fmt.Sprintf("pos %d,%d", o.X, o.Y)
+	name := o.Name
+	if issue != "" {
+		name += " ⚠"
+	}
+	issueLine := cardLine{text: "⚠ " + issue, fg: issueFG, bold: true}
 	full := []cardLine{
-		{text: o.Name, fg: fg, bold: true},
+		{text: name, fg: fg, bold: true},
 		{text: o.cardModelLabel(), fg: muted},
 		{text: o.DisplayMode(), fg: muted},
 		{text: scaleLayout, fg: muted},
 		{text: position, fg: muted},
+	}
+	if issue != "" {
+		warnFull := []cardLine{
+			full[0],
+			issueLine,
+			full[1],
+			full[2],
+			full[3],
+			full[4],
+		}
+		if maxLines >= len(warnFull) {
+			return warnFull
+		}
+		switch maxLines {
+		case 5:
+			return []cardLine{full[0], issueLine, full[2], full[3], full[4]}
+		case 4:
+			return []cardLine{full[0], issueLine, full[2], cardLine{text: scaleLayout + "  " + position, fg: muted}}
+		case 3:
+			return []cardLine{full[0], issueLine, cardLine{text: scaleLayout + "  " + position, fg: muted}}
+		case 2:
+			return []cardLine{full[0], issueLine}
+		default:
+			return []cardLine{full[0]}
+		}
 	}
 	if maxLines >= len(full) {
 		return full
@@ -2602,11 +2829,26 @@ func (m Model) canvasCardStyle(output editableOutput, selected bool) canvasCardC
 			muted:  p.cardSelectedMuted,
 		}
 	}
+	if _, ok := m.canvasOutputIssue(output); ok {
+		colors.border = p.warning
+	}
 	if m.layoutErr != nil && m.isOutputOverlapping(output) {
 		colors.border = "#FF0000"
 		colors.fg = "#FF0000"
 	}
 	return colors
+}
+
+func (m Model) canvasOutputIssue(output editableOutput) (string, bool) {
+	for idx := range layoutFields {
+		if issue, ok := m.layoutFieldIssue(output, idx); ok {
+			return issue, true
+		}
+	}
+	if m.layoutErr != nil && m.isOutputOverlapping(output) {
+		return "overlap", true
+	}
+	return "", false
 }
 
 func renderCanvasLegendItem(label string, colors canvasCardColors) string {
@@ -2624,7 +2866,7 @@ func renderCanvasLegendItem(label string, colors canvasCardColors) string {
 	return style.Render(label)
 }
 
-func paintMonitorCard(grid [][]canvasCell, rect canvasRect, output editableOutput, selected bool, colors canvasCardColors) {
+func paintMonitorCard(grid [][]canvasCell, rect canvasRect, output editableOutput, selected bool, colors canvasCardColors, issue string, issueFG string) {
 	if len(grid) == 0 || len(grid[0]) == 0 {
 		return
 	}
@@ -2657,7 +2899,7 @@ func paintMonitorCard(grid [][]canvasCell, rect canvasRect, output editableOutpu
 	grid[y2][x2] = canvasCell{ch: '╯', fg: colors.border, bg: colors.bg, bold: selected}
 
 	availableHeight := y2 - y1 - 1
-	lines := output.cardLines(max(1, availableHeight), colors.fg, colors.muted)
+	lines := output.cardLinesWithIssue(max(1, availableHeight), colors.fg, colors.muted, issue, issueFG)
 	startY := y1 + 1 + max(0, (availableHeight-len(lines))/2)
 	for idx, line := range lines {
 		y := startY + idx
