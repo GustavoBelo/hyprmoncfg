@@ -43,6 +43,13 @@ hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-awar
 
 ## Install
 
+Nix / NixOS, with a Nixpkgs revision that includes the 2026-06-21 merge:
+
+```bash
+nix run nixpkgs#hyprmoncfg
+nix profile install nixpkgs#hyprmoncfg
+```
+
 Arch Linux:
 
 ```bash
@@ -55,11 +62,30 @@ Latest `main` from AUR:
 yay -S hyprmoncfg-git
 ```
 
-Void Linux [(Unofficial Repo)](https://github.com/Event-Horizon-VL/blackhole-vl):
+Void Linux, via the unofficial [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) repo:
 
 ```bash
-echo "repository=https://mirror.black-hole.dev/$(uname -m)/" | sudo tee /etc/xbps.d/20-repository-extra.conf
-sudo xbps-install -S hyprmoncfg
+printf 'repository=https://mirror.black-hole.dev/%s/\n' "$(uname -m)" | sudo tee /etc/xbps.d/00-repository-blackhole.conf
+sudo xbps-install -S
+sudo xbps-install -S hyprland hyprmoncfg
+```
+
+The Blackhole-vl package is maintained outside official Void and may lag behind
+upstream releases.
+
+Gentoo GURU:
+
+```bash
+sudo eselect repository enable guru
+sudo emaint sync -r guru
+sudo emerge gui-apps/hyprmoncfg
+```
+
+Fedora COPR:
+
+```bash
+sudo dnf copr enable paolino/hyprmoncfg
+sudo dnf install hyprmoncfg
 ```
 
 Build from source:
@@ -101,11 +127,19 @@ hyprmoncfg apply desk
 
 ## Enable automatic switching
 
-After an AUR install:
+After installing from a package that ships the systemd user unit, such as AUR,
+Nixpkgs, Gentoo GURU, or Fedora COPR:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
+```
+
+After a Blackhole-vl install on Void Linux, autostart the daemon from your
+Hyprland config because the package does not ship a systemd user unit:
+
+```text
+exec-once = hyprmoncfgd
 ```
 
 After a manual install:

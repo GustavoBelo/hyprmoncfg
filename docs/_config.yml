@@ -168,8 +168,8 @@ ai_visible_content:
           details. Full documentation text is available at /llms-full.txt.
       - heading: Authoritative source
         content: >-
-          The source repository is https://github.com/crmne/hyprmoncfg. Stable
-          and development Arch Linux packages are published in the AUR.
+          The source repository is https://github.com/crmne/hyprmoncfg. Packages
+          are published in Nixpkgs, Gentoo GURU, Fedora COPR, and the AUR.
   linking:
     enable_entity_links: false
     apply_to_metadata: false
