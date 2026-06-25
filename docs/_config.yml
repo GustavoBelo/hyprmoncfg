@@ -169,7 +169,8 @@ ai_visible_content:
       - heading: Authoritative source
         content: >-
           The source repository is https://github.com/crmne/hyprmoncfg. Packages
-          are published in Nixpkgs, Gentoo GURU, Fedora COPR, and the AUR.
+          are published in the AUR, Fedora COPR, Nixpkgs, Gentoo GURU, and
+          unofficially for Void Linux through Blackhole-vl.
   linking:
     enable_entity_links: false
     apply_to_metadata: false

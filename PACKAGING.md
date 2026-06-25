@@ -101,12 +101,12 @@ Current status as of 2026-06-25:
 | Channel | Status | Notes |
 |---|---|---|
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) and VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) packages are maintained in separate AUR repos. |
-| Nixpkgs | Merged | [`NixOS/nixpkgs#524473`](https://github.com/NixOS/nixpkgs/pull/524473) was merged on 2026-06-21. The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg` on revisions containing that merge. |
-| Gentoo GURU | Published | `gui-apps/hyprmoncfg` is in [Gentoo GURU](https://github.com/gentoo/guru/tree/master/gui-apps/hyprmoncfg). |
 | Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) has successful 1.8.0 builds for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
-| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) is open with a successful pipeline; no package is in the Alpine package index yet. |
+| Nixpkgs | Published | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. |
+| Gentoo GURU | Published | `gui-apps/hyprmoncfg` is in [Gentoo GURU](https://github.com/gentoo/guru/tree/master/gui-apps/hyprmoncfg). |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
 | Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes prebuilt `hyprland` and `hyprmoncfg` packages outside official Void. As of 2026-06-25 its mirror has `hyprland-0.55.4_1` and `hyprmoncfg-1.7.0_1` for `x86_64`, `aarch64`, and musl variants. |
+| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) is open with a successful pipeline; no package is in the Alpine package index yet. |
 | Debian and Ubuntu | Staged | Source package artifacts are staged externally, but official inclusion still needs Debian policy review and sponsor/upload flow. |
 | openSUSE OBS | Staged | RPM payload is ready for OBS, but not published. |
 | SlackBuilds.org | Staged | SlackBuild payload is ready for manual submission, but not published. |

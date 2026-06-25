@@ -14,22 +14,19 @@ This is especially useful if you move between setups regularly. A conference pro
 
 ## Setup
 
-If you installed from a package that ships the systemd user unit, such as AUR,
-Nixpkgs, Gentoo GURU, or Fedora COPR, just enable it:
+AUR, Fedora COPR, Nixpkgs, and Gentoo GURU:
 
 ```bash
 systemctl --user enable --now hyprmoncfgd
 ```
 
-If you installed from Blackhole-vl on Void Linux, autostart the daemon from
-Hyprland config because that package does not ship the systemd user unit:
+Void Linux with Blackhole-vl:
 
 ```text
 exec-once = hyprmoncfgd
 ```
 
-If you built from source, or your package manager did not expose the user unit
-to systemd:
+Manual install:
 
 ```bash
 mkdir -p ~/.config/systemd/user

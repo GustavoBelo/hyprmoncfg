@@ -6,21 +6,29 @@ nav_order: 1
 
 ## Install
 
-### Nix / NixOS
+### Arch Linux
 
-Run from a `nixpkgs` channel or revision that includes the 2026-06-21 merge:
+```bash
+yay -S hyprmoncfg
+```
+
+```bash
+yay -S hyprmoncfg-git
+```
+
+### Fedora COPR
+
+```bash
+sudo dnf copr enable paolino/hyprmoncfg
+sudo dnf install hyprmoncfg
+```
+
+### Nix / NixOS
 
 ```bash
 nix run nixpkgs#hyprmoncfg
-```
-
-Install into your user profile:
-
-```bash
 nix profile install nixpkgs#hyprmoncfg
 ```
-
-On NixOS, add it to your system packages:
 
 ```nix
 environment.systemPackages = with pkgs; [
@@ -28,92 +36,23 @@ environment.systemPackages = with pkgs; [
 ];
 ```
 
-The Nixpkgs package wraps `hyprmoncfg` and `hyprmoncfgd` so `hyprctl` is on
-`PATH`, and it includes the desktop entry, icon, and systemd user unit.
-
-### Arch Linux
-
-Stable release from AUR:
-
-```bash
-yay -S hyprmoncfg
-```
-
-Latest `main` from AUR:
-
-```bash
-yay -S hyprmoncfg-git
-```
-
-The package installs:
-
-- `hyprmoncfg` to launch the TUI or use the CLI
-- `hyprmoncfgd` for automatic profile switching
-- a user service unit at `/usr/lib/systemd/user/hyprmoncfgd.service`
-
-### Void Linux
-
-Void does not package Hyprland or hyprmoncfg in the official repository. The
-unofficial [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl)
-repository publishes prebuilt Hyprland packages, including `hyprmoncfg`.
-
-Add the current Blackhole-vl mirror:
-
-```bash
-printf 'repository=https://mirror.black-hole.dev/%s/\n' "$(uname -m)" | sudo tee /etc/xbps.d/00-repository-blackhole.conf
-```
-
-Refresh repositories and accept the repository fingerprint:
-
-```bash
-sudo xbps-install -S
-```
-
-Install Hyprland and hyprmoncfg:
-
-```bash
-sudo xbps-install -S hyprland hyprmoncfg
-```
-
-The Blackhole-vl package currently installs:
-
-- `hyprmoncfg` to launch the TUI or use the CLI
-- `hyprmoncfgd` for automatic profile switching
-
-It does not install the upstream desktop entry, icon, or systemd user unit, and
-it may lag behind upstream hyprmoncfg releases.
-
 ### Gentoo GURU
-
-Enable the GURU repository:
 
 ```bash
 sudo eselect repository enable guru
 sudo emaint sync -r guru
-```
-
-Install the package:
-
-```bash
 sudo emerge gui-apps/hyprmoncfg
 ```
 
-### Fedora COPR
+### Void Linux
 
-Enable the COPR repository:
-
-```bash
-sudo dnf copr enable paolino/hyprmoncfg
-```
-
-Install the package:
+Unofficial [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl):
 
 ```bash
-sudo dnf install hyprmoncfg
+printf 'repository=https://mirror.black-hole.dev/%s/\n' "$(uname -m)" | sudo tee /etc/xbps.d/00-repository-blackhole.conf
+sudo xbps-install -S
+sudo xbps-install -S hyprland hyprmoncfg
 ```
-
-The COPR currently builds for Fedora 44 and Fedora rawhide on `x86_64` and
-`aarch64`.
 
 ### Build from source
 
@@ -130,13 +69,6 @@ go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
 install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
-
-Most packaged installs include:
-
-- `hyprmoncfg` to launch the TUI or use the CLI
-- `hyprmoncfgd` for automatic profile switching
-- the desktop entry and icon
-- on systemd-based package targets, a user service unit
 
 ## Configure Hyprland
 
@@ -218,22 +150,20 @@ Before you turn on automatic switching, make sure your profile library reflects 
 
 On laptops, you do not need a separate closed-lid profile. Save the profile for the monitors you attach at that desk. When the lid is closed and an external monitor is connected, hyprmoncfg forces the internal laptop panel off for the apply and moves workspaces away from it.
 
-If you installed from a package that ships the systemd user unit, such as AUR,
-Nixpkgs, Gentoo GURU, or Fedora COPR:
+AUR, Fedora COPR, Nixpkgs, and Gentoo GURU:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
 
-If you installed from Blackhole-vl on Void Linux, autostart the daemon from your
-Hyprland config instead. In legacy `hyprland.conf`:
+Void Linux with Blackhole-vl, in legacy `hyprland.conf`:
 
 ```text
 exec-once = hyprmoncfgd
 ```
 
-In `hyprland.lua`:
+Void Linux with Blackhole-vl, in `hyprland.lua`:
 
 ```lua
 hl.on("hyprland.start", function()
@@ -241,7 +171,7 @@ hl.on("hyprland.start", function()
 end)
 ```
 
-If you built from source and installed into `~/.local/bin`:
+Manual install:
 
 ```bash
 mkdir -p ~/.config/systemd/user

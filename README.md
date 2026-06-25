@@ -43,35 +43,27 @@ hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-awar
 
 ## Install
 
-Nix / NixOS, with a Nixpkgs revision that includes the 2026-06-21 merge:
+Arch Linux:
+
+```bash
+yay -S hyprmoncfg
+# or
+yay -S hyprmoncfg-git
+```
+
+Fedora COPR:
+
+```bash
+sudo dnf copr enable paolino/hyprmoncfg
+sudo dnf install hyprmoncfg
+```
+
+Nix / NixOS:
 
 ```bash
 nix run nixpkgs#hyprmoncfg
 nix profile install nixpkgs#hyprmoncfg
 ```
-
-Arch Linux:
-
-```bash
-yay -S hyprmoncfg
-```
-
-Latest `main` from AUR:
-
-```bash
-yay -S hyprmoncfg-git
-```
-
-Void Linux, via the unofficial [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) repo:
-
-```bash
-printf 'repository=https://mirror.black-hole.dev/%s/\n' "$(uname -m)" | sudo tee /etc/xbps.d/00-repository-blackhole.conf
-sudo xbps-install -S
-sudo xbps-install -S hyprland hyprmoncfg
-```
-
-The Blackhole-vl package is maintained outside official Void and may lag behind
-upstream releases.
 
 Gentoo GURU:
 
@@ -81,11 +73,12 @@ sudo emaint sync -r guru
 sudo emerge gui-apps/hyprmoncfg
 ```
 
-Fedora COPR:
+Void Linux, via the unofficial [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) repo:
 
 ```bash
-sudo dnf copr enable paolino/hyprmoncfg
-sudo dnf install hyprmoncfg
+printf 'repository=https://mirror.black-hole.dev/%s/\n' "$(uname -m)" | sudo tee /etc/xbps.d/00-repository-blackhole.conf
+sudo xbps-install -S
+sudo xbps-install -S hyprland hyprmoncfg
 ```
 
 Build from source:
@@ -127,22 +120,20 @@ hyprmoncfg apply desk
 
 ## Enable automatic switching
 
-After installing from a package that ships the systemd user unit, such as AUR,
-Nixpkgs, Gentoo GURU, or Fedora COPR:
+AUR, Fedora COPR, Nixpkgs, and Gentoo GURU:
 
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
 
-After a Blackhole-vl install on Void Linux, autostart the daemon from your
-Hyprland config because the package does not ship a systemd user unit:
+Void Linux with Blackhole-vl:
 
 ```text
 exec-once = hyprmoncfgd
 ```
 
-After a manual install:
+Manual install:
 
 ```bash
 mkdir -p ~/.config/systemd/user
