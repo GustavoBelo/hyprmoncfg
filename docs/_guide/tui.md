@@ -36,10 +36,11 @@ While the TUI is open, it also refreshes live monitor state in the background. P
 | Arrow keys | Move by 100px |
 | `Shift` + arrows | Move by 10px |
 | `Ctrl` + arrows | Move by 1px |
+| `Alt` + arrows | Snap beside the nearest enabled monitor |
 | `[` `]` | Cycle selected monitor |
 | `Tab` | Switch focus between canvas and inspector |
 
-Snap hints appear while dragging, but keyboard movement is freeform -- you're never forced into a grid.
+Dragging snaps to nearby edges on release. `Alt` + arrows place the selected monitor flush left, right, above, or below the nearest enabled monitor and center it on the other axis. Regular keyboard movement remains freeform.
 
 ### Inspector
 

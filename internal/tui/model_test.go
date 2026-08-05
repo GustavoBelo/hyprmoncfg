@@ -1972,6 +1972,112 @@ func TestApplySelectedSnapAlignsBottomEdge(t *testing.T) {
 	}
 }
 
+func TestSnapSelectedOutputPlacesItAroundNearestMonitor(t *testing.T) {
+	tests := []struct {
+		name         string
+		direction    snapDirection
+		wantX        int
+		wantY        int
+		selectedEdge snapEdge
+		anchorEdge   snapEdge
+	}{
+		{name: "left", direction: snapDirectionLeft, wantX: -1180, wantY: 380, selectedEdge: snapEdgeRight, anchorEdge: snapEdgeLeft},
+		{name: "right", direction: snapDirectionRight, wantX: 2020, wantY: 380, selectedEdge: snapEdgeLeft, anchorEdge: snapEdgeRight},
+		{name: "up", direction: snapDirectionUp, wantX: 420, wantY: -520, selectedEdge: snapEdgeBottom, anchorEdge: snapEdgeTop},
+		{name: "down", direction: snapDirectionDown, wantX: 420, wantY: 1280, selectedEdge: snapEdgeTop, anchorEdge: snapEdgeBottom},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := Model{
+				selectedOutput: 1,
+				editOutputs: []editableOutput{
+					{
+						Key:     "anchor",
+						Name:    "DP-1",
+						Enabled: true,
+						Width:   1920,
+						Height:  1080,
+						Scale:   1,
+						X:       100,
+						Y:       200,
+					},
+					{
+						Key:     "selected",
+						Name:    "eDP-1",
+						Enabled: true,
+						Width:   2560,
+						Height:  1440,
+						Scale:   2,
+						X:       900,
+						Y:       700,
+					},
+				},
+			}
+
+			cmd := m.snapSelectedOutput(test.direction)
+			if cmd == nil {
+				t.Fatal("expected snap hint command")
+			}
+			selected := m.editOutputs[m.selectedOutput]
+			if selected.X != test.wantX || selected.Y != test.wantY {
+				t.Fatalf("snapped position = %d,%d, want %d,%d", selected.X, selected.Y, test.wantX, test.wantY)
+			}
+			if !m.dirty {
+				t.Fatal("expected snap to mark the layout dirty")
+			}
+			if m.snap == nil || !hasSnapMark(m.snap.Marks, 1, test.selectedEdge) || !hasSnapMark(m.snap.Marks, 0, test.anchorEdge) {
+				t.Fatalf("expected touching-edge snap marks, got %+v", m.snap)
+			}
+		})
+	}
+}
+
+func TestSnapSelectedOutputUsesNearestEligibleMonitor(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		editOutputs: []editableOutput{
+			{Key: "selected", Name: "DP-1", Enabled: true, Width: 1000, Height: 800, Scale: 1, X: 900, Y: 100},
+			{Key: "disabled", Name: "DP-2", Enabled: false, Width: 1000, Height: 800, Scale: 1, X: 950, Y: 100},
+			{Key: "mirror", Name: "DP-3", Enabled: true, MirrorOf: "anchor", Width: 1000, Height: 800, Scale: 1, X: 1000, Y: 100},
+			{Key: "anchor", Name: "DP-4", Enabled: true, Width: 1000, Height: 800, Scale: 1, X: 4000, Y: 100},
+		},
+	}
+
+	m.snapSelectedOutput(snapDirectionRight)
+	if got := m.editOutputs[0].X; got != 5000 {
+		t.Fatalf("expected selected output to snap beside nearest eligible monitor at X=5000, got %d", got)
+	}
+	if !strings.Contains(m.status, "DP-4") {
+		t.Fatalf("expected status to name the anchor monitor, got %q", m.status)
+	}
+}
+
+func TestSnapSelectedOutputWithoutAnchorDoesNotChangeLayout(t *testing.T) {
+	m := Model{
+		editOutputs: []editableOutput{{
+			Key:     "selected",
+			Name:    "DP-1",
+			Enabled: true,
+			Width:   1920,
+			Height:  1080,
+			Scale:   1,
+			X:       10,
+			Y:       20,
+		}},
+	}
+
+	if cmd := m.snapSelectedOutput(snapDirectionRight); cmd != nil {
+		t.Fatal("did not expect a command without an eligible anchor")
+	}
+	if m.editOutputs[0].X != 10 || m.editOutputs[0].Y != 20 || m.dirty {
+		t.Fatalf("expected unchanged layout, got output=%+v dirty=%v", m.editOutputs[0], m.dirty)
+	}
+	if !m.statusErr || !strings.Contains(m.status, "No other enabled monitor") {
+		t.Fatalf("expected helpful error status, got %q", m.status)
+	}
+}
+
 func TestRenderWorkspaceViewShowsPreviewWhenDisabled(t *testing.T) {
 	m := Model{
 		styles: newStyles(),
@@ -2324,6 +2430,48 @@ func TestLayoutMoveVimKeysMatchArrows(t *testing.T) {
 		if vdx != adx || vdy != ady {
 			t.Errorf("%q=(%d,%d) != %q=(%d,%d)", pair[0], vdx, vdy, pair[1], adx, ady)
 		}
+	}
+}
+
+func TestLayoutSnapDirectionKeys(t *testing.T) {
+	tests := []struct {
+		key  string
+		want snapDirection
+	}{
+		{key: "alt+left", want: snapDirectionLeft},
+		{key: "alt+right", want: snapDirectionRight},
+		{key: "alt+up", want: snapDirectionUp},
+		{key: "alt+down", want: snapDirectionDown},
+	}
+
+	for _, test := range tests {
+		got, ok := layoutSnapDirection(test.key)
+		if !ok || got != test.want {
+			t.Errorf("layoutSnapDirection(%q) = (%v, %v), want (%v, true)", test.key, got, ok, test.want)
+		}
+	}
+	if _, ok := layoutSnapDirection("right"); ok {
+		t.Fatal("expected an unmodified arrow not to be a directional snap")
+	}
+}
+
+func TestAltArrowSnapsSelectedOutputFromCanvas(t *testing.T) {
+	m := Model{
+		tab:            tabLayout,
+		layoutFocus:    layoutFocusCanvas,
+		selectedOutput: 1,
+		editOutputs: []editableOutput{
+			{Key: "anchor", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 0},
+			{Key: "selected", Name: "DP-2", Enabled: true, Width: 1280, Height: 720, Scale: 1, X: 3000, Y: 1000},
+		},
+	}
+
+	_, cmd := m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRight, Alt: true})
+	if cmd == nil {
+		t.Fatal("expected snap hint command")
+	}
+	if m.editOutputs[1].X != 1920 || m.editOutputs[1].Y != 180 {
+		t.Fatalf("expected Alt+Right to snap at 1920,180, got %d,%d", m.editOutputs[1].X, m.editOutputs[1].Y)
 	}
 }
 

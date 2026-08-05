@@ -173,6 +173,15 @@ const (
 	snapEdgeBottom
 )
 
+type snapDirection int
+
+const (
+	snapDirectionLeft snapDirection = iota
+	snapDirectionRight
+	snapDirectionUp
+	snapDirectionDown
+)
+
 type snapMark struct {
 	OutputIndex int
 	Edge        snapEdge
@@ -593,6 +602,9 @@ func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.layoutFocus == layoutFocusCanvas {
+		if direction, ok := layoutSnapDirection(msg.String()); ok {
+			return m, m.snapSelectedOutput(direction)
+		}
 		if dx, dy, ok := layoutMoveDelta(msg.String()); ok {
 			return m, m.nudgeSelectedOutput(dx, dy, 24)
 		}
@@ -1768,6 +1780,112 @@ func (m *Model) applySelectedSnap(threshold int) *snapHintState {
 		return nil
 	}
 	return &snapHintState{Marks: marks}
+}
+
+func (m *Model) snapSelectedOutput(direction snapDirection) tea.Cmd {
+	if len(m.editOutputs) == 0 || m.selectedOutput < 0 || m.selectedOutput >= len(m.editOutputs) {
+		return nil
+	}
+
+	selected := &m.editOutputs[m.selectedOutput]
+	if !selected.Enabled || selected.MirrorOf != "" {
+		m.setStatusErr("Selected monitor must be enabled and not mirrored to snap")
+		return nil
+	}
+
+	anchorIndex := m.nearestSnapOutput()
+	if anchorIndex < 0 {
+		m.setStatusErr("No other enabled monitor available for snapping")
+		return nil
+	}
+
+	anchor := m.editOutputs[anchorIndex]
+	selectedW, selectedH := selected.logicalSize()
+	anchorW, anchorH := anchor.logicalSize()
+	marks := make([]snapMark, 0, 2)
+
+	switch direction {
+	case snapDirectionLeft:
+		selected.X = anchor.X - selectedW
+		selected.Y = anchor.Y + (anchorH-selectedH)/2
+		marks = append(marks,
+			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeRight},
+			snapMark{OutputIndex: anchorIndex, Edge: snapEdgeLeft},
+		)
+	case snapDirectionRight:
+		selected.X = anchor.X + anchorW
+		selected.Y = anchor.Y + (anchorH-selectedH)/2
+		marks = append(marks,
+			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeLeft},
+			snapMark{OutputIndex: anchorIndex, Edge: snapEdgeRight},
+		)
+	case snapDirectionUp:
+		selected.X = anchor.X + (anchorW-selectedW)/2
+		selected.Y = anchor.Y - selectedH
+		marks = append(marks,
+			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeBottom},
+			snapMark{OutputIndex: anchorIndex, Edge: snapEdgeTop},
+		)
+	case snapDirectionDown:
+		selected.X = anchor.X + (anchorW-selectedW)/2
+		selected.Y = anchor.Y + anchorH
+		marks = append(marks,
+			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeTop},
+			snapMark{OutputIndex: anchorIndex, Edge: snapEdgeBottom},
+		)
+	default:
+		return nil
+	}
+
+	m.layoutChanged()
+	m.setStatusOK(fmt.Sprintf("Snapped %s %s %s", selected.Name, direction.relation(), anchor.Name))
+	return m.showSnapHint(&snapHintState{Marks: marks})
+}
+
+func (m Model) nearestSnapOutput() int {
+	if len(m.editOutputs) == 0 || m.selectedOutput < 0 || m.selectedOutput >= len(m.editOutputs) {
+		return -1
+	}
+
+	selected := m.editOutputs[m.selectedOutput]
+	selectedW, selectedH := selected.logicalSize()
+	selectedCenterX := int64(selected.X)*2 + int64(selectedW)
+	selectedCenterY := int64(selected.Y)*2 + int64(selectedH)
+
+	nearestIndex := -1
+	var nearestDistance int64
+	for index, output := range m.editOutputs {
+		if index == m.selectedOutput || !output.Enabled || output.MirrorOf != "" {
+			continue
+		}
+
+		width, height := output.logicalSize()
+		centerX := int64(output.X)*2 + int64(width)
+		centerY := int64(output.Y)*2 + int64(height)
+		dx := selectedCenterX - centerX
+		dy := selectedCenterY - centerY
+		distance := dx*dx + dy*dy
+		if nearestIndex < 0 || distance < nearestDistance {
+			nearestIndex = index
+			nearestDistance = distance
+		}
+	}
+	return nearestIndex
+}
+
+func (d snapDirection) relation() string {
+	switch d {
+	case snapDirectionLeft:
+		return "left of"
+	case snapDirectionRight:
+		return "right of"
+	case snapDirectionUp:
+		return "above"
+	case snapDirectionDown:
+		return "below"
+	default:
+		return ""
+	}
 }
 
 func spansOverlap(a1, a2, b1, b2 int) bool {
@@ -3213,6 +3331,21 @@ func layoutMoveDelta(key string) (dx, dy int, ok bool) {
 		return 0, 500, true
 	default:
 		return 0, 0, false
+	}
+}
+
+func layoutSnapDirection(key string) (snapDirection, bool) {
+	switch key {
+	case "alt+left":
+		return snapDirectionLeft, true
+	case "alt+right":
+		return snapDirectionRight, true
+	case "alt+up":
+		return snapDirectionUp, true
+	case "alt+down":
+		return snapDirectionDown, true
+	default:
+		return snapDirectionLeft, false
 	}
 }
 
