@@ -73,6 +73,8 @@ func TestVerifySourceChainRejectsUnsourcedTarget(t *testing.T) {
 
 func TestResolveHyprlandConfigUsesLegacyBeforeLuaRelease(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HYPRLAND_CONFIG", "")
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", "")
 
 	resolved, err := ResolveHyprlandConfig("0.54.0", "", "")
 	if err != nil {
@@ -92,6 +94,8 @@ func TestResolveHyprlandConfigUsesLegacyBeforeLuaRelease(t *testing.T) {
 func TestResolveHyprlandConfigUsesLegacyFor055WithoutLuaConfig(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("HYPRLAND_CONFIG", "")
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", "")
 	if err := os.MkdirAll(filepath.Join(xdg, "hypr"), 0o755); err != nil {
 		t.Fatalf("mkdir hypr dir: %v", err)
 	}
@@ -108,6 +112,8 @@ func TestResolveHyprlandConfigUsesLegacyFor055WithoutLuaConfig(t *testing.T) {
 func TestResolveHyprlandConfigUsesLuaFor055WithLuaConfig(t *testing.T) {
 	xdg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("HYPRLAND_CONFIG", "")
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", "")
 	hypr := filepath.Join(xdg, "hypr")
 	if err := os.MkdirAll(hypr, 0o755); err != nil {
 		t.Fatalf("mkdir hypr dir: %v", err)
@@ -150,6 +156,84 @@ func TestResolveHyprlandConfigExplicitExtensionForcesFormat(t *testing.T) {
 	}
 	if resolved.Format != HyprConfigLegacy {
 		t.Fatalf("expected explicit .conf to force legacy format, got %v", resolved.Format)
+	}
+}
+
+func TestResolveHyprlandConfigUsesEnvironmentOverride(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	environmentRoot := filepath.Join(t.TempDir(), "hyprland.lua")
+	environmentTarget := filepath.Join(t.TempDir(), "monitors.lua")
+	t.Setenv("HYPRLAND_CONFIG", environmentRoot)
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", environmentTarget)
+
+	resolved, err := ResolveHyprlandConfig("0.54.0", "", "")
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if resolved.Format != HyprConfigLua {
+		t.Fatalf("expected environment override to force lua format, got %v", resolved.Format)
+	}
+	if resolved.RootPath != environmentRoot {
+		t.Fatalf("expected environment root %s, got %s", environmentRoot, resolved.RootPath)
+	}
+	if resolved.MonitorsPath != environmentTarget {
+		t.Fatalf("expected environment target %s, got %s", environmentTarget, resolved.MonitorsPath)
+	}
+}
+
+func TestResolveHyprlandConfigExplicitPathOverridesEnvironment(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HYPRLAND_CONFIG", filepath.Join(t.TempDir(), "hyprland.lua"))
+	explicitRoot := filepath.Join(t.TempDir(), "hyprland.conf")
+
+	resolved, err := ResolveHyprlandConfig("0.55.0", "", explicitRoot)
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if resolved.Format != HyprConfigLegacy {
+		t.Fatalf("expected explicit path to force legacy format, got %v", resolved.Format)
+	}
+	if resolved.RootPath != explicitRoot {
+		t.Fatalf("expected explicit root %s, got %s", explicitRoot, resolved.RootPath)
+	}
+}
+
+func TestResolveHyprlandConfigPathUsesEnvironmentOverride(t *testing.T) {
+	environmentRoot := filepath.Join(t.TempDir(), "hyprland.conf")
+	t.Setenv("HYPRLAND_CONFIG", environmentRoot)
+
+	resolved, err := ResolveHyprlandConfigPath("")
+	if err != nil {
+		t.Fatalf("resolve config path: %v", err)
+	}
+	if resolved != environmentRoot {
+		t.Fatalf("expected environment root %s, got %s", environmentRoot, resolved)
+	}
+}
+
+func TestResolveMonitorsConfPathUsesEnvironmentOverride(t *testing.T) {
+	environmentTarget := filepath.Join(t.TempDir(), "monitors.conf")
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", environmentTarget)
+
+	resolved, err := ResolveMonitorsConfPath("")
+	if err != nil {
+		t.Fatalf("resolve monitors config path: %v", err)
+	}
+	if resolved != environmentTarget {
+		t.Fatalf("expected environment target %s, got %s", environmentTarget, resolved)
+	}
+}
+
+func TestResolveMonitorsConfPathExplicitPathOverridesEnvironment(t *testing.T) {
+	t.Setenv("HYPRMONCFG_MONITORS_CONF", filepath.Join(t.TempDir(), "environment.conf"))
+	explicitTarget := filepath.Join(t.TempDir(), "explicit.conf")
+
+	resolved, err := ResolveMonitorsConfPath(explicitTarget)
+	if err != nil {
+		t.Fatalf("resolve monitors config path: %v", err)
+	}
+	if resolved != explicitTarget {
+		t.Fatalf("expected explicit target %s, got %s", explicitTarget, resolved)
 	}
 }
 

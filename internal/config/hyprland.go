@@ -22,6 +22,11 @@ const (
 	HyprConfigLua
 )
 
+const (
+	hyprlandConfigEnv = "HYPRLAND_CONFIG"
+	monitorsConfEnv   = "HYPRMONCFG_MONITORS_CONF"
+)
+
 type ResolvedHyprConfig struct {
 	Format       HyprConfigFormat
 	RootPath     string
@@ -75,17 +80,19 @@ func HyprlandLuaConfigPath() (string, error) {
 }
 
 func ResolveMonitorsConfPath(explicit string) (string, error) {
-	if strings.TrimSpace(explicit) == "" {
+	configured := environmentOverride(explicit, monitorsConfEnv)
+	if strings.TrimSpace(configured) == "" {
 		return HyprlandMonitorsConfPath()
 	}
-	return resolvePath(explicit, "")
+	return resolvePath(configured, "")
 }
 
 func ResolveHyprlandConfigPath(explicit string) (string, error) {
-	if strings.TrimSpace(explicit) == "" {
+	configured := environmentOverride(explicit, hyprlandConfigEnv)
+	if strings.TrimSpace(configured) == "" {
 		return HyprlandMainConfigPath()
 	}
-	return resolvePath(explicit, "")
+	return resolvePath(configured, "")
 }
 
 func ResolveHyprlandConfig(version string, explicitMonitorsPath string, explicitRootPath string) (ResolvedHyprConfig, error) {
@@ -107,8 +114,9 @@ func ResolveHyprlandConfig(version string, explicitMonitorsPath string, explicit
 }
 
 func resolveHyprConfigRoot(version string, explicit string) (HyprConfigFormat, string, error) {
-	if strings.TrimSpace(explicit) != "" {
-		rootPath, err := resolvePath(explicit, "")
+	configured := environmentOverride(explicit, hyprlandConfigEnv)
+	if strings.TrimSpace(configured) != "" {
+		rootPath, err := resolvePath(configured, "")
 		if err != nil {
 			return HyprConfigLegacy, "", err
 		}
@@ -138,9 +146,17 @@ func resolveHyprConfigRoot(version string, explicit string) (HyprConfigFormat, s
 	return HyprConfigLegacy, rootPath, err
 }
 
-func resolveHyprConfigMonitors(format HyprConfigFormat, explicit string) (string, error) {
+func environmentOverride(explicit string, name string) string {
 	if strings.TrimSpace(explicit) != "" {
-		return resolvePath(explicit, "")
+		return explicit
+	}
+	return os.Getenv(name)
+}
+
+func resolveHyprConfigMonitors(format HyprConfigFormat, explicit string) (string, error) {
+	configured := environmentOverride(explicit, monitorsConfEnv)
+	if strings.TrimSpace(configured) != "" {
+		return resolvePath(configured, "")
 	}
 	if format == HyprConfigLua {
 		return HyprlandMonitorsLuaPath()

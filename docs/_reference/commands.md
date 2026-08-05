@@ -26,8 +26,17 @@ Running `hyprmoncfg` with no arguments opens the TUI.
 | Flag | Description |
 |------|-------------|
 | `--config-dir <path>` | Override the profile storage directory (default: `~/.config/hyprmoncfg`) |
-| `--monitors-conf <path>` | Override the generated monitor config path (`monitors.conf` or `monitors.lua`) |
-| `--hypr-config <path>` | Override the root Hyprland config path for include verification (`.conf` or `.lua`) |
+| `--monitors-conf <path>` | Override `HYPRMONCFG_MONITORS_CONF` and the default generated monitor config path |
+| `--hypr-config <path>` | Override `HYPRLAND_CONFIG` and the default root config path (`.conf` or `.lua`) |
+
+### Environment variables
+
+Both `hyprmoncfg` and `hyprmoncfgd` use these variables when the corresponding flag is not provided:
+
+| Variable | Description |
+|----------|-------------|
+| `HYPRMONCFG_MONITORS_CONF` | Generated monitor config path to write and reload |
+| `HYPRLAND_CONFIG` | Hyprland root config path used for include verification |
 
 ### Apply flags
 
@@ -52,8 +61,8 @@ The daemon. Runs in the foreground by default.
 | Flag | Description |
 |------|-------------|
 | `--config-dir <path>` | Override the profile storage directory |
-| `--monitors-conf <path>` | Override the generated monitor config path (`monitors.conf` or `monitors.lua`) |
-| `--hypr-config <path>` | Override the root Hyprland config path (`.conf` or `.lua`) |
+| `--monitors-conf <path>` | Override `HYPRMONCFG_MONITORS_CONF` and the default generated monitor config path |
+| `--hypr-config <path>` | Override `HYPRLAND_CONFIG` and the default root config path (`.conf` or `.lua`) |
 | `--profile <name>` | Force a specific profile instead of auto-matching |
 | `--debounce <duration>` | Delay before applying after a monitor or lid event (default: 1200ms) |
 | `--poll-interval <duration>` | Polling frequency for monitor fallback checks (default: 5s) |

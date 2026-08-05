@@ -65,7 +65,7 @@ On Hyprland 0.55+, if `~/.config/hypr/hyprland.lua` exists, hyprmoncfg switches 
 ~/.config/hypr/hyprland.lua
 ```
 
-If Hyprland 0.55+ is still using `hyprland.conf`, hyprmoncfg stays in legacy mode. Explicit `--hypr-config` paths ending in `.conf` or `.lua` force the matching format.
+If Hyprland 0.55+ is still using `hyprland.conf`, hyprmoncfg stays in legacy mode. When `HYPRLAND_CONFIG` is set, hyprmoncfg uses it as the root config path. An explicit `--hypr-config` takes precedence, and paths ending in `.conf` or `.lua` force the matching format.
 
 Override either path:
 
@@ -75,6 +75,15 @@ hyprmoncfgd --monitors-conf /path/to/monitors.conf --hypr-config /path/to/hyprla
 hyprmoncfg --monitors-conf /path/to/monitors.lua --hypr-config /path/to/hyprland.lua
 hyprmoncfgd --monitors-conf /path/to/monitors.lua --hypr-config /path/to/hyprland.lua
 ```
+
+To configure both binaries once, set the equivalent environment variables:
+
+```bash
+export HYPRMONCFG_MONITORS_CONF=/path/to/monitors.conf
+export HYPRLAND_CONFIG=/path/to/hyprland.conf
+```
+
+Explicit flags take precedence. A systemd-managed daemon must receive these variables through the user manager's environment; restart `hyprmoncfgd` after changing them.
 
 ## The include-chain check
 
