@@ -10,6 +10,7 @@ Each tagged release publishes:
 
 - `hyprmoncfg_<version>_linux_amd64.tar.gz`
 - `hyprmoncfg_<version>_linux_arm64.tar.gz`
+- `hyprmoncfg-<version>-deps.tar.xz`
 - `checksums.txt`
 - GitHub's automatic source archive for the tag
 
@@ -45,8 +46,8 @@ Build time:
 Packagers should set build metadata through `internal/buildinfo`:
 
 ```sh
-version=1.5.1
-commit=509f68e
+version=1.9.0
+commit=2af37f6
 build_date="$(date -u +%FT%TZ)"
 ldflags="-s -w"
 ldflags="$ldflags -X github.com/crmne/hyprmoncfg/internal/buildinfo.Version=$version"
@@ -61,7 +62,7 @@ go test ./...
 For offline builds with a Go module cache tarball:
 
 ```sh
-tar -xf hyprmoncfg-1.5.1-deps.tar.xz
+tar -xf hyprmoncfg-1.9.0-deps.tar.xz
 GOMODCACHE="$PWD/go-mod" GOPROXY=off CGO_ENABLED=0 go build -trimpath -mod=readonly ./cmd/hyprmoncfg
 ```
 
@@ -96,20 +97,20 @@ the daemon startup path.
 
 ## Package Status
 
-Current status as of 2026-06-25:
+Current status as of 2026-08-05:
 
 | Channel | Status | Notes |
 |---|---|---|
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) and VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) packages are maintained in separate AUR repos. |
-| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) has successful 1.8.0 builds for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
-| Nixpkgs | Published | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. |
+| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) has successful 1.9.0 builds for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
+| Nixpkgs | Published | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.9.0 update](https://github.com/NixOS/nixpkgs/pull/549587) is under review. |
 | Gentoo GURU | Published | `gui-apps/hyprmoncfg` is in [Gentoo GURU](https://github.com/gentoo/guru/tree/master/gui-apps/hyprmoncfg). |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
-| Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes prebuilt `hyprland` and `hyprmoncfg` packages outside official Void. As of 2026-06-25 its mirror has `hyprland-0.55.4_1` and `hyprmoncfg-1.7.0_1` for `x86_64`, `aarch64`, and musl variants. |
-| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) is open with a successful pipeline; no package is in the Alpine package index yet. |
-| Debian and Ubuntu | Staged | Source package artifacts are staged externally, but official inclusion still needs Debian policy review and sponsor/upload flow. |
-| openSUSE OBS | Staged | RPM payload is ready for OBS, but not published. |
-| SlackBuilds.org | Staged | SlackBuild payload is ready for manual submission, but not published. |
+| Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void; its independently maintained recipe currently targets 1.8.0. |
+| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) is open; no package is in the Alpine package index yet. |
+| Debian and Ubuntu | Staged | 1.9.0 source package artifacts are staged externally, but official inclusion still needs Debian policy review and sponsor/upload flow. |
+| openSUSE OBS | Staged | The 1.9.0 RPM payload is ready for OBS, but not published. |
+| SlackBuilds.org | Staged | The 1.9.0 SlackBuild payload is ready for manual submission, but not published. |
 
 Distro-specific recipes should remain in the distro package repository or the
 external packaging workspace until they are accepted upstream. Keep this
