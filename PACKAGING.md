@@ -97,13 +97,13 @@ the daemon startup path.
 
 ## Package Status
 
-Current status as of 2026-08-05:
+Current status as of 2026-08-06:
 
 | Channel | Status | Notes |
 |---|---|---|
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) and VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) packages are maintained in separate AUR repos. |
 | Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) has successful 1.9.0 builds for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
-| Nixpkgs | Published | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.9.0 update](https://github.com/NixOS/nixpkgs/pull/549587) is under review. |
+| Nixpkgs | Published | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.9.0 update](https://github.com/NixOS/nixpkgs/pull/549587) is merged. |
 | Gentoo GURU | Published | `gui-apps/hyprmoncfg` is in [Gentoo GURU](https://github.com/gentoo/guru/tree/master/gui-apps/hyprmoncfg). |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
 | Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void; its independently maintained recipe currently targets 1.8.0. |
