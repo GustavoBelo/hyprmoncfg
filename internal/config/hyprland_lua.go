@@ -343,6 +343,9 @@ func parseLuaIncludeCalls(content string) []luaIncludeCall {
 		for _, value := range parseLuaLiteralCall(line, "require") {
 			out = append(out, luaIncludeCall{Kind: luaIncludeRequire, Value: value})
 		}
+		for _, value := range parseLuaProtectedRequireCalls(line) {
+			out = append(out, luaIncludeCall{Kind: luaIncludeRequire, Value: value})
+		}
 		for _, value := range parseLuaLiteralCall(line, "dofile") {
 			out = append(out, luaIncludeCall{Kind: luaIncludeDofile, Value: value})
 		}
@@ -427,6 +430,62 @@ func parseLuaLiteralCall(line string, name string) []string {
 		}
 	}
 	return out
+}
+
+func parseLuaProtectedRequireCalls(line string) []string {
+	out := make([]string, 0, 1)
+	for i := 0; i < len(line); i++ {
+		if isLuaSpace(line[i]) || line[i] == ';' {
+			continue
+		}
+		if line[i] == '\'' || line[i] == '"' {
+			if next, ok := skipLuaShortString(line, i); ok {
+				i = next - 1
+				continue
+			}
+		}
+		if _, next, ok := parseLuaLongBracket(line, i); ok {
+			i = next - 1
+			continue
+		}
+		if i+1 < len(line) && line[i] == '-' && line[i+1] == '-' {
+			return out
+		}
+		if !isLuaNameAt(line, i, "pcall") {
+			continue
+		}
+		value, next, ok := parseLuaProtectedRequireArg(line, i+len("pcall"))
+		if ok && strings.TrimSpace(value) != "" {
+			out = append(out, value)
+			i = next - 1
+		}
+	}
+	return out
+}
+
+func parseLuaProtectedRequireArg(line string, idx int) (string, int, bool) {
+	idx = trimLuaSpaceLeft(line, idx)
+	if idx >= len(line) || line[idx] != '(' {
+		return "", idx, false
+	}
+	idx = trimLuaSpaceLeft(line, idx+1)
+	if !isLuaNameAt(line, idx, "require") {
+		return "", idx, false
+	}
+	idx = trimLuaSpaceLeft(line, idx+len("require"))
+	if idx >= len(line) || line[idx] != ',' {
+		return "", idx, false
+	}
+
+	value, next, ok := parseLuaLiteralCallArg(line, idx+1)
+	if !ok {
+		return "", idx, false
+	}
+	next = trimLuaSpaceLeft(line, next)
+	if next >= len(line) || line[next] != ')' {
+		return "", next, false
+	}
+	return value, next + 1, true
 }
 
 func parseLuaLiteralCallArg(line string, idx int) (string, int, bool) {

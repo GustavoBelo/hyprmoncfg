@@ -89,7 +89,7 @@ Explicit flags take precedence. A systemd-managed daemon must receive these vari
 
 Before writing anything, hyprmoncfg confirms Hyprland includes the generated monitor file. This catches a surprisingly common problem: a tool writes a config file that Hyprland never reads, so nothing happens and you're left wondering why.
 
-For legacy configs, add `source = ~/.config/hypr/monitors.conf` to `hyprland.conf`. For Lua configs, add `require("monitors")` to `hyprland.lua`. If your files live elsewhere, point hyprmoncfg at them with `--monitors-conf` and `--hypr-config`.
+For legacy configs, add `source = ~/.config/hypr/monitors.conf` to `hyprland.conf`. For Lua configs, add `pcall(require, "monitors")` to `hyprland.lua` or another Lua file loaded by it. The protected call is safe before `monitors.lua` exists; hyprmoncfg creates that file on the first apply. A direct `require("monitors")` is also recognized. If your files live elsewhere, point hyprmoncfg at them with `--monitors-conf` and `--hypr-config`.
 
 ## What gets written
 

@@ -87,8 +87,10 @@ source = ~/.config/hypr/monitors.conf
 For Hyprland 0.55+ Lua configs, add this to `~/.config/hypr/hyprland.lua` instead:
 
 ```lua
-require("monitors")
+pcall(require, "monitors")
 ```
+
+The protected call lets Hyprland start before the generated file exists. hyprmoncfg recognizes both `pcall(require, "monitors")` and a direct `require("monitors")`, including calls in other Lua files loaded by the root config.
 
 Hyprland does not read the generated monitor file automatically, so hyprmoncfg checks this before writing. If the include line is missing, it refuses to write and tells you what to fix.
 

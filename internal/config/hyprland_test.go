@@ -327,6 +327,84 @@ func TestVerifyLuaSourceChainFindsStandardLiteralRequireForms(t *testing.T) {
 	}
 }
 
+func TestVerifyLuaSourceChainFindsProtectedRequireBeforeTargetExists(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "standard", content: `pcall(require, "monitors")`},
+		{name: "spaced", content: `local loaded = pcall ( require , 'monitors' )`},
+		{name: "long bracket", content: `pcall(require, [[monitors]])`},
+		{name: "parenthesized literal", content: `pcall(require, ("monitors"))`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			rootConfig := filepath.Join(root, "hyprland.lua")
+			target := filepath.Join(root, "monitors.lua")
+
+			if err := os.WriteFile(rootConfig, []byte(tt.content), 0o644); err != nil {
+				t.Fatalf("write root config: %v", err)
+			}
+
+			if err := VerifyIncludeChain(HyprConfigLua, rootConfig, target); err != nil {
+				t.Fatalf("expected protected require to verify missing generated target, got %v", err)
+			}
+		})
+	}
+}
+
+func TestVerifyLuaSourceChainFindsNestedProtectedRequire(t *testing.T) {
+	root := t.TempDir()
+	rootConfig := filepath.Join(root, "hyprland.lua")
+	keybindings := filepath.Join(root, "keybindings.lua")
+	target := filepath.Join(root, "hyprmoncfg.lua")
+
+	if err := os.WriteFile(rootConfig, []byte(`require("keybindings")`), 0o644); err != nil {
+		t.Fatalf("write root config: %v", err)
+	}
+	if err := os.WriteFile(keybindings, []byte(`pcall(require, "hyprmoncfg")`), 0o644); err != nil {
+		t.Fatalf("write nested config: %v", err)
+	}
+
+	if err := VerifyIncludeChain(HyprConfigLua, rootConfig, target); err != nil {
+		t.Fatalf("expected nested protected require to verify, got %v", err)
+	}
+}
+
+func TestVerifyLuaSourceChainRejectsInvalidProtectedRequireForms(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{name: "field pcall", content: `loader.pcall(require, "monitors")`},
+		{name: "field require", content: `pcall(loader.require, "monitors")`},
+		{name: "different callback", content: `pcall(load_module, "monitors")`},
+		{name: "dynamic module", content: `pcall(require, module_name)`},
+		{name: "extra argument", content: `pcall(require, "monitors", true)`},
+		{name: "string", content: `local example = 'pcall(require, "monitors")'`},
+		{name: "comment", content: `-- pcall(require, "monitors")`},
+		{name: "unclosed", content: `pcall(require, "monitors"`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			rootConfig := filepath.Join(root, "hyprland.lua")
+			target := filepath.Join(root, "monitors.lua")
+
+			if err := os.WriteFile(rootConfig, []byte(tt.content), 0o644); err != nil {
+				t.Fatalf("write root config: %v", err)
+			}
+
+			if err := VerifyIncludeChain(HyprConfigLua, rootConfig, target); err == nil {
+				t.Fatal("expected invalid protected require to be ignored")
+			}
+		})
+	}
+}
+
 func TestVerifyLuaSourceChainHandlesCommentMarkerInsideString(t *testing.T) {
 	root := t.TempDir()
 	rootConfig := filepath.Join(root, "hyprland.lua")
