@@ -101,7 +101,7 @@ Make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
 source = ~/.config/hypr/monitors.conf
 ```
 
-Hyprland does not read that file automatically. hyprmoncfg creates and rewrites `monitors.conf`, then refuses to write if the source chain is missing so you do not edit a file Hyprland ignores.
+Hyprland does not read that file automatically. hyprmoncfg creates and rewrites generated `monitors.conf` files, then refuses to write if the source chain is missing so you do not edit a file Hyprland ignores. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
 
 ## Create your first profile
 

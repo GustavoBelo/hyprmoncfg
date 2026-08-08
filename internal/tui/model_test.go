@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,7 +15,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
+	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -1522,6 +1525,161 @@ func TestQuitAfterApplyQuitsOnlyAfterConfirmation(t *testing.T) {
 		t.Fatalf("expected pending apply to clear, got %+v", got.pending)
 	}
 	assertQuitCmd(t, cmd)
+}
+
+func TestApplyCollisionPromptsBeforeOverwritingUserConfig(t *testing.T) {
+	m := Model{styles: newStyles(), mode: modeMain, width: 100, height: 30}
+	p := profile.New("Desk", nil)
+	collision := &apply.UnmanagedMonitorConfigError{
+		Path:            "/home/test/.config/hypr/monitors.lua",
+		AlternativePath: "/home/test/.config/hypr/hyprmoncfg-monitors.lua",
+	}
+
+	updated, cmd := m.Update(applyMsg{profile: p, err: collision})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected collision prompt before another apply command")
+	}
+	if got.mode != modeUnmanagedOverwrite || got.unmanaged == nil {
+		t.Fatalf("expected unmanaged overwrite prompt, mode=%v prompt=%+v", got.mode, got.unmanaged)
+	}
+	view := ansi.Strip(got.View())
+	for _, want := range []string{collision.Path, collision.AlternativePath, "Press y to overwrite once"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected overwrite prompt to contain %q, got:\n%s", want, view)
+		}
+	}
+
+	updated, cmd = got.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if cmd != nil || got.mode != modeMain || got.unmanaged != nil {
+		t.Fatalf("expected Enter to protect the file, mode=%v prompt=%+v cmd=%v", got.mode, got.unmanaged, cmd != nil)
+	}
+}
+
+func TestApplyCollisionRequiresExplicitYForOneTimeOverwrite(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		mode:   modeUnmanagedOverwrite,
+		unmanaged: &unmanagedOverwritePrompt{
+			profile:         profile.New("Desk", nil),
+			path:            "/tmp/monitors.conf",
+			alternativePath: "/tmp/hyprmoncfg-monitors.conf",
+		},
+	}
+
+	updated, cmd := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	got := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected explicit y to retry apply")
+	}
+	if got.mode != modeMain || got.unmanaged != nil {
+		t.Fatalf("expected prompt to close before retry, mode=%v prompt=%+v", got.mode, got.unmanaged)
+	}
+}
+
+func TestQuitDuringApplyConfirmationRevertsBeforeQuitting(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		mode:   modeConfirm,
+		pending: &pendingApply{
+			profile:  profile.New("Desk", nil),
+			deadline: time.Now().Add(10 * time.Second),
+		},
+	}
+
+	updated, cmd := m.updateConfirmKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got := updated.(Model)
+	if cmd == nil || !got.quitAfterRevert || got.pending == nil {
+		t.Fatalf("expected quit to request revert first, pending=%+v quitAfterRevert=%v", got.pending, got.quitAfterRevert)
+	}
+	if _, ok := cmd().(tea.QuitMsg); ok {
+		t.Fatal("quit command ran before revert")
+	}
+}
+
+func TestQuitWhileApplyIsRunningWaitsForResult(t *testing.T) {
+	m := Model{styles: newStyles(), mode: modeMain, applying: true}
+
+	updated, cmd := m.updateMainKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	got := updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected quit to wait instead of exiting during apply")
+	}
+	if !got.quitAfterRevert || !got.applying {
+		t.Fatalf("expected deferred quit while apply runs, applying=%v quitAfterRevert=%v", got.applying, got.quitAfterRevert)
+	}
+	if !strings.Contains(got.status, "restoring") {
+		t.Fatalf("expected deferred quit status, got %q", got.status)
+	}
+}
+
+func TestPendingRevertGuardWaitsForInflightWork(t *testing.T) {
+	guard := &pendingRevertGuard{}
+	guard.begin()
+	type result struct {
+		snapshot apply.RevertState
+		armed    bool
+		err      error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		snapshot, armed, err := guard.pending(context.Background())
+		resultCh <- result{snapshot: snapshot, armed: armed, err: err}
+	}()
+
+	select {
+	case <-resultCh:
+		t.Fatal("guard returned while apply work was still in flight")
+	default:
+	}
+
+	want := apply.RevertState{MonitorsConf: config.FileSnapshot{Path: "/tmp/monitors.conf"}}
+	guard.arm(want)
+	guard.finish()
+	got := <-resultCh
+	if got.err != nil || !got.armed || got.snapshot.MonitorsConf.Path != want.MonitorsConf.Path {
+		t.Fatalf("unexpected pending guard result: %+v", got)
+	}
+}
+
+func TestSuccessfulQuitRevertDisarmsGuardAndQuits(t *testing.T) {
+	guard := &pendingRevertGuard{armed: true}
+	m := Model{
+		styles:          newStyles(),
+		mode:            modeConfirm,
+		pending:         &pendingApply{deadline: time.Now().Add(10 * time.Second)},
+		revertGuard:     guard,
+		quitAfterRevert: true,
+	}
+
+	updated, cmd := m.Update(revertMsg{reason: "quit"})
+	got := updated.(Model)
+	if got.pending != nil || guard.isArmed() {
+		t.Fatalf("expected successful revert to clear pending state, pending=%+v armed=%v", got.pending, guard.isArmed())
+	}
+	assertQuitCmd(t, cmd)
+}
+
+func TestFailedRevertKeepsPendingConfigurationArmed(t *testing.T) {
+	guard := &pendingRevertGuard{armed: true}
+	pending := &pendingApply{deadline: time.Now().Add(10 * time.Second)}
+	m := Model{
+		styles:          newStyles(),
+		mode:            modeConfirm,
+		pending:         pending,
+		revertGuard:     guard,
+		quitAfterRevert: true,
+	}
+
+	updated, cmd := m.Update(revertMsg{reason: "quit", err: errors.New("reload failed")})
+	got := updated.(Model)
+	if cmd != nil || got.pending == nil || !guard.isArmed() || got.mode != modeConfirm {
+		t.Fatalf("expected failed revert to remain pending, mode=%v pending=%+v armed=%v", got.mode, got.pending, guard.isArmed())
+	}
+	if got.quitAfterRevert {
+		t.Fatal("expected failed quit-revert attempt to clear the immediate quit request")
+	}
 }
 
 func TestSaveMsgWithApplyActionSkipsSecondPrompt(t *testing.T) {

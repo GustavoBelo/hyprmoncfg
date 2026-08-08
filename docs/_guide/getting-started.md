@@ -92,7 +92,7 @@ require("monitors")
 
 Hyprland does not read the generated monitor file automatically, so hyprmoncfg checks this before writing. If the include line is missing, it refuses to write and tells you what to fix.
 
-You do not need to create `monitors.conf` or `monitors.lua` yourself. hyprmoncfg creates the active generated file when you apply your first profile, then rewrites it on each apply. Keep unrelated Hyprland settings in other included files.
+You do not need to create `monitors.conf` or `monitors.lua` yourself. hyprmoncfg creates the active generated file when you apply your first profile, then rewrites files carrying its first-line ownership marker on each apply. An existing unmarked file is treated as user-owned: interactive use asks before replacing it, while the daemon refuses. Keep unrelated Hyprland settings in other included files, or choose a separate generated target with `--monitors-conf`.
 
 If your config files live somewhere other than the defaults:
 

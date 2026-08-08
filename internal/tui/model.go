@@ -2,12 +2,14 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -28,6 +30,7 @@ const (
 	modeSave
 	modeSaveConfirm
 	modeConfirm
+	modeUnmanagedOverwrite
 	modeModePicker
 	modeNumericInput
 	modeProfileExecInput
@@ -100,6 +103,20 @@ type pendingApply struct {
 	profile  profile.Profile
 	snapshot apply.RevertState
 	deadline time.Time
+}
+
+type unmanagedOverwritePrompt struct {
+	profile         profile.Profile
+	path            string
+	alternativePath string
+}
+
+type pendingRevertGuard struct {
+	mu       sync.Mutex
+	armed    bool
+	snapshot apply.RevertState
+	inFlight int
+	idle     chan struct{}
 }
 
 type toastState struct {
@@ -240,6 +257,8 @@ type Model struct {
 	selectedProfile int
 
 	pending       *pendingApply
+	unmanaged     *unmanagedOverwritePrompt
+	revertGuard   *pendingRevertGuard
 	saveDialog    *saveDialogState
 	saveOverwrite string
 	picker        *modePickerState
@@ -261,7 +280,9 @@ type Model struct {
 	draftExec          string
 	daemonOK           bool
 	refreshInFlight    bool
+	applying           bool
 	quitAfterApply     bool
+	quitAfterRevert    bool
 
 	width  int
 	height int
@@ -284,6 +305,7 @@ func NewModel(client *hypr.Client, store *profile.Store, monitorsConfPath string
 			},
 		},
 		openURL:     openExternalURL,
+		revertGuard: &pendingRevertGuard{},
 		styles:      newStyles(),
 		mode:        modeMain,
 		tab:         tabLayout,
@@ -385,9 +407,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if action == saveActionSaveQuit {
 			m.quitAfterApply = true
+			m.applying = true
 			return m, m.applyCmd(m.currentProfile(msg.name))
 		}
 		if action == saveActionApply {
+			m.applying = true
 			return m, tea.Batch(
 				m.refreshCmd(false),
 				m.applyCmd(m.currentProfile(msg.name)),
@@ -425,7 +449,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.refreshCmd(false)
 
 	case applyMsg:
+		m.applying = false
 		if msg.err != nil {
+			if m.quitAfterRevert {
+				m.quitAfterRevert = false
+				m.quitAfterApply = false
+				return m, tea.Quit
+			}
+			var unmanaged *apply.UnmanagedMonitorConfigError
+			if errors.As(msg.err, &unmanaged) {
+				m.unmanaged = &unmanagedOverwritePrompt{
+					profile:         msg.profile,
+					path:            unmanaged.Path,
+					alternativePath: unmanaged.AlternativePath,
+				}
+				m.mode = modeUnmanagedOverwrite
+				m.statusErr = true
+				m.status = "The existing monitor config is protected."
+				return m, nil
+			}
 			m.quitAfterApply = false
 			m.setStatusErr(msg.err.Error())
 			m.mode = modeMain
@@ -436,24 +478,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			snapshot: msg.snapshot,
 			deadline: time.Now().Add(10 * time.Second),
 		}
+		m.armPendingRevert(msg.snapshot)
 		m.mode = modeConfirm
 		m.statusErr = false
 		m.status = fmt.Sprintf("%s applied. Changes are live until you confirm or revert.", targetLabel(msg.profile.Name))
+		if m.quitAfterRevert {
+			return m, m.revertCmd(msg.snapshot, "quit")
+		}
 		return m, tickCmd()
 
 	case revertMsg:
-		m.mode = modeMain
-		m.pending = nil
-		m.quitAfterApply = false
+		quitAfterRevert := m.quitAfterRevert
+		m.quitAfterRevert = false
 		if msg.err != nil {
+			m.mode = modeConfirm
+			if m.pending != nil {
+				m.pending.deadline = time.Now().Add(10 * time.Second)
+			}
 			m.setStatusErr(fmt.Sprintf("Revert failed: %v", msg.err))
 			return m, nil
 		}
+		m.mode = modeMain
+		m.pending = nil
+		m.quitAfterApply = false
+		m.disarmPendingRevert()
 		m.markClean()
 		m.draftProfileName = ""
 		m.matchedProfileName = ""
 		m.draftExec = ""
 		m.setStatusOK("Configuration reverted: " + msg.reason)
+		if quitAfterRevert {
+			return m, tea.Quit
+		}
 		return m, m.refreshCmd(false)
 
 	case openURLMsg:
@@ -485,6 +541,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateSaveConfirmKeys(msg)
 		case modeConfirm:
 			return m.updateConfirmKeys(msg)
+		case modeUnmanagedOverwrite:
+			return m.updateUnmanagedOverwriteKeys(msg)
 		case modeModePicker:
 			return m.updateModePickerKeys(msg)
 		case modeNumericInput:
@@ -527,6 +585,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
+		if m.applying {
+			m.quitAfterRevert = true
+			m.statusErr = false
+			m.status = "Waiting for apply to finish, then restoring the previous configuration..."
+			return m, nil
+		}
 		if m.dirty {
 			return m.openQuitSaveDialog()
 		}
@@ -557,14 +621,20 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m.openSaveDialog()
 	case "a":
+		if m.applying {
+			m.setStatusErr("A configuration is already being applied")
+			return m, nil
+		}
 		if m.tab == tabProfiles {
 			if len(m.profiles) == 0 {
 				m.setStatusErr("No profiles available")
 				return m, nil
 			}
+			m.applying = true
 			target := m.profiles[m.selectedProfile]
 			return m, m.applyCmd(target)
 		}
+		m.applying = true
 		return m, m.applyCmd(m.currentProfile("draft"))
 	}
 
@@ -718,7 +788,9 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+c", "q":
-		return m, tea.Quit
+		m.quitAfterRevert = true
+		snapshot := m.pending.snapshot
+		return m, m.revertCmd(snapshot, "quit")
 	case "y", "enter":
 		var toastCmd tea.Cmd
 
@@ -734,6 +806,7 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		m.mode = modeMain
 		m.pending = nil
+		m.disarmPendingRevert()
 		m.markClean()
 		m.setStatusOK("Configuration kept")
 		if m.quitAfterApply {
@@ -749,6 +822,35 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m Model) updateUnmanagedOverwriteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.unmanaged == nil {
+		m.mode = modeMain
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "y":
+		p := m.unmanaged.profile
+		m.unmanaged = nil
+		m.mode = modeMain
+		m.applying = true
+		m.statusErr = false
+		m.status = "Overwrite approved. Applying configuration..."
+		return m, m.applyCmd(p, true)
+	case "n", "enter", "esc":
+		m.unmanaged = nil
+		m.mode = modeMain
+		m.quitAfterApply = false
+		m.setStatusOK("Existing monitor config left unchanged")
+		return m, nil
+	case "ctrl+c", "q":
+		m.unmanaged = nil
+		return m, tea.Quit
+	default:
+		return m, nil
+	}
+}
+
 func (m Model) View() string {
 	switch m.mode {
 	case modeSave:
@@ -757,6 +859,8 @@ func (m Model) View() string {
 		return m.renderModalScreen(m.renderSaveConfirm())
 	case modeConfirm:
 		return m.renderModalScreen(m.renderConfirm())
+	case modeUnmanagedOverwrite:
+		return m.renderModalScreen(m.renderUnmanagedOverwrite())
 	case modeModePicker:
 		return m.renderModalScreen(m.renderModePicker())
 	case modeNumericInput:
@@ -1311,6 +1415,23 @@ func (m Model) renderConfirm() string {
 		m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render(m.confirmApplyHelp()),
 	}
 	return m.renderModalFrame("Confirm Apply", body)
+}
+
+func (m Model) renderUnmanagedOverwrite() string {
+	if m.unmanaged == nil {
+		return m.renderModalFrame("Protected Monitor Config", nil)
+	}
+
+	body := []string{
+		m.styles.warning.Render("This file was not generated by hyprmoncfg:"),
+		m.styles.subtle.Render(m.unmanaged.path),
+		"",
+		m.styles.subtle.MaxWidth(max(20, m.modalMaxWidth()-6)).Render("Overwriting it may destroy a hand-written configuration. To keep it, point --monitors-conf at a separate included file, for example:"),
+		m.styles.subtle.Render(m.unmanaged.alternativePath),
+		"",
+		m.styles.help.Render("Press y to overwrite once. Enter, n, or Esc leaves it unchanged."),
+	}
+	return m.renderModalFrame("Protected Monitor Config", body)
 }
 
 func (m Model) confirmApplyHelp() string {
@@ -2176,10 +2297,20 @@ func (m Model) deleteCmd(name string) tea.Cmd {
 	}
 }
 
-func (m Model) applyCmd(p profile.Profile) tea.Cmd {
+func (m Model) applyCmd(p profile.Profile, allowUnmanagedOverwrite ...bool) tea.Cmd {
 	client := m.client
 	engine := m.engine
+	guard := m.revertGuard
+	if guard != nil {
+		guard.begin()
+	}
+	if len(allowUnmanagedOverwrite) > 0 {
+		engine.AllowUnmanagedOverwrite = allowUnmanagedOverwrite[0]
+	}
 	return func() tea.Msg {
+		if guard != nil {
+			defer guard.finish()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
@@ -2195,8 +2326,97 @@ func (m Model) applyCmd(p profile.Profile) tea.Cmd {
 		if err != nil {
 			return applyMsg{profile: p, err: err}
 		}
+		if guard != nil {
+			guard.arm(snapshot)
+		}
 		return applyMsg{profile: applyProfile, snapshot: snapshot}
 	}
+}
+
+func (m *Model) armPendingRevert(snapshot apply.RevertState) {
+	if m.revertGuard == nil {
+		m.revertGuard = &pendingRevertGuard{}
+	}
+	m.revertGuard.arm(snapshot)
+}
+
+func (m *Model) disarmPendingRevert() {
+	if m.revertGuard != nil {
+		m.revertGuard.disarm()
+	}
+}
+
+func (m Model) RevertPending(ctx context.Context) error {
+	if m.revertGuard == nil {
+		return nil
+	}
+	snapshot, armed, err := m.revertGuard.pending(ctx)
+	if err != nil || !armed {
+		return err
+	}
+	if err := m.engine.Revert(ctx, snapshot); err != nil {
+		return err
+	}
+	m.revertGuard.disarm()
+	return nil
+}
+
+func (g *pendingRevertGuard) begin() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.inFlight == 0 {
+		g.idle = make(chan struct{})
+	}
+	g.inFlight++
+}
+
+func (g *pendingRevertGuard) finish() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.inFlight--
+	if g.inFlight == 0 {
+		close(g.idle)
+		g.idle = nil
+	}
+}
+
+func (g *pendingRevertGuard) arm(snapshot apply.RevertState) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.snapshot = snapshot
+	g.armed = true
+}
+
+func (g *pendingRevertGuard) disarm() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed = false
+}
+
+func (g *pendingRevertGuard) pending(ctx context.Context) (apply.RevertState, bool, error) {
+	for {
+		g.mu.Lock()
+		if g.inFlight == 0 {
+			snapshot := g.snapshot
+			armed := g.armed
+			g.mu.Unlock()
+			return snapshot, armed, nil
+		}
+		idle := g.idle
+		g.mu.Unlock()
+
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return apply.RevertState{}, false, ctx.Err()
+		}
+	}
+}
+
+func (g *pendingRevertGuard) isArmed() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.armed
 }
 
 func (m Model) postApply(p profile.Profile) error {
@@ -2208,10 +2428,20 @@ func (m Model) postApply(p profile.Profile) error {
 
 func (m Model) revertCmd(snapshot apply.RevertState, reason string) tea.Cmd {
 	engine := m.engine
+	guard := m.revertGuard
+	if guard != nil {
+		guard.begin()
+	}
 	return func() tea.Msg {
+		if guard != nil {
+			defer guard.finish()
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		err := engine.Revert(ctx, snapshot)
+		if err == nil && guard != nil {
+			guard.disarm()
+		}
 		return revertMsg{err: err, reason: reason}
 	}
 }
