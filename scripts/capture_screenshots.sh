@@ -15,15 +15,36 @@ terminal_columns="${TERMINAL_COLUMNS:-160}"
 terminal_lines="${TERMINAL_LINES:-38}"
 light_theme="${LIGHT_THEME:-ruby-llm}"
 dark_theme="${DARK_THEME:-ruby-llm-dark}"
+theme_set_timeout="${THEME_SET_TIMEOUT:-15s}"
 
 mkdir -p "$output_dir"
 
-for cmd in "$terminal_bin" hyprctl grim jq wtype; do
+for cmd in "$terminal_bin" hyprctl grim jq wtype omarchy-theme-set timeout; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "missing: $cmd" >&2
     exit 1
   fi
 done
+
+set_theme() {
+  local theme="$1"
+  local status
+
+  if timeout --kill-after=2s "$theme_set_timeout" omarchy-theme-set "$theme"; then
+    return 0
+  else
+    status=$?
+  fi
+
+  # Omarchy's browser theme refresh can leave the otherwise-complete theme
+  # switch waiting on a headless browser process indefinitely.
+  if (( status == 124 || status == 137 )); then
+    printf 'Theme switch to %s timed out after %s; continuing with the applied terminal theme.\n' "$theme" "$theme_set_timeout" >&2
+    return 0
+  fi
+
+  return "$status"
+}
 
 client_by_title() {
   local title="$1"
@@ -171,7 +192,7 @@ capture_themed() {
   local suffix="$2"
 
   printf 'Switching to %s...\n' "$theme"
-  omarchy-theme-set "$theme"
+  set_theme "$theme"
   sleep 2
 
   capture_state "layout${suffix}"
@@ -182,6 +203,17 @@ capture_themed() {
 
 original_theme="$(cat "$HOME/.config/omarchy/current/theme.name" 2>/dev/null || echo "")"
 
+restore_original_theme() {
+  local current_theme
+  current_theme="$(cat "$HOME/.config/omarchy/current/theme.name" 2>/dev/null || echo "")"
+  if [[ -n "$original_theme" && "$current_theme" != "$original_theme" ]]; then
+    printf 'Restoring theme %s...\n' "$original_theme"
+    set_theme "$original_theme"
+  fi
+}
+
+trap restore_original_theme EXIT INT TERM
+
 capture_themed "$light_theme" "-light"
 capture_themed "$dark_theme" "-dark"
 
@@ -189,10 +221,7 @@ capture_themed "$dark_theme" "-dark"
 cp "$output_dir/layout-light.png" "$output_dir/layout.png"
 cp "$output_dir/save-profile-light.png" "$output_dir/save-profile.png"
 
-# Restore original theme.
-if [[ -n "$original_theme" ]]; then
-  printf 'Restoring theme %s...\n' "$original_theme"
-  omarchy-theme-set "$original_theme"
-fi
+restore_original_theme
+trap - EXIT INT TERM
 
 printf 'Captured screenshots in %s\n' "$output_dir"
