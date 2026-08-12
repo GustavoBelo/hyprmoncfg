@@ -97,11 +97,11 @@ the daemon startup path.
 
 ## Package Status
 
-Current status as of 2026-08-08:
+Current status as of 2026-08-12:
 
 | Channel | Status | Notes |
 |---|---|---|
-| Arch AUR | Queued | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) has a tested 1.9.1 update ready, but the AUR maintenance outage is currently rejecting Git pushes. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
+| Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) is published at 1.10.0. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
 | Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) has successful 1.9.1 builds for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
 | Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.9.1 update](https://github.com/NixOS/nixpkgs/pull/550542) is under review. |
 | Gentoo GURU | Published | `gui-apps/hyprmoncfg` 1.9.1 is published in [Gentoo GURU](https://github.com/gentoo/guru/tree/master/gui-apps/hyprmoncfg). |
