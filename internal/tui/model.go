@@ -1376,7 +1376,7 @@ func (m Model) renderSavePrompt() string {
 	if status := m.renderErrorStatus(); status != "" {
 		body = append(body, status, "")
 	}
-	body = append(body, m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render("Type to filter names. Up/Down selects an existing profile. Tab switches action. Enter confirms. Esc cancels."))
+	body = append(body, m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render("Type to filter names. Up/Down selects an existing profile. Left/Right or Tab switches action. Enter confirms. Esc cancels."))
 	return m.renderModalFrame(title, body)
 }
 

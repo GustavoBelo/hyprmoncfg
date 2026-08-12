@@ -834,10 +834,10 @@ func (m Model) updateSaveKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.saveDialog = nil
 		m.saveOverwrite = ""
 		return m, nil
-	case "tab":
+	case "tab", "right":
 		m.cycleSaveAction(1)
 		return m, nil
-	case "shift+tab":
+	case "shift+tab", "left":
 		m.cycleSaveAction(-1)
 		return m, nil
 	case "enter":

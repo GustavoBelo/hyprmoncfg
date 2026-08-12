@@ -1426,6 +1426,65 @@ func TestSaveDialogTabCyclesExplicitActions(t *testing.T) {
 	}
 }
 
+func TestSaveDialogArrowKeysCycleExplicitActions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		purpose saveDialogPurpose
+		start   saveAction
+		key     tea.KeyType
+		want    saveAction
+	}{
+		{
+			name:    "right advances profile action",
+			purpose: saveDialogProfile,
+			start:   saveActionApply,
+			key:     tea.KeyRight,
+			want:    saveActionCancel,
+		},
+		{
+			name:    "left wraps profile action",
+			purpose: saveDialogProfile,
+			start:   saveActionOnly,
+			key:     tea.KeyLeft,
+			want:    saveActionCancel,
+		},
+		{
+			name:    "right advances quit action",
+			purpose: saveDialogQuit,
+			start:   saveActionSaveQuit,
+			key:     tea.KeyRight,
+			want:    saveActionDiscardQuit,
+		},
+		{
+			name:    "left wraps quit action",
+			purpose: saveDialogQuit,
+			start:   saveActionSaveQuit,
+			key:     tea.KeyLeft,
+			want:    saveActionCancel,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := Model{
+				styles: newStyles(),
+				mode:   modeSave,
+				saveDialog: &saveDialogState{
+					Action:  tc.start,
+					Purpose: tc.purpose,
+				},
+			}
+
+			updatedModel, _ := m.updateSaveKeys(tea.KeyMsg{Type: tc.key})
+			got := updatedModel.(Model)
+			if got.saveDialog == nil {
+				t.Fatal("expected save dialog to remain open")
+			}
+			if got.saveDialog.Action != tc.want {
+				t.Fatalf("expected action %v, got %v", tc.want, got.saveDialog.Action)
+			}
+		})
+	}
+}
+
 func TestDirtyQuitOpensSaveBeforeQuitDialog(t *testing.T) {
 	m := Model{
 		styles:           newStyles(),
