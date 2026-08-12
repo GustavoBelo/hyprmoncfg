@@ -292,7 +292,7 @@ func addLuaExecutionProbe(rendered string) (string, string, error) {
 }
 
 func (e Engine) verifyLuaExecutionProbe(ctx context.Context, probe string, rootPath string, targetPath string) error {
-	assertion := fmt.Sprintf(`assert(_G.%s == true, "hyprmoncfg generated config was not executed")`, probe)
+	assertion := fmt.Sprintf(`assert(_G.%s == true, "hyprmoncfg generated monitor config did not run")`, probe)
 	response, evalErr := e.Client.Eval(ctx, assertion)
 	if evalErr == nil && response == "ok" {
 		return nil
@@ -306,7 +306,7 @@ func (e Engine) verifyLuaExecutionProbe(ctx context.Context, probe string, rootP
 		detail = "Hyprland returned an empty response"
 	}
 	return fmt.Errorf(
-		"%s was not executed when Hyprland reloaded %s; add `dofile(%q)` to your Hyprland Lua config or pass a different --monitors-conf target (probe: %s)",
+		"%s did not run when Hyprland reloaded %s; add `dofile(%q)` to your Hyprland Lua config or pass a different --monitors-conf target (Hyprland response: %s)",
 		targetPath,
 		rootPath,
 		targetPath,

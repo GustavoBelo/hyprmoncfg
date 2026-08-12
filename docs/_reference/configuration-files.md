@@ -91,7 +91,7 @@ hyprmoncfg confirms that Hyprland loads the generated monitor file. This catches
 
 Legacy source chains are checked before writing. Add `source = ~/.config/hypr/monitors.conf` to `hyprland.conf`.
 
-Lua configs are verified by Hyprland itself instead of being parsed by hyprmoncfg. On apply, hyprmoncfg snapshots the target, writes the generated file with a private execution probe, reloads Hyprland, and asks Hyprland's Lua state whether that probe ran. A failed probe restores the previous file (or removes a newly created one) and reloads again. This works with `require`, `pcall`, `dofile`, custom `package.path` values, and computed include paths because it follows the config's real execution.
+For Lua configs, hyprmoncfg reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. If it did not, hyprmoncfg restores the previous file (or removes a newly created one) and reloads again. This works with `require`, `pcall`, `dofile`, custom `package.path` values, and computed include paths because Hyprland loads the real config itself.
 
 For the default Lua layout, add `pcall(require, "monitors")` to `hyprland.lua` or another Lua file loaded by it. The protected call is safe before `monitors.lua` exists; hyprmoncfg creates that file on the first apply. If your files live elsewhere, point hyprmoncfg at them with `--monitors-conf` and `--hypr-config`.
 

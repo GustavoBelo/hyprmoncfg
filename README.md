@@ -101,7 +101,7 @@ For legacy configs, make sure `~/.config/hypr/hyprland.conf` sources `monitors.c
 source = ~/.config/hypr/monitors.conf
 ```
 
-For Hyprland 0.55+ Lua configs, include `monitors.lua` from `hyprland.lua`, for example with `pcall(require, "monitors")`. hyprmoncfg verifies legacy source chains before writing; for Lua, it reloads Hyprland and asks the active Lua state whether the generated file actually executed. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
+For Hyprland 0.55+ Lua configs, include `monitors.lua` from `hyprland.lua`, for example with `pcall(require, "monitors")`. hyprmoncfg verifies legacy source chains before writing; for Lua, it reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
 
 ## Create your first profile
 

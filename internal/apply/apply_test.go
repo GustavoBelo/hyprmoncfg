@@ -1011,13 +1011,13 @@ func TestEngineApplyRollsBackLuaConfigWhenProbeFails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			engine, monitorsLuaPath, logPath := initLuaProbeTestEngine(t, "error: hyprmoncfg generated config was not executed", tt.initial)
+			engine, monitorsLuaPath, logPath := initLuaProbeTestEngine(t, "error: hyprmoncfg generated monitor config did not run", tt.initial)
 
 			_, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive)
 			if err == nil {
 				t.Fatal("expected missing Lua execution probe to fail apply")
 			}
-			if !strings.Contains(err.Error(), "was not executed when Hyprland reloaded") {
+			if !strings.Contains(err.Error(), "did not run when Hyprland reloaded") {
 				t.Fatalf("expected execution error, got %v", err)
 			}
 			if want := fmt.Sprintf("dofile(%q)", monitorsLuaPath); !strings.Contains(err.Error(), want) {

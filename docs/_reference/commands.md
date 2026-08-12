@@ -72,5 +72,5 @@ The daemon. Runs in the foreground by default.
 ## Exit behavior
 
 - CLI commands exit non-zero on Hyprland query failures, invalid layouts, missing profiles, or generated-config verification failures.
-- Legacy include-chain failures are reported before writing. For Lua configs, `apply` writes the generated target, reloads Hyprland, verifies an execution probe through `hyprctl eval`, and restores the previous file if Hyprland did not execute it.
+- Legacy include-chain failures are reported before writing. For Lua configs, `apply` reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. It restores the previous file if it did not.
 - The daemon exits cleanly on `SIGINT` or `SIGTERM`.

@@ -92,7 +92,7 @@ pcall(require, "monitors")
 
 The protected call lets Hyprland start before the generated file exists. A direct `require("monitors")`, `dofile(...)`, or another Lua include strategy also works as long as Hyprland executes the generated file when it reloads.
 
-Hyprland does not read the generated monitor file automatically. On apply, hyprmoncfg writes the file, reloads Hyprland, and confirms through Hyprland's own Lua state that the file executed. This works through nested or computed includes and custom `package.path` values without trying to parse Lua. If the file did not execute, hyprmoncfg restores the previous file and suggests an absolute `dofile(...)` line.
+Hyprland does not read the generated monitor file automatically. On apply, hyprmoncfg reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. This works through nested or computed includes and custom `package.path` values without trying to parse Lua. If the file did not run, hyprmoncfg restores the previous file and suggests an absolute `dofile(...)` line.
 
 You do not need to create `monitors.conf` or `monitors.lua` yourself. hyprmoncfg creates the active generated file when you apply your first profile, then rewrites files carrying its first-line ownership marker on each apply. An existing unmarked file is treated as user-owned: interactive use asks before replacing it, while the daemon refuses. Keep unrelated Hyprland settings in other included files, or choose a separate generated target with `--monitors-conf`.
 
