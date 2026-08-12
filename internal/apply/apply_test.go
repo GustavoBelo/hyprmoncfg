@@ -957,7 +957,109 @@ func TestEngineApplyPostApplyFailureWithNilLogger(t *testing.T) {
 	}
 }
 
+func TestAddLuaExecutionProbe(t *testing.T) {
+	rendered, probe, err := addLuaExecutionProbe("-- generated\nhl.monitor({})\n")
+	if err != nil {
+		t.Fatalf("add probe: %v", err)
+	}
+	if !strings.HasPrefix(probe, luaProbePrefix) {
+		t.Fatalf("expected probe prefix %q, got %q", luaProbePrefix, probe)
+	}
+	if want := "_G." + probe + " = true\n"; !strings.HasSuffix(rendered, want) {
+		t.Fatalf("expected rendered config to end with %q, got:\n%s", want, rendered)
+	}
+}
+
 func TestEngineApplyWritesLuaMonitorConfigWhenHyprlandLuaIsActive(t *testing.T) {
+	engine, monitorsLuaPath, logPath := initLuaProbeTestEngine(t, "ok", nil)
+
+	if _, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive); err != nil {
+		t.Fatalf("apply lua config: %v", err)
+	}
+
+	renderedBytes, err := os.ReadFile(monitorsLuaPath)
+	if err != nil {
+		t.Fatalf("read monitors.lua: %v", err)
+	}
+	rendered := string(renderedBytes)
+	if !strings.Contains(rendered, "hl.monitor({") {
+		t.Fatalf("expected monitors.lua to contain lua monitor config, got:\n%s", rendered)
+	}
+	if strings.Contains(rendered, luaProbePrefix) {
+		t.Fatalf("expected the temporary execution probe to be removed from monitors.lua, got:\n%s", rendered)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read hyprctl log: %v", err)
+	}
+	if !strings.Contains(string(logBytes), "eval assert(_G."+luaProbePrefix) {
+		t.Fatalf("expected Hyprland to query a generated execution probe, got:\n%s", logBytes)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(monitorsLuaPath), "monitors.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected monitors.conf not to be written, stat error: %v", err)
+	}
+}
+
+func TestEngineApplyRollsBackLuaConfigWhenProbeFails(t *testing.T) {
+	tests := []struct {
+		name    string
+		initial []byte
+	}{
+		{name: "restore existing generated config", initial: []byte(config.GeneratedLuaHeader + "\n-- initial\n")},
+		{name: "remove newly created config"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			engine, monitorsLuaPath, logPath := initLuaProbeTestEngine(t, "error: hyprmoncfg generated config was not executed", tt.initial)
+
+			_, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive)
+			if err == nil {
+				t.Fatal("expected missing Lua execution probe to fail apply")
+			}
+			if !strings.Contains(err.Error(), "was not executed when Hyprland reloaded") {
+				t.Fatalf("expected execution error, got %v", err)
+			}
+			if want := fmt.Sprintf("dofile(%q)", monitorsLuaPath); !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected absolute dofile suggestion %q, got %v", want, err)
+			}
+
+			if tt.initial == nil {
+				if _, statErr := os.Stat(monitorsLuaPath); !errors.Is(statErr, os.ErrNotExist) {
+					t.Fatalf("expected failed first apply to remove monitors.lua, stat error: %v", statErr)
+				}
+			} else {
+				restored, readErr := os.ReadFile(monitorsLuaPath)
+				if readErr != nil {
+					t.Fatalf("read restored monitors.lua: %v", readErr)
+				}
+				if string(restored) != string(tt.initial) {
+					t.Fatalf("expected original monitors.lua to be restored, got:\n%s", restored)
+				}
+			}
+
+			logBytes, readErr := os.ReadFile(logPath)
+			if readErr != nil {
+				t.Fatalf("read hyprctl log: %v", readErr)
+			}
+			reloads := 0
+			for _, line := range strings.Split(strings.TrimSpace(string(logBytes)), "\n") {
+				if line == "reload" {
+					reloads++
+				}
+			}
+			if reloads != 2 {
+				t.Fatalf("expected apply and rollback reloads, got %d:\n%s", reloads, logBytes)
+			}
+			if strings.Contains(string(logBytes), "--batch") {
+				t.Fatalf("expected probe failure before live commands, got:\n%s", logBytes)
+			}
+		})
+	}
+}
+
+func initLuaProbeTestEngine(t *testing.T, evalReply string, initialTarget []byte) (Engine, string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	xdg := filepath.Join(dir, "xdg")
 	hyprDir := filepath.Join(xdg, "hypr")
@@ -966,13 +1068,19 @@ func TestEngineApplyWritesLuaMonitorConfigWhenHyprlandLuaIsActive(t *testing.T) 
 	}
 	hyprlandLuaPath := filepath.Join(hyprDir, "hyprland.lua")
 	monitorsLuaPath := filepath.Join(hyprDir, "monitors.lua")
-	if err := os.WriteFile(hyprlandLuaPath, []byte("require('monitors')\n"), 0o644); err != nil {
+	rootConfig := `dofile((os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua")
+pcall(require, "hypr.monitors")
+`
+	if err := os.WriteFile(hyprlandLuaPath, []byte(rootConfig), 0o644); err != nil {
 		t.Fatalf("write hyprland.lua: %v", err)
 	}
-	if err := os.WriteFile(monitorsLuaPath, []byte(config.GeneratedLuaHeader+"\n-- initial\n"), 0o644); err != nil {
-		t.Fatalf("write monitors.lua: %v", err)
+	if initialTarget != nil {
+		if err := os.WriteFile(monitorsLuaPath, initialTarget, 0o644); err != nil {
+			t.Fatalf("write monitors.lua: %v", err)
+		}
 	}
 
+	logPath := filepath.Join(dir, "hyprctl.log")
 	hyprctlPath := filepath.Join(dir, "hyprctl")
 	hyprctlScript := `#!/usr/bin/env bash
 set -eu
@@ -982,6 +1090,7 @@ fi
 cmd1="${1-}"
 cmd2="${2-}"
 cmd3="${3-}"
+printf '%s\n' "$*" >> "$HYPRCTL_LOG"
 
 if [ "$cmd1" = "-j" ] && [ "$cmd2" = "version" ]; then
   printf '{"version":"0.55.0"}'
@@ -1007,6 +1116,11 @@ if [ "$cmd1" = "reload" ]; then
   exit 0
 fi
 
+if [ "$cmd1" = "eval" ]; then
+  printf '%s' "$HYPRMONCFG_TEST_EVAL_REPLY"
+  exit 0
+fi
+
 if [ "$cmd1" = "--batch" ]; then
   exit 0
 fi
@@ -1020,27 +1134,15 @@ exit 1
 
 	t.Setenv("XDG_CONFIG_HOME", xdg)
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig-test")
+	t.Setenv("HYPRCTL_LOG", logPath)
+	t.Setenv("HYPRMONCFG_TEST_EVAL_REPLY", evalReply)
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	client, err := hypr.NewClient()
 	if err != nil {
 		t.Fatalf("new hypr client: %v", err)
 	}
-	engine := Engine{Client: client}
-	if _, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive); err != nil {
-		t.Fatalf("apply lua config: %v", err)
-	}
-
-	rendered, err := os.ReadFile(monitorsLuaPath)
-	if err != nil {
-		t.Fatalf("read monitors.lua: %v", err)
-	}
-	if !strings.Contains(string(rendered), "hl.monitor({") {
-		t.Fatalf("expected monitors.lua to contain lua monitor config, got:\n%s", rendered)
-	}
-	if _, err := os.Stat(filepath.Join(hyprDir, "monitors.conf")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected monitors.conf not to be written, stat error: %v", err)
-	}
+	return Engine{Client: client}, monitorsLuaPath, logPath
 }
 
 func initTestEngine(t *testing.T) (engine *Engine, logPath string, err error) {

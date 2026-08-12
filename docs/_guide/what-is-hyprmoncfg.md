@@ -20,7 +20,7 @@ Existing tools try to help but bring their own problems. Some need a Python runt
 
 **Profiles follow your hardware, not your ports.** Each profile stores monitor identity by make, model, and serial -- not by connector name. `DP-1` and `DP-2` can swap all they want. Your layout holds.
 
-**It verifies the include chain.** Before writing anything, hyprmoncfg checks that Hyprland actually includes the generated monitor file. It supports legacy `hyprland.conf`/`monitors.conf` and Hyprland 0.55+ Lua `hyprland.lua`/`monitors.lua` setups.
+**It verifies the generated config is loaded.** Legacy source chains are checked before writing. For Hyprland 0.55+ Lua configs, hyprmoncfg reloads the real config and queries a private execution probe in Hyprland's Lua state, rolling the file back if it was not executed.
 
 **One runtime dependency: Hyprland.** Two compiled Go binaries. No Python, no GTK, no GObject introspection, no D-Bus. Install them and you're done. Since it's a TUI, it works over SSH too -- configure monitors on a headless machine from your laptop.
 

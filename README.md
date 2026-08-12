@@ -95,13 +95,13 @@ Distro packagers should use [PACKAGING.md](PACKAGING.md).
 
 ## Configure Hyprland
 
-Make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
+For legacy configs, make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
 
 ```text
 source = ~/.config/hypr/monitors.conf
 ```
 
-Hyprland does not read that file automatically. hyprmoncfg creates and rewrites generated `monitors.conf` files, then refuses to write if the source chain is missing so you do not edit a file Hyprland ignores. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
+For Hyprland 0.55+ Lua configs, include `monitors.lua` from `hyprland.lua`, for example with `pcall(require, "monitors")`. hyprmoncfg verifies legacy source chains before writing; for Lua, it reloads Hyprland and asks the active Lua state whether the generated file actually executed. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
 
 ## Create your first profile
 

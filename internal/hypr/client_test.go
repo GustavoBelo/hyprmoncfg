@@ -117,6 +117,51 @@ exit 1
 	}
 }
 
+func TestEvalReturnsHyprlandResponse(t *testing.T) {
+	tmp := t.TempDir()
+	hyprctlPath := filepath.Join(tmp, "hyprctl")
+	script := `#!/usr/bin/env bash
+set -eu
+if [ "${1-}" = "--instance" ]; then
+  shift 2
+fi
+if [ "${1-}" != "eval" ]; then
+  exit 2
+fi
+printf '%s' "$HYPRMONCFG_TEST_EVAL_REPLY"
+exit "$HYPRMONCFG_TEST_EVAL_STATUS"
+`
+	if err := os.WriteFile(hyprctlPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake hyprctl: %v", err)
+	}
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig-test")
+	client := &Client{hyprctl: hyprctlPath}
+
+	t.Run("success", func(t *testing.T) {
+		t.Setenv("HYPRMONCFG_TEST_EVAL_REPLY", "ok")
+		t.Setenv("HYPRMONCFG_TEST_EVAL_STATUS", "0")
+		response, err := client.Eval(context.Background(), "assert(true)")
+		if err != nil {
+			t.Fatalf("eval: %v", err)
+		}
+		if response != "ok" {
+			t.Fatalf("expected ok response, got %q", response)
+		}
+	})
+
+	t.Run("failure preserves response", func(t *testing.T) {
+		t.Setenv("HYPRMONCFG_TEST_EVAL_REPLY", "error: probe missing")
+		t.Setenv("HYPRMONCFG_TEST_EVAL_STATUS", "1")
+		response, err := client.Eval(context.Background(), "assert(false)")
+		if err == nil {
+			t.Fatal("expected eval failure")
+		}
+		if response != "error: probe missing" {
+			t.Fatalf("expected Hyprland response to be preserved, got %q", response)
+		}
+	})
+}
+
 func TestMonitorOutputKeyUsesStableMSTPathForDuplicateMonitors(t *testing.T) {
 	monitors := []Monitor{
 		{Name: "DP-10", Make: "Sceptre Tech Inc", Model: "Sceptre Z27", ConnectorPath: "mst:532-3"},

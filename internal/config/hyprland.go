@@ -183,13 +183,6 @@ func resolveHyprConfigMonitors(format HyprConfigFormat, explicit string) (string
 	return HyprlandMonitorsConfPath()
 }
 
-func VerifyIncludeChain(format HyprConfigFormat, rootConfigPath string, targetPath string) error {
-	if format == HyprConfigLua {
-		return VerifyLuaIncludeChain(rootConfigPath, targetPath)
-	}
-	return VerifySourceChain(rootConfigPath, targetPath)
-}
-
 func resolvePath(value string, baseDir string) (string, error) {
 	value = strings.TrimSpace(strings.Trim(value, `"'`))
 	if value == "" {

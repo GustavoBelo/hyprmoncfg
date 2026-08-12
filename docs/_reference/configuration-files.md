@@ -87,9 +87,13 @@ Explicit flags take precedence. A systemd-managed daemon must receive these vari
 
 ## The include-chain check
 
-Before writing anything, hyprmoncfg confirms Hyprland includes the generated monitor file. This catches a surprisingly common problem: a tool writes a config file that Hyprland never reads, so nothing happens and you're left wondering why.
+hyprmoncfg confirms that Hyprland loads the generated monitor file. This catches a surprisingly common problem: a tool writes a config file that Hyprland never reads, so nothing happens and you're left wondering why.
 
-For legacy configs, add `source = ~/.config/hypr/monitors.conf` to `hyprland.conf`. For Lua configs, add `pcall(require, "monitors")` to `hyprland.lua` or another Lua file loaded by it. The protected call is safe before `monitors.lua` exists; hyprmoncfg creates that file on the first apply. A direct `require("monitors")` is also recognized. If your files live elsewhere, point hyprmoncfg at them with `--monitors-conf` and `--hypr-config`.
+Legacy source chains are checked before writing. Add `source = ~/.config/hypr/monitors.conf` to `hyprland.conf`.
+
+Lua configs are verified by Hyprland itself instead of being parsed by hyprmoncfg. On apply, hyprmoncfg snapshots the target, writes the generated file with a private execution probe, reloads Hyprland, and asks Hyprland's Lua state whether that probe ran. A failed probe restores the previous file (or removes a newly created one) and reloads again. This works with `require`, `pcall`, `dofile`, custom `package.path` values, and computed include paths because it follows the config's real execution.
+
+For the default Lua layout, add `pcall(require, "monitors")` to `hyprland.lua` or another Lua file loaded by it. The protected call is safe before `monitors.lua` exists; hyprmoncfg creates that file on the first apply. If your files live elsewhere, point hyprmoncfg at them with `--monitors-conf` and `--hypr-config`.
 
 ## What gets written
 

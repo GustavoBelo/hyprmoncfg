@@ -2,6 +2,8 @@ package apply
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
@@ -29,6 +31,7 @@ const (
 const (
 	applyValidationTimeout      = 3 * time.Second
 	applyValidationPollInterval = 100 * time.Millisecond
+	luaProbePrefix              = "__hyprmoncfg_probe_"
 )
 
 type Engine struct {
@@ -181,8 +184,10 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return RevertState{}, err
 	}
-	if err := config.VerifyIncludeChain(resolvedConfig.Format, resolvedConfig.RootPath, resolvedConfig.MonitorsPath); err != nil {
-		return RevertState{}, err
+	if resolvedConfig.Format == config.HyprConfigLegacy {
+		if err := config.VerifySourceChain(resolvedConfig.RootPath, resolvedConfig.MonitorsPath); err != nil {
+			return RevertState{}, err
+		}
 	}
 	backup, err := config.SnapshotFile(resolvedConfig.MonitorsPath)
 	if err != nil {
@@ -211,12 +216,43 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return RevertState{}, err
 	}
-	if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(rendered), 0o644); err != nil {
+	renderedForReload := rendered
+	luaProbe := ""
+	if resolvedConfig.Format == config.HyprConfigLua {
+		renderedForReload, luaProbe, err = addLuaExecutionProbe(rendered)
+		if err != nil {
+			return RevertState{}, err
+		}
+	}
+	if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(renderedForReload), 0o644); err != nil {
 		return RevertState{}, err
 	}
 	if err := e.Client.Reload(ctx); err != nil {
 		_ = backup.Restore()
 		return RevertState{}, err
+	}
+	if luaProbe != "" {
+		if err := e.verifyLuaExecutionProbe(ctx, luaProbe, resolvedConfig.RootPath, resolvedConfig.MonitorsPath); err != nil {
+			restoreErr := backup.Restore()
+			reloadErr := e.Client.Reload(ctx)
+			return RevertState{}, errors.Join(
+				err,
+				wrapRollbackError("restore generated monitor config", restoreErr),
+				wrapRollbackError("reload restored Hyprland config", reloadErr),
+			)
+		}
+		// The probe only needs to exist for the reload above. Keep the generated
+		// file clean without causing a second monitor reload; each future apply
+		// uses a fresh probe, so the current Lua global cannot satisfy it.
+		if err := config.WriteFileAtomic(resolvedConfig.MonitorsPath, []byte(rendered), 0o644); err != nil {
+			restoreErr := backup.Restore()
+			reloadErr := e.Client.Reload(ctx)
+			return RevertState{}, errors.Join(
+				fmt.Errorf("remove Lua execution probe: %w", err),
+				wrapRollbackError("restore generated monitor config", restoreErr),
+				wrapRollbackError("reload restored Hyprland config", reloadErr),
+			)
+		}
 	}
 
 	applied, err := e.waitForAppliedProfile(ctx, p, monitors)
@@ -242,6 +278,47 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	}
 
 	return revertState, nil
+}
+
+func addLuaExecutionProbe(rendered string) (string, string, error) {
+	// A syntax-error reload can leave Hyprland's previous Lua state alive. Use a
+	// fresh global on every apply so a marker from an older config cannot pass.
+	var token [16]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return "", "", fmt.Errorf("generate Lua execution probe: %w", err)
+	}
+	probe := luaProbePrefix + hex.EncodeToString(token[:])
+	return strings.TrimRight(rendered, "\n") + "\n\n_G." + probe + " = true\n", probe, nil
+}
+
+func (e Engine) verifyLuaExecutionProbe(ctx context.Context, probe string, rootPath string, targetPath string) error {
+	assertion := fmt.Sprintf(`assert(_G.%s == true, "hyprmoncfg generated config was not executed")`, probe)
+	response, evalErr := e.Client.Eval(ctx, assertion)
+	if evalErr == nil && response == "ok" {
+		return nil
+	}
+
+	detail := response
+	if detail == "" && evalErr != nil {
+		detail = evalErr.Error()
+	}
+	if detail == "" {
+		detail = "Hyprland returned an empty response"
+	}
+	return fmt.Errorf(
+		"%s was not executed when Hyprland reloaded %s; add `dofile(%q)` to your Hyprland Lua config or pass a different --monitors-conf target (probe: %s)",
+		targetPath,
+		rootPath,
+		targetPath,
+		detail,
+	)
+}
+
+func wrapRollbackError(action string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", action, err)
 }
 
 func alternativeMonitorsPath(path string) string {

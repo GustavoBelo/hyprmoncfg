@@ -140,6 +140,22 @@ func (c *Client) Reload(ctx context.Context) error {
 	return nil
 }
 
+// Eval executes Lua in the active Hyprland config state and returns Hyprland's
+// response. Hyprland 0.55 supports eval for Lua configs and replies with "ok"
+// when the expression completes successfully.
+func (c *Client) Eval(ctx context.Context, code string) (string, error) {
+	cmd, err := c.commandContext(ctx, "eval", code)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.CombinedOutput()
+	response := strings.TrimSpace(string(out))
+	if err != nil {
+		return response, fmt.Errorf("failed evaluating Hyprland Lua: %w (%s)", err, response)
+	}
+	return response, nil
+}
+
 func (c *Client) KeywordMonitor(ctx context.Context, value string) error {
 	cmd, err := c.commandContext(ctx, "keyword", "monitor", value)
 	if err != nil {
