@@ -102,7 +102,7 @@ Current status as of 2026-08-13:
 | Channel | Status | Notes |
 |---|---|---|
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) is published at 1.10.1. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
-| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10838556](https://copr.fedorainfracloud.org/coprs/build/10838556) publishes 1.10.1 for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
+| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10861758](https://copr.fedorainfracloud.org/coprs/build/10861758) publishes 1.10.1 for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
 | Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.10.1 update](https://github.com/NixOS/nixpkgs/pull/552223) is under review. |
 | Gentoo GURU | Published | `gui-apps/hyprmoncfg` 1.10.1 is published in [Gentoo GURU](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg). |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
