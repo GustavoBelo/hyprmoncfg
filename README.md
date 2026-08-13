@@ -143,6 +143,8 @@ systemctl --user enable --now hyprmoncfgd
 
 The daemon scores every profile in `~/.config/hyprmoncfg/profiles/`, so delete throwaway profiles before relying on automatic switching.
 
+On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` stops that exact transient user scope while it owns monitor profiles and restores the watcher when the daemon exits during a live Hyprland session. Generated configuration used without the daemon cannot provide this runtime ownership; static-config users must disable the Omarchy watcher separately.
+
 ## Screenshots
 
 hyprmoncfg adapts to your theme. Here are some examples:

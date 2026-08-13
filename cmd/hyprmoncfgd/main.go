@@ -16,6 +16,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/daemon"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
+	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -41,6 +42,9 @@ func newRootCmd() *cobra.Command {
 		Short:   "Daemon for automatic monitor profile switching",
 		Version: buildinfo.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+
 			base, err := config.EnsureBaseDir(configDir)
 			if err != nil {
 				return err
@@ -70,11 +74,17 @@ func newRootCmd() *cobra.Command {
 				Logf:            logf,
 			})
 
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
-
 			logf("starting daemon")
+			watcherOwner := omarchywatch.New(logf)
+			watcherOwner.Start(ctx)
 			err = svc.Run(ctx)
+
+			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			restoreErr := watcherOwner.Release(restoreCtx)
+			restoreCancel()
+			if restoreErr != nil {
+				logf("could not restore Omarchy monitor watcher: %v", restoreErr)
+			}
 			if err != nil {
 				return err
 			}

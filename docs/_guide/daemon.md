@@ -10,6 +10,10 @@ You save profiles with the TUI. But who applies them when you're not looking?
 
 That's what `hyprmoncfgd` does. It runs in the background, watches for monitor hotplug and lid events, and applies the best matching profile automatically. Plug in a monitor, close the lid, undock your laptop, connect to a projector -- the daemon handles it.
 
+On Omarchy releases that start `omarchy-hyprland-monitor-watch`, the daemon takes exclusive ownership of monitor state. It stops the watcher's exact transient user scope, keeps later copies suppressed, and starts the watcher again when `hyprmoncfgd` exits while Hyprland is still running. This prevents Omarchy's clamshell reconciliation from overwriting an active hyprmoncfg profile.
+
+{% include alert.html type="warning" title="Static Configs On Omarchy" content="A generated monitor config cannot provide runtime process ownership by itself. If you use a generated <code>monitors.lua</code> without running <code>hyprmoncfgd</code>, Omarchy's monitor watcher remains active and may reconcile the laptop panel using Omarchy's own settings. Disable that watcher separately or run the daemon." %}
+
 This is especially useful if you move between setups regularly. A conference projector, a coworking space monitor, your desk at home -- each one has different resolution, position, and scale requirements. Save a profile once, and the daemon takes care of it from then on.
 
 ## Setup
