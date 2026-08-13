@@ -130,6 +130,45 @@ func TestWorkspaceCommandsForProfileIncludeKeywordAndDispatch(t *testing.T) {
 	}
 }
 
+func TestWorkspaceCommandsForProfileUseLuaDispatcherForLuaConfig(t *testing.T) {
+	p := profile.New("desk", []profile.OutputConfig{
+		{Key: monitors[0].HardwareKey(), Name: monitors[0].Name, Enabled: true, Scale: 1},
+	})
+	p.Workspaces = profile.WorkspaceSettings{
+		Enabled:  true,
+		Strategy: profile.WorkspaceStrategyManual,
+		Rules: []profile.WorkspaceRule{
+			{Workspace: "dev docs", OutputKey: monitors[0].HardwareKey(), OutputName: monitors[0].Name},
+		},
+	}
+
+	got := workspaceCommandsForProfile(p, monitors, true)
+	want := []string{
+		`dispatch hl.dsp.workspace.move({ workspace = "dev docs", monitor = "DP-1" })`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d workspace commands, got %d: %v", len(want), len(got), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("workspace command %d mismatch: got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestSnapshotStateUsesLuaDispatcherForWorkspacePlacement(t *testing.T) {
+	commands := snapshotState(monitors, []hypr.WorkspaceRule{
+		{WorkspaceString: "2", Monitor: "DP-1"},
+	}, []hypr.WorkspaceState{
+		{Name: "2", Monitor: "DP-1"},
+		{Name: "special:scratchpad", Monitor: "DP-1"},
+	}, true)
+	want := []string{`dispatch hl.dsp.workspace.move({ workspace = "2", monitor = "DP-1" })`}
+	if len(commands) != len(want) || commands[0] != want[0] {
+		t.Fatalf("unexpected Lua snapshot commands: got %v want %v", commands, want)
+	}
+}
+
 func TestCommandsForProfileResolveDuplicateMonitorsByConnector(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{Name: "DP-5", Description: "VIE C24PULSE 0x01010101", Make: "VIE", Model: "C24PULSE", Serial: "0x01010101"},

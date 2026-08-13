@@ -63,9 +63,19 @@ type RevertState struct {
 type RenderOptions = render.Options
 
 func SnapshotState(monitors []hypr.Monitor, rules []hypr.WorkspaceRule, workspaces []hypr.WorkspaceState) []string {
+	return snapshotState(monitors, rules, workspaces, false)
+}
+
+func snapshotState(monitors []hypr.Monitor, rules []hypr.WorkspaceRule, workspaces []hypr.WorkspaceState, luaDispatch bool) []string {
+	if luaDispatch {
+		// Reloading the restored Lua config reinstates its monitor and workspace
+		// rules. Lua-mode Hyprland rejects legacy `keyword` commands, so the live
+		// rollback only needs to restore where existing workspaces were placed.
+		return snapshotWorkspaceMoveCommands(workspaces, true)
+	}
 	commands := SnapshotCommands(monitors)
 	commands = append(commands, snapshotWorkspaceRuleCommands(rules)...)
-	commands = append(commands, snapshotWorkspaceMoveCommands(workspaces)...)
+	commands = append(commands, snapshotWorkspaceMoveCommands(workspaces, luaDispatch)...)
 	return commands
 }
 
@@ -96,6 +106,10 @@ func CommandsForProfile(p profile.Profile, monitors []hypr.Monitor) ([]string, e
 }
 
 func WorkspaceCommandsForProfile(p profile.Profile, monitors []hypr.Monitor) []string {
+	return workspaceCommandsForProfile(p, monitors, false)
+}
+
+func workspaceCommandsForProfile(p profile.Profile, monitors []hypr.Monitor, luaDispatch bool) []string {
 	p.Normalize()
 	rules := profile.ResolveWorkspaceRules(p, monitors)
 	if len(rules) == 0 {
@@ -122,8 +136,10 @@ func WorkspaceCommandsForProfile(p profile.Profile, monitors []hypr.Monitor) []s
 		}
 
 		selector := resolver.SelectorForOutput(output, monitor)
-		commands = append(commands, "keyword workspace "+render.WorkspaceRuleCommand(rule.Workspace, selector, rule.Default, rule.Persistent))
-		commands = append(commands, fmt.Sprintf("dispatch moveworkspacetomonitor %s %s", shellEscape(rule.Workspace), monitor.Name))
+		if !luaDispatch {
+			commands = append(commands, "keyword workspace "+render.WorkspaceRuleCommand(rule.Workspace, selector, rule.Default, rule.Persistent))
+		}
+		commands = append(commands, workspaceMoveCommand(rule.Workspace, monitor.Name, luaDispatch))
 	}
 	return commands
 }
@@ -207,9 +223,10 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return RevertState{}, err
 	}
+	luaDispatch := resolvedConfig.Format == config.HyprConfigLua
 	revertState := RevertState{
 		MonitorsConf: backup,
-		Commands:     SnapshotState(monitors, currentRules, currentWorkspaces),
+		Commands:     snapshotState(monitors, currentRules, currentWorkspaces, luaDispatch),
 	}
 
 	rendered, err := render.RenderConfig(p, monitors, render.Options{Format: resolvedConfig.Format, UseMonitorV2: supportsV2})
@@ -262,7 +279,7 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		return RevertState{}, err
 	}
 
-	if err := e.applyLiveCommands(ctx, WorkspaceCommandsForProfile(p, applied)); err != nil {
+	if err := e.applyLiveCommands(ctx, workspaceCommandsForProfile(p, applied, luaDispatch)); err != nil {
 		_ = backup.Restore()
 		_ = e.Client.Reload(ctx)
 		_ = e.applyLiveCommands(ctx, revertState.Commands)
@@ -482,15 +499,22 @@ func snapshotWorkspaceRuleCommands(rules []hypr.WorkspaceRule) []string {
 	return commands
 }
 
-func snapshotWorkspaceMoveCommands(workspaces []hypr.WorkspaceState) []string {
+func snapshotWorkspaceMoveCommands(workspaces []hypr.WorkspaceState, luaDispatch bool) []string {
 	commands := make([]string, 0, len(workspaces))
 	for _, workspace := range workspaces {
 		if strings.HasPrefix(workspace.Name, "special:") || workspace.Monitor == "" {
 			continue
 		}
-		commands = append(commands, fmt.Sprintf("dispatch moveworkspacetomonitor %s %s", shellEscape(workspace.Name), workspace.Monitor))
+		commands = append(commands, workspaceMoveCommand(workspace.Name, workspace.Monitor, luaDispatch))
 	}
 	return commands
+}
+
+func workspaceMoveCommand(workspace string, monitor string, luaDispatch bool) string {
+	if luaDispatch {
+		return fmt.Sprintf("dispatch hl.dsp.workspace.move({ workspace = %q, monitor = %q })", workspace, monitor)
+	}
+	return fmt.Sprintf("dispatch moveworkspacetomonitor %s %s", shellEscape(workspace), monitor)
 }
 
 func shellEscape(value string) string {
