@@ -23,7 +23,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
-func TestRenderMainIncludesRefreshedChrome(t *testing.T) {
+func TestRenderMainUsesPaneTitlesWithoutMastheadOrCanvasChrome(t *testing.T) {
 	m := Model{
 		styles:      newStyles(),
 		mode:        modeMain,
@@ -55,11 +55,98 @@ func TestRenderMainIncludesRefreshedChrome(t *testing.T) {
 	}
 
 	view := m.renderMain()
-	if !strings.Contains(view, "Hyprland monitor layout and workspace planner") {
-		t.Fatalf("expected refreshed title bar in view, got:\n%s", view)
+	for _, unwanted := range []string{"Hyprland monitor layout and workspace planner", "Lid: open", "Legend"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected %q to be removed from editor chrome, got:\n%s", unwanted, view)
+		}
 	}
-	if !strings.Contains(view, "Monitor Layout") {
-		t.Fatalf("expected Monitor Layout header in view, got:\n%s", view)
+	for _, want := range []string{"Monitor Layout", "Display", "Color", "Info"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected pane border title %q in view, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestLayoutPanesReachTerminalEdges(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		mode:        modeMain,
+		tab:         tabLayout,
+		layoutFocus: layoutFocusCanvas,
+		width:       120,
+		height:      36,
+	}
+
+	view := ansi.Strip(m.renderLayoutView(24))
+	firstLine, _, _ := strings.Cut(view, "\n")
+	if width := lipgloss.Width(firstLine); width != m.width {
+		t.Fatalf("expected panes to fill terminal width %d, got %d", m.width, width)
+	}
+	if !strings.HasPrefix(firstLine, "╭") || !strings.HasSuffix(firstLine, "╮") {
+		t.Fatalf("expected pane borders at both terminal edges, got %q", firstLine)
+	}
+}
+
+func TestSplitPanesDoNotReserveGap(t *testing.T) {
+	left, right := splitPaneWidths(120, 66, 18)
+	if got := 120 - left - right; got != paneGapWidth {
+		t.Fatalf("expected %d-column pane gap, got %d", paneGapWidth, got)
+	}
+}
+
+func TestTabsUseSingleLineRailWithStatusAtRight(t *testing.T) {
+	m := Model{styles: newStyles(), tab: tabLayout}
+	tabs := ansi.Strip(m.renderTabs())
+	if got := lipgloss.Height(tabs); got != 1 {
+		t.Fatalf("expected a single navigation rail, got %d rows", got)
+	}
+	if !strings.Contains(tabs, "1 Layout") || !strings.Contains(tabs, "Current setup") || strings.Index(tabs, "Current setup") < lipgloss.Width(tabs)/2 {
+		t.Fatalf("expected tabs at left and setup status at right, got %q", tabs)
+	}
+	if width := lipgloss.Width(tabs); width != m.terminalWidth() {
+		t.Fatalf("expected navigation rail to fill width %d, got %d", m.terminalWidth(), width)
+	}
+}
+
+func TestCurrentSetupIsPlainTopRailMetadata(t *testing.T) {
+	m := Model{styles: newStyles(), tab: tabLayout, width: 120, height: 30, daemonOK: true}
+	status := m.renderTopStatus()
+	if ansi.Strip(status) != "Current setup" {
+		t.Fatalf("expected neutral setup label, got %q", ansi.Strip(status))
+	}
+	if strings.Contains(status, "\x1b[48;") {
+		t.Fatalf("expected Current setup without background color, got %q", status)
+	}
+}
+
+func TestTopRailShowsDaemonFailureAndLinksToSetup(t *testing.T) {
+	m := Model{styles: newStyles(), tab: tabLayout, width: 160, height: 30}
+	plain := ansi.Strip(m.renderTabs())
+	start, found := visibleTextColumn(plain, "Daemon not running")
+	if !found {
+		t.Fatalf("expected daemon failure at top right, got %q", plain)
+	}
+
+	_, cmd := m.updateMouse(mousePressAt(start, m.appContentY()))
+	if cmd == nil {
+		t.Fatal("expected daemon failure click to open setup instructions")
+	}
+	msg := cmd()
+	open, ok := msg.(openURLMsg)
+	if !ok || open.url != daemonURL {
+		t.Fatalf("expected daemon setup open command, got %#v", msg)
+	}
+}
+
+func TestVisibleTextColumnUsesTerminalCellsForUnicodeRail(t *testing.T) {
+	line := "─ 1 Layout ─ hyprmoncfg"
+	got, ok := visibleTextColumn(line, "hyprmoncfg")
+	if !ok {
+		t.Fatal("expected label to be found")
+	}
+	want := lipgloss.Width("─ 1 Layout ─ ")
+	if got != want {
+		t.Fatalf("expected cell column %d, got byte-derived column %d", want, got)
 	}
 }
 
@@ -159,8 +246,8 @@ func TestRenderFooterBarFitsVersionWithinLineWidth(t *testing.T) {
 	if !strings.Contains(bar, "v1.2.3") {
 		t.Fatalf("expected footer bar to include version, got %q", bar)
 	}
-	if width := lipgloss.Width(bar); width > 118 {
-		t.Fatalf("expected footer bar to fit width 118, got %d", width)
+	if width := lipgloss.Width(bar); width > m.footerContentWidth() {
+		t.Fatalf("expected footer bar to fit width %d, got %d", m.footerContentWidth(), width)
 	}
 }
 
@@ -193,7 +280,7 @@ func TestFooterLinkAtReturnsClickableRegionsOnly(t *testing.T) {
 	var askFound bool
 	for _, link := range layout.links {
 		if link.label == "Ask" && link.url == communityURL {
-			lx := m.footerColumnX() + m.badgeExtraWidth() + link.start
+			lx := m.footerColumnX() + link.start
 			hit, ok := m.footerLinkAt(lx, m.footerRowY())
 			if !ok || hit.label != "Ask" {
 				t.Fatalf("expected Ask hit at x=%d, got ok=%v link=%+v", lx, ok, hit)
@@ -232,7 +319,7 @@ func TestFooterLinkAtMatchesVisibleFooterTextPosition(t *testing.T) {
 			t.Fatalf("expected footer text to contain %q, got %q", want.label, footer)
 		}
 
-		x := m.footerColumnX() + m.badgeExtraWidth() + offset
+		x := m.footerColumnX() + offset
 		hit, ok := m.footerLinkAt(x, m.footerRowY())
 		if !ok {
 			t.Fatalf("expected click on visible %q at x=%d to resolve to a link", want.label, x)
@@ -441,7 +528,7 @@ func TestLayoutMouseOpensScaleEditorAtVisibleField(t *testing.T) {
 func TestLayoutMouseOpensScaleEditorAtVisibleFieldInCompactLayout(t *testing.T) {
 	m := Model{
 		styles:         newStyles(),
-		width:          100,
+		width:          90,
 		height:         24,
 		tab:            tabLayout,
 		layoutFocus:    layoutFocusCanvas,
@@ -472,7 +559,7 @@ func TestLayoutMouseOpensScaleEditorAtVisibleFieldInCompactLayout(t *testing.T) 
 	}
 }
 
-func TestCanvasLegendMatchesCanvasCardColors(t *testing.T) {
+func TestCanvasPaneUsesEntireInteriorForCanvas(t *testing.T) {
 	m := Model{
 		styles: newStyles(),
 		tab:    tabLayout,
@@ -485,12 +572,33 @@ func TestCanvasLegendMatchesCanvasCardColors(t *testing.T) {
 		}},
 	}
 
-	view := m.renderCanvasPane(80, 12)
-
-	for _, label := range []string{"Legend", "Selected", "Enabled"} {
-		if !strings.Contains(view, label) {
-			t.Fatalf("expected legend to include %q, got:\n%s", label, view)
+	view := ansi.Strip(m.renderCanvasPane(80, 12))
+	for _, unwanted := range []string{"Legend", "Lid:", "Disabled:", "Mirrors:"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected canvas chrome %q to be removed, got:\n%s", unwanted, view)
 		}
+	}
+	if !strings.Contains(view, "Monitor Layout") || !strings.Contains(view, "DP-1") {
+		t.Fatalf("expected border title and monitor card, got:\n%s", view)
+	}
+}
+
+func TestCanvasPaneShowsLidStateInBottomBorder(t *testing.T) {
+	m := Model{styles: newStyles(), tab: tabLayout, lidState: lid.Open}
+	view := ansi.Strip(m.renderCanvasPane(80, 12))
+	lines := strings.Split(view, "\n")
+	if !strings.Contains(lines[len(lines)-1], "Lid: open") {
+		t.Fatalf("expected lid state in bottom border, got:\n%s", view)
+	}
+	for _, line := range lines[1 : len(lines)-1] {
+		if strings.Contains(line, "Lid:") {
+			t.Fatalf("expected no lid state inside canvas content, got:\n%s", view)
+		}
+	}
+
+	m.lidState = lid.Unknown
+	if view := ansi.Strip(m.renderCanvasPane(80, 12)); strings.Contains(view, "Lid:") {
+		t.Fatalf("expected unknown lid state to stay hidden, got:\n%s", view)
 	}
 }
 
@@ -873,7 +981,7 @@ func TestCanvasLayoutSkipsMirroredOutputs(t *testing.T) {
 	}
 }
 
-func TestRenderCanvasPaneShowsMirrorSummary(t *testing.T) {
+func TestRenderCanvasPaneDoesNotSpendCanvasRowsOnMirrorSummary(t *testing.T) {
 	m := Model{
 		styles: newStyles(),
 		editOutputs: []editableOutput{
@@ -898,8 +1006,11 @@ func TestRenderCanvasPaneShowsMirrorSummary(t *testing.T) {
 	}
 
 	view := ansi.Strip(m.renderCanvasPane(80, 12))
-	if !strings.Contains(view, "Mirrors: HDMI-A-1 -> DP-1") {
-		t.Fatalf("expected mirror summary in canvas pane, got:\n%s", view)
+	if strings.Contains(view, "Mirrors:") {
+		t.Fatalf("expected mirror summary to stay out of the canvas, got:\n%s", view)
+	}
+	if !strings.Contains(view, "DP-1") {
+		t.Fatalf("expected independent monitor to remain visible, got:\n%s", view)
 	}
 }
 
@@ -1993,8 +2104,8 @@ func TestRenderMainFitsShortTerminalHeight(t *testing.T) {
 	if height := lipgloss.Height(view); height != m.height {
 		t.Fatalf("expected short main view to fill height %d, got %d", m.height, height)
 	}
-	if !strings.Contains(view, "Preferences") {
-		t.Fatalf("expected Preferences section to be visible in inspector, got:\n%s", view)
+	if !strings.Contains(view, "Display") || !strings.Contains(view, "Info") {
+		t.Fatalf("expected display and info panes to be visible, got:\n%s", view)
 	}
 }
 
@@ -2028,6 +2139,21 @@ func TestRenderInspectorPaneCompactsFieldsOnShortHeight(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected inspector to include %q, got:\n%s", want, view)
 		}
+	}
+}
+
+func TestInspectorModeOmitsPickerPosition(t *testing.T) {
+	m := Model{styles: newStyles()}
+	output := editableOutput{
+		Modes:     []string{"3840x2160@143.99Hz", "2560x1440@144Hz"},
+		ModeIndex: 0,
+		Width:     3840,
+		Height:    2160,
+		Refresh:   143.99,
+	}
+	got := m.layoutFieldValue(output, 1)
+	if got != "3840x2160@143.99Hz" {
+		t.Fatalf("expected clean mode value, got %q", got)
 	}
 }
 
@@ -2084,8 +2210,8 @@ func TestRenderMainFitsTallMediumWidth(t *testing.T) {
 	if height := lipgloss.Height(view); height != m.height {
 		t.Fatalf("expected tall medium-width view to fill height %d, got %d", m.height, height)
 	}
-	if !strings.Contains(view, "Preferences") {
-		t.Fatalf("expected Preferences section visible in view, got:\n%s", view)
+	if !strings.Contains(view, "Display") || !strings.Contains(view, "Info") {
+		t.Fatalf("expected display and info panes visible, got:\n%s", view)
 	}
 }
 
@@ -2107,14 +2233,14 @@ func TestFitBlockAccountsForWrappedLines(t *testing.T) {
 }
 
 func TestUseCompactLayoutForMediumWideTallTerminals(t *testing.T) {
-	m := Model{width: 140}
+	m := Model{width: 95}
 	if !m.useCompactLayout(30) {
-		t.Fatal("expected 140-column terminal to stay in compact layout")
+		t.Fatal("expected a terminal below 96 columns to stay compact")
 	}
 
-	m.width = 150
+	m.width = 100
 	if m.useCompactLayout(30) {
-		t.Fatal("expected 150-column terminal to allow side-by-side layout")
+		t.Fatal("expected an Omarchy-sized terminal to allow side-by-side layout")
 	}
 }
 
@@ -2614,19 +2740,19 @@ func TestInspectorVimNavigation(t *testing.T) {
 			Enabled: true,
 			Scale:   1,
 		}},
-		inspectorField: 3,
+		inspectorField: 2,
 	}
 
 	// j moves down
 	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
-	if m.inspectorField != 4 {
-		t.Errorf("j: inspectorField = %d, want 4", m.inspectorField)
+	if m.inspectorField != 5 {
+		t.Errorf("j: inspectorField = %d, want 5", m.inspectorField)
 	}
 
 	// k moves up
 	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
-	if m.inspectorField != 3 {
-		t.Errorf("k: inspectorField = %d, want 3", m.inspectorField)
+	if m.inspectorField != 2 {
+		t.Errorf("k: inspectorField = %d, want 2", m.inspectorField)
 	}
 }
 
@@ -2744,7 +2870,7 @@ func TestScrollLinesToFit(t *testing.T) {
 	}
 }
 
-func TestBuildInspectorLayoutMapsAllFields(t *testing.T) {
+func TestBuildInspectorTabsTogetherMapAllFields(t *testing.T) {
 	m := Model{
 		styles: newStyles(),
 		editOutputs: []editableOutput{{
@@ -2761,31 +2887,24 @@ func TestBuildInspectorLayoutMapsAllFields(t *testing.T) {
 		}},
 	}
 
-	for _, compact := range []bool{false, true} {
-		name := "full"
-		if compact {
-			name = "compact"
+	seen := make(map[int]bool, len(layoutFields))
+	for _, tab := range []inspectorTab{inspectorTabDisplay, inspectorTabColor} {
+		m.inspectorTab = tab
+		layout := m.buildInspectorLayout(m.editOutputs[0], 60, false)
+		for _, field := range inspectorFieldsForTab(tab) {
+			row, ok := layout.fieldRows[field]
+			if !ok || row < 0 || row >= len(layout.lines) {
+				t.Errorf("tab %d field %d (%s) has invalid row %d", tab, field, layoutFields[field], row)
+			}
+			seen[field] = true
 		}
-		t.Run(name, func(t *testing.T) {
-			layout := m.buildInspectorLayout(m.editOutputs[0], 60, compact)
-			if len(layout.fieldRows) != len(layoutFields) {
-				t.Fatalf("fieldRows has %d entries, want %d", len(layout.fieldRows), len(layoutFields))
-			}
-			for idx := range layoutFields {
-				row, ok := layout.fieldRows[idx]
-				if !ok {
-					t.Errorf("field %d (%s) missing from fieldRows", idx, layoutFields[idx])
-					continue
-				}
-				if row < 0 || row >= len(layout.lines) {
-					t.Errorf("field %d row %d out of range [0, %d)", idx, row, len(layout.lines))
-				}
-			}
-		})
+	}
+	if len(seen) != len(layoutFields) {
+		t.Fatalf("tabs cover %d fields, want %d", len(seen), len(layoutFields))
 	}
 }
 
-func TestBuildInspectorLayoutSpacerBeforeAdvanced(t *testing.T) {
+func TestInspectorTabsGroupDisplayAndColorFields(t *testing.T) {
 	m := Model{
 		styles: newStyles(),
 		editOutputs: []editableOutput{{
@@ -2795,12 +2914,93 @@ func TestBuildInspectorLayoutSpacerBeforeAdvanced(t *testing.T) {
 			Scale:   1,
 		}},
 	}
-	layout := m.buildInspectorLayout(m.editOutputs[0], 60, false)
 
-	lastBase := layout.fieldRows[advancedFieldStart-1]
-	firstAdvanced := layout.fieldRows[advancedFieldStart]
-	if firstAdvanced-lastBase < 2 {
-		t.Errorf("expected spacer row between field %d and %d: got rows %d and %d", advancedFieldStart-1, advancedFieldStart, lastBase, firstAdvanced)
+	m.inspectorTab = inspectorTabDisplay
+	display := m.buildInspectorLayout(m.editOutputs[0], 60, false)
+	for _, field := range []int{0, 1, 2, 5, 6, 7, 8, 9} {
+		if _, ok := display.fieldRows[field]; !ok {
+			t.Errorf("expected display tab to contain %s", layoutFields[field])
+		}
+	}
+
+	m.inspectorTab = inspectorTabColor
+	color := m.buildInspectorLayout(m.editOutputs[0], 60, false)
+	for _, field := range []int{3, 4, 10, 14, 18, 19, 20} {
+		if _, ok := color.fieldRows[field]; !ok {
+			t.Errorf("expected color tab to contain %s", layoutFields[field])
+		}
+	}
+}
+
+func TestInspectorTabsSwitchByKeyboardAndMouse(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		tab:         tabLayout,
+		layoutFocus: layoutFocusInspector,
+		width:       120,
+		height:      32,
+		editOutputs: []editableOutput{{Name: "DP-1", Enabled: true, Scale: 1}},
+	}
+
+	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	if m.inspectorTab != inspectorTabColor || m.inspectorField != inspectorFieldsForTab(inspectorTabColor)[0] {
+		t.Fatalf("expected ] to open Color and select its first field, got tab=%d field=%d", m.inspectorTab, m.inspectorField)
+	}
+
+	rect, _ := m.layoutInspectorRect()
+	colorX := rect.x + 3 + lipgloss.Width("Display") + 3
+	updated, _ := m.updateMouse(mousePressAt(colorX, rect.y))
+	got := mustModel(t, updated)
+	if got.inspectorTab != inspectorTabColor {
+		t.Fatalf("expected Color border label click to select Color, got %d", got.inspectorTab)
+	}
+
+	displayX := rect.x + 3
+	updated, _ = got.updateMouse(mousePressAt(displayX, rect.y))
+	got = mustModel(t, updated)
+	if got.inspectorTab != inspectorTabDisplay {
+		t.Fatalf("expected Display border label click to select Display, got %d", got.inspectorTab)
+	}
+}
+
+func TestPaneTitlesSelectTheirLayoutFocus(t *testing.T) {
+	m := Model{
+		styles:         newStyles(),
+		tab:            tabLayout,
+		layoutFocus:    layoutFocusCanvas,
+		width:          120,
+		height:         32,
+		editOutputs:    []editableOutput{{Name: "DP-1", Enabled: true, Scale: 1}},
+		inspectorField: 0,
+	}
+
+	inspectorRect, _ := m.layoutInspectorRect()
+	updated, _ := m.updateMouse(mousePressAt(inspectorRect.x+3, inspectorRect.y))
+	got := mustModel(t, updated)
+	if got.layoutFocus != layoutFocusInspector || got.inspectorTab != inspectorTabDisplay {
+		t.Fatalf("expected Display title to focus inspector Display tab, got focus=%d tab=%d", got.layoutFocus, got.inspectorTab)
+	}
+
+	canvasRect, _ := got.layoutCanvasRect()
+	updated, _ = got.updateMouse(mousePressAt(canvasRect.x+3, canvasRect.y))
+	got = mustModel(t, updated)
+	if got.layoutFocus != layoutFocusCanvas {
+		t.Fatalf("expected Monitor Layout title to focus canvas, got %d", got.layoutFocus)
+	}
+}
+
+func TestInspectorColumnPlacesInfoAbovePreferences(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		tab:         tabLayout,
+		layoutFocus: layoutFocusInspector,
+		editOutputs: []editableOutput{{Name: "DP-1", Enabled: true, Scale: 1}},
+	}
+	view := ansi.Strip(m.renderInspectorColumn(48, 30, false))
+	info := strings.Index(view, "Info")
+	display := strings.Index(view, "Display - Color")
+	if info < 0 || display < 0 || info > display {
+		t.Fatalf("expected Info above Display - Color, got:\n%s", view)
 	}
 }
 
@@ -2814,13 +3014,14 @@ func TestBuildInspectorLayoutUniqueRows(t *testing.T) {
 			Scale:   1,
 		}},
 	}
-	for _, compact := range []bool{false, true} {
-		layout := m.buildInspectorLayout(m.editOutputs[0], 60, compact)
+	for _, tab := range []inspectorTab{inspectorTabDisplay, inspectorTabColor} {
+		m.inspectorTab = tab
+		layout := m.buildInspectorLayout(m.editOutputs[0], 60, false)
 		seen := make(map[int]int)
-		for idx := range layoutFields {
+		for _, idx := range inspectorFieldsForTab(tab) {
 			row := layout.fieldRows[idx]
 			if other, exists := seen[row]; exists {
-				t.Errorf("compact=%v: field %d and %d share row %d", compact, other, idx, row)
+				t.Errorf("tab=%d: field %d and %d share row %d", tab, other, idx, row)
 			}
 			seen[row] = idx
 		}

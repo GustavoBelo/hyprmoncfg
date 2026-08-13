@@ -10,7 +10,6 @@ import (
 )
 
 const (
-	homeURL        = "https://hyprmoncfg.dev/"
 	daemonURL      = "https://hyprmoncfg.dev/daemon/"
 	repoURL        = "https://github.com/crmne/hyprmoncfg"
 	releasesURL    = repoURL + "/releases"
@@ -57,7 +56,7 @@ func joinFooterItems(items []footerItem) string {
 	for _, item := range items {
 		labels = append(labels, item.label)
 	}
-	return strings.Join(labels, "  ")
+	return strings.Join(labels, " ")
 }
 
 func (m Model) footerInfoItems(width int) []footerItem {
@@ -86,13 +85,6 @@ func (m Model) footerInfoItems(width int) []footerItem {
 	return nil
 }
 
-func (m Model) daemonStatusLabel() string {
-	if m.daemonOK {
-		return "Daemon running"
-	}
-	return "Daemon not running: click to setup"
-}
-
 func (m Model) unsavedLabel() string {
 	if m.dirty && !m.draftSaved {
 		return "Unsaved Changes"
@@ -103,55 +95,52 @@ func (m Model) unsavedLabel() string {
 	return "Current setup"
 }
 
-func (m Model) footerStatusLine() string {
-	parts := []string{m.unsavedLabel()}
+func (m Model) renderTopStatus() string {
+	parts := []string{m.unsavedBadge()}
+	if !m.daemonOK {
+		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
+		parts = append(parts, osc8Link(daemonURL, daemon))
+	}
 	if m.layoutErr != nil {
-		parts = append(parts, m.layoutErr.Error())
+		parts = append(parts, m.styles.statusError.Render(m.layoutErr.Error()))
 	} else if m.status != "" {
-		parts = append(parts, m.status)
+		style := m.styles.statusOK
+		if m.statusErr {
+			style = m.styles.statusError
+		}
+		parts = append(parts, style.Render(m.status))
 	}
 	return strings.Join(parts, "  ")
 }
 
-func (m Model) badgeExtraWidth() int {
-	return lipgloss.Width(m.unsavedBadge()) - lipgloss.Width(m.unsavedLabel())
+func (m Model) renderCompactTopStatus() string {
+	if !m.daemonOK {
+		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
+		return osc8Link(daemonURL, daemon)
+	}
+	return m.unsavedBadge()
 }
 
 func (m Model) footerLayout() footerLayout {
-	// decorateFooterBar replaces the plain unsaved label with a styled badge
-	// that has padding, adding extra visible width. Reserve space for it.
-	width := max(20, m.footerContentWidth()-m.badgeExtraWidth())
+	width := max(20, m.footerContentWidth())
 	help := m.footerHelpText()
 	items := m.footerInfoItems(width)
 	info := joinFooterItems(items)
 
-	// Build right side: help | links — strip backtick markers from actual text
+	// Commands live on the left; project links live on the right.
 	helpClean := strings.ReplaceAll(help, "`", "")
-	right := helpClean
-	if info != "" {
-		right = helpClean + "  " + info
+	maxHelp := max(0, width-lipgloss.Width(info)-1)
+	if lipgloss.Width(helpClean) > maxHelp {
+		helpClean = fitString(helpClean, maxHelp)
 	}
-	rightWidth := lipgloss.Width(right)
-
-	// Build left side: status badge + daemon
-	left := m.footerStatusLine()
-	maxLeft := max(0, width-rightWidth-2)
-	if lipgloss.Width(left) > maxLeft {
-		left = fitString(left, maxLeft)
-	}
-
-	leftWidth := lipgloss.Width(left)
-	gap := max(2, width-leftWidth-rightWidth)
+	gap := max(1, width-lipgloss.Width(helpClean)-lipgloss.Width(info))
 
 	layout := footerLayout{
-		text:  left + strings.Repeat(" ", gap) + right,
+		text:  helpClean + strings.Repeat(" ", gap) + info,
 		links: make([]footerLinkRegion, 0, len(items)),
 	}
 
-	cursor := leftWidth + gap + lipgloss.Width(helpClean)
-	if info != "" {
-		cursor += 2
-	}
+	cursor := lipgloss.Width(helpClean) + gap
 	for idx, item := range items {
 		labelWidth := lipgloss.Width(item.label)
 		if strings.TrimSpace(item.url) != "" {
@@ -164,7 +153,7 @@ func (m Model) footerLayout() footerLayout {
 		}
 		cursor += labelWidth
 		if idx < len(items)-1 {
-			cursor += 2
+			cursor++
 		}
 	}
 
@@ -189,9 +178,7 @@ func (m Model) footerLinkAt(x, y int) (footerLinkRegion, bool) {
 		return footerLinkRegion{}, false
 	}
 
-	// The badge decoration adds padding that shifts all content right;
-	// adjust the click coordinate to match the plain-text link positions.
-	localX := x - m.footerColumnX() - m.badgeExtraWidth()
+	localX := x - m.footerColumnX()
 	if localX < 0 || localX >= m.footerContentWidth() {
 		return footerLinkRegion{}, false
 	}
@@ -252,25 +239,6 @@ func (m Model) decorateFooterBar(footer string) string {
 	}
 
 	styled := m.styles.help.Render(footer)
-
-	// Status badge
-	unsaved := m.unsavedLabel()
-	styled = strings.Replace(styled, unsaved, m.unsavedBadge(), 1)
-
-	// Style the layout overlap error
-	if m.layoutErr != nil {
-		errStr := m.layoutErr.Error()
-		styled = strings.Replace(styled, errStr, m.styles.statusError.Render(errStr), 1)
-	}
-
-	// Error/OK status message
-	if m.status != "" {
-		if m.statusErr {
-			styled = strings.Replace(styled, m.status, m.styles.statusError.Render(m.status), 1)
-		} else {
-			styled = strings.Replace(styled, m.status, m.styles.statusOK.Render(m.status), 1)
-		}
-	}
 
 	// Highlight keyboard shortcuts using backtick markers from the raw help text.
 	keyStyle := withFG(lipgloss.NewStyle().Bold(true), "2")

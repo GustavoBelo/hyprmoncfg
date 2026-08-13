@@ -21,6 +21,7 @@ The binary archives contain:
 - `README.md`
 - `LICENSE`
 - `packaging/applications/hyprmoncfg.desktop`
+- `packaging/applications/hyprmoncfg-omarchy.desktop`
 - `packaging/icons/hyprmoncfg.svg`
 - `packaging/systemd/hyprmoncfgd.service`
 - `packaging/systemd/hyprmoncfgd.local.service`
@@ -46,7 +47,7 @@ Build time:
 Packagers should set build metadata through `internal/buildinfo`:
 
 ```sh
-version=1.12.0
+version=1.13.0
 commit="$(git rev-parse --short HEAD)"
 build_date="$(date -u +%FT%TZ)"
 ldflags="-s -w"
@@ -62,7 +63,7 @@ go test ./...
 For offline builds with a Go module cache tarball:
 
 ```sh
-tar -xf hyprmoncfg-1.12.0-deps.tar.xz
+tar -xf hyprmoncfg-1.13.0-deps.tar.xz
 GOMODCACHE="$PWD/go-mod" GOPROXY=off CGO_ENABLED=0 go build -trimpath -mod=readonly ./cmd/hyprmoncfg
 ```
 

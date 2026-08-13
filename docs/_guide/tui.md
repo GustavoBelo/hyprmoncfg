@@ -1,6 +1,6 @@
 ---
 title: TUI Walkthrough
-description: The layout editor, inspector, save dialog, and workspace planner.
+description: The layout editor, display and color controls, save dialog, and workspace planner.
 nav_order: 2
 ---
 
@@ -9,9 +9,9 @@ nav_order: 2
 When you launch `hyprmoncfg`, you land on the layout tab. This is where you arrange your monitors and tune their settings. The screen is split into two panes:
 
 - **Left**: a canvas showing your monitors as draggable rectangles, positioned the way Hyprland currently sees them
-- **Right**: an inspector showing every property of the selected monitor -- resolution, scale, position, transform, VRR, and more
+- **Right**: monitor information above switchable **Display** and **Color** controls -- resolution, scale, position, transform, VRR, color management, and more
 
-Drag monitors on the canvas to reposition them. The inspector updates in real time. When you need pixel-perfect placement, use the `Position X` and `Position Y` fields in the inspector instead of dragging.
+Drag monitors on the canvas to reposition them. The information and controls update in real time. When you need pixel-perfect placement, use the `Position X` and `Position Y` fields in **Display** instead of dragging.
 
 While the TUI is open, it also refreshes live monitor state in the background. Plugging or unplugging a monitor, docking, undocking, or changing lid state reloads the editor so the canvas matches the current hardware.
 
@@ -38,13 +38,13 @@ While the TUI is open, it also refreshes live monitor state in the background. P
 | `Ctrl` + arrows | Move by 1px |
 | `Alt` + arrows | Snap beside the nearest enabled monitor |
 | `[` `]` | Cycle selected monitor |
-| `Tab` | Switch focus between canvas and inspector |
+| `Tab` | Switch focus between the canvas and monitor controls |
 
 Dragging snaps to nearby edges on release. `Alt` + arrows place the selected monitor flush left, right, above, or below the nearest enabled monitor and center it on the other axis. Regular keyboard movement remains freeform.
 
-### Inspector
+### Display and Color controls
 
-Press `Enter` on any inspector field to edit it:
+Press `Enter` on any **Display** or **Color** field to edit it:
 
 - **Mode** opens a scrollable picker with every supported resolution and refresh rate
 - **Scale**, **Position X**, **Position Y** accept typed numeric values

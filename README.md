@@ -239,6 +239,12 @@ Regenerate demo videos and screenshots:
 
 The media scripts use the installed `hyprmoncfg` from `PATH`.
 
+Regenerate only the GIF and MP4 demo:
+
+```bash
+./scripts/capture_demo.sh
+```
+
 Regenerate only screenshots:
 
 ```bash

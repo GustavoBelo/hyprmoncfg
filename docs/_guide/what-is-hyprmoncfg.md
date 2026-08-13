@@ -14,7 +14,7 @@ Existing tools try to help but bring their own problems. Some need a Python runt
 
 ## What hyprmoncfg does differently
 
-**It's terminal-first, not terminal-only.** The TUI has a real layout canvas with drag-and-drop, a per-monitor inspector, picker dialogs, and a workspace planner. It's not a glorified config editor -- it's a spatial tool that happens to run in your terminal.
+**It's terminal-first, not terminal-only.** The TUI has a real layout canvas with drag-and-drop, focused Display and Color controls, picker dialogs, and a workspace planner. It's not a glorified config editor -- it's a spatial tool that happens to run in your terminal.
 
 **One apply engine, everywhere.** The TUI and the daemon use the exact same code path: write the generated monitor config atomically, reload Hyprland, re-read monitor state, verify. No "best effort" daemon behavior. No silent failures.
 

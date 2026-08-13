@@ -17,104 +17,63 @@ Show
 
 Type "hyprmoncfg"
 Enter
-Sleep 1.5s
+Sleep 2s
 
-# Move the selected monitor around
-Up 3
-Sleep 0.3s
-Down 3
-Sleep 0.5s
-Left 2
-Sleep 0.5s
-Right 2
-Sleep 0.5s
+# Arrange monitors directly on the canvas
 Right 3
 Sleep 1s
 Left 3
-Sleep 0.5s
+Sleep 1s
 
-# Switch to the other monitor
+# Select the other monitor
 Type "]"
-Sleep 0.5s
-
-# Move it too
-Up 6
-Sleep 0.3s
-Down 6
 Sleep 1s
 
-# Enter the inspector
-Enter
-Sleep 0.5s
-
-# Navigate to Mode and edit
-Down
-Sleep 0.5s
-Enter
-Sleep 1s
-Down
-Sleep 1s
-Enter
-Sleep 1s
-
-# Navigate to Scale and edit
-Down
-Sleep 0.5s
-Enter
-Sleep 1s
-Backspace 2
-Type "5"
-Sleep 0.5s
-Enter
-Sleep 1s
-
-# Back to canvas
+# Focus Display settings and browse its fields
 Tab
-Sleep 0.5s
-
-# Move display down
-Up 2
+Sleep 1s
+Down 2
 Sleep 1s
 
-# Save the profile
-Type "s"
-Sleep 0.8s
-
-# Type a name
-Backspace 30
-Type "My Setup"
-Sleep 0.5s
-Enter
+# Switch the inspector to Color
+Type "]"
 Sleep 1s
-Type "y"
-Sleep 2s
-Type "y"
+Down 2
+Sleep 1s
+
+# Return to Display, then the canvas
+Type "["
+Sleep 1s
+Tab
+Sleep 1s
+
+# Restore the live layout before leaving the editor
+Type "r"
 Sleep 1.5s
 
-# Switch to profiles
+# Browse saved hardware-aware profiles
 Type "2"
-Sleep 0.5s
-Down 6
-Sleep 1.5s
+Sleep 1s
+Down 2
+Sleep 1s
+Up
+Sleep 1s
 
-# Switch to workspaces
+# Preview workspace planning
 Type "3"
-Sleep 0.5s
+Sleep 1s
 Down
-Sleep 0.5s
+Sleep 1s
 Right
-Sleep 0.5s
-Left
-Sleep 0.5s
-Right
-Sleep 0.5s
+Sleep 1s
 Left
 Sleep 1s
 
-# Apply
-Type "a"
-Sleep 3s
-Type "n"
+# Reset the draft and finish on the spatial editor
+Type "r"
+Sleep 1s
+Type "1"
+Sleep 2s
 
 # Done
 Sleep 1s

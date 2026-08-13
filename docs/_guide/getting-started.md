@@ -114,9 +114,9 @@ hyprmoncfg
 ![Layout editor]({{ '/assets/images/screenshots/layout-dark.png' | relative_url }})
 {: .screenshot }
 
-You land on the layout tab. The left side shows your connected monitors as rectangles arranged the way Hyprland currently sees them. The right side is an inspector showing every property of the selected monitor -- resolution, scale, position, refresh rate.
+You land on the layout tab. The left side shows your connected monitors as rectangles arranged the way Hyprland currently sees them. The right side keeps hardware information above focused **Display** and **Color** controls for the selected monitor.
 
-Drag monitors on the canvas to rearrange them. Click on the inspector fields to change resolution, scale, or position. When the layout looks right:
+Drag monitors on the canvas to rearrange them. Click **Display** or **Color** in the pane border, then select a field to change resolution, scale, position, or color behavior. When the layout looks right:
 
 1. Press `s` to save
 2. Type a name like `desk` or `home-office`

@@ -165,40 +165,6 @@ func (r hitRect) inner(style lipgloss.Style) hitRect {
 	}
 }
 
-func (m Model) renderTitleBar() string {
-	width := m.footerContentWidth()
-	titleText := m.styles.title.Underline(true).Render("hyprmoncfg")
-	title := osc8Link(homeURL, titleText)
-
-	if width < 68 {
-		return title
-	}
-
-	subtitleText := "Hyprland monitor layout and workspace planner"
-	if width < 104 {
-		subtitleText = "Hyprland monitor planner"
-	}
-
-	// Only show daemon status when it needs attention
-	if !m.daemonOK {
-		daemonLabel := m.daemonStatusLabel()
-		daemonStyle := m.styles.statusError.Underline(true)
-		daemon := osc8Link(daemonURL, daemonStyle.Render(daemonLabel))
-		daemonWidth := lipgloss.Width(daemonLabel)
-
-		subtitleBudget := max(12, width-lipgloss.Width(title)-daemonWidth-6)
-		subtitle := m.styles.subtitle.Render(fitString(subtitleText, subtitleBudget))
-
-		left := lipgloss.JoinHorizontal(lipgloss.Left, title, " ", subtitle)
-		gap := max(1, width-lipgloss.Width(left)-daemonWidth)
-		return left + strings.Repeat(" ", gap) + daemon
-	}
-
-	subtitleBudget := max(12, width-lipgloss.Width(title)-4)
-	subtitle := m.styles.subtitle.Render(fitString(subtitleText, subtitleBudget))
-	return lipgloss.JoinHorizontal(lipgloss.Left, title, " ", subtitle)
-}
-
 func (m Model) renderModalFrame(title string, body []string) string {
 	lines := []string{m.styles.modalTitle.Render(title)}
 	if len(body) > 0 {
@@ -220,9 +186,8 @@ func (m Model) renderModalScreen(overlay string) string {
 		toastHeight = lipgloss.Height(toast) + 1
 	}
 
-	title := m.renderTitleBar()
 	tabs := m.renderTabs()
-	bodyHeight := max(12, height-lipgloss.Height(title)-lipgloss.Height(tabs)-2-toastHeight)
+	bodyHeight := max(12, height-lipgloss.Height(tabs)-2-toastHeight)
 	centered := lipgloss.Place(width-2, bodyHeight, lipgloss.Center, lipgloss.Center, overlay)
 	body := m.styles.modalBackdrop.Width(width).Height(bodyHeight).Render(centered)
 	if toast != "" {
@@ -231,7 +196,7 @@ func (m Model) renderModalScreen(overlay string) string {
 			lipgloss.PlaceHorizontal(max(1, width-2), lipgloss.Center, toast),
 		}, "\n")
 	}
-	return strings.Join([]string{title, tabs, body}, "\n")
+	return strings.Join([]string{tabs, body}, "\n")
 }
 
 func (m Model) monitorStateBadge(output editableOutput) string {
@@ -251,7 +216,7 @@ func (m Model) unsavedBadge() string {
 	if m.dirty && m.draftSaved {
 		return m.styles.badgeOn.Render("Saved Draft")
 	}
-	return m.styles.badgeMuted.Render("Current setup")
+	return m.styles.subtle.Render("Current setup")
 }
 
 func (m *Model) activateInspectorField() tea.Cmd {
@@ -1237,17 +1202,12 @@ func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && msg.Y == m.appContentY() {
-		titleWidth := lipgloss.Width(m.styles.title.Render("hyprmoncfg"))
-		titleStart := m.appContentX()
-		if msg.X >= titleStart && msg.X < titleStart+titleWidth {
-			return m, m.openURLCmd("hyprmoncfg", homeURL)
-		}
-		// Daemon status link on the right side of title bar
-		daemonWidth := lipgloss.Width(m.daemonStatusLabel())
-		contentWidth := m.footerContentWidth()
-		daemonStart := m.appContentX() + contentWidth - daemonWidth
-		if msg.X >= daemonStart && msg.X < daemonStart+daemonWidth {
-			return m, m.openURLCmd(m.daemonStatusLabel(), daemonURL)
+		plainTabs := ansi.Strip(m.renderTabs())
+		localX := msg.X - m.appContentX()
+		if start, ok := visibleTextColumn(plainTabs, "Daemon not running"); ok {
+			if localX >= start && localX < start+lipgloss.Width("Daemon not running") {
+				return m, m.openURLCmd("Daemon not running", daemonURL)
+			}
 		}
 	}
 
@@ -1289,6 +1249,14 @@ func (m Model) updateSaveMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func visibleTextColumn(line, label string) (int, bool) {
+	index := strings.Index(line, label)
+	if index < 0 {
+		return 0, false
+	}
+	return lipgloss.Width(line[:index]), true
+}
+
 func (m *Model) updateModePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.picker == nil {
 		return m, nil
@@ -1310,6 +1278,11 @@ func (m *Model) updateLayoutMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	canvasRect, _ := m.layoutCanvasRect()
 	inspectorRect, compact := m.layoutInspectorRect()
 	layout := m.canvasLayout(canvasRect.w-m.styles.inactivePane.GetHorizontalFrameSize(), m.canvasMouseHeight())
+
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.paneTitleContains(msg.X, msg.Y, canvasRect, "Monitor Layout") {
+		m.layoutFocus = layoutFocusCanvas
+		return m, nil
+	}
 
 	if m.inCanvas(msg.X, msg.Y, canvasRect, layout) {
 		m.layoutFocus = layoutFocusCanvas
@@ -1339,6 +1312,11 @@ func (m *Model) updateLayoutMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if inspectorRect.contains(msg.X, msg.Y) {
 		wasFocused := m.layoutFocus == layoutFocusInspector && m.tab == tabLayout
 		m.layoutFocus = layoutFocusInspector
+		if tab, ok := m.inspectorTabAt(msg.X, msg.Y, inspectorRect); ok && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.inspectorTab = tab
+			m.normalizeInspectorField()
+			return m, nil
+		}
 		if field, ok := m.inspectorFieldAt(msg.Y, inspectorRect, compact, wasFocused); ok && msg.Action == tea.MouseActionPress {
 			m.inspectorField = field
 			switch msg.Button {
@@ -1355,6 +1333,31 @@ func (m *Model) updateLayoutMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) inspectorTabAt(x, y int, inspectorRect hitRect) (inspectorTab, bool) {
+	if y != inspectorRect.y {
+		return inspectorTabDisplay, false
+	}
+	localX := x - inspectorRect.x
+	cursor := 3 // rounded corner, border segment, and title padding
+	labels := []string{"Display", "Color"}
+	for idx, label := range labels {
+		width := lipgloss.Width(label)
+		if localX >= cursor && localX < cursor+width {
+			return inspectorTab(idx), true
+		}
+		cursor += width + 3 // " - "
+	}
+	return inspectorTabDisplay, false
+}
+
+func (m Model) paneTitleContains(x, y int, pane hitRect, title string) bool {
+	if y != pane.y {
+		return false
+	}
+	start := pane.x + 3
+	return x >= start && x < start+lipgloss.Width(title)
+}
+
 func (m Model) updateProfilesMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
@@ -1365,7 +1368,7 @@ func (m Model) updateProfilesMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	row := msg.Y - (listRect.inner(m.styles.activePane).y + 2)
+	row := msg.Y - listRect.inner(m.styles.activePane).y
 	if row < 0 || row >= len(m.profiles) {
 		return m, nil
 	}
@@ -1380,7 +1383,7 @@ func (m Model) updateWorkspaceMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	inner := settingsRect.inner(m.styles.activePane)
-	fieldRow := msg.Y - (inner.y + 2)
+	fieldRow := msg.Y - inner.y
 	if fieldRow >= 0 && fieldRow < len(workspaceFields) && msg.Action == tea.MouseActionPress {
 		m.workspaceEdit.SelectedField = fieldRow
 		switch msg.Button {
@@ -1397,8 +1400,8 @@ func (m Model) updateWorkspaceMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// "Monitor order" header + items start after fields + 2 lines (blank + header)
-	orderStart := inner.y + len(workspaceFields) + 4
+	// Monitor-order items start after the fields, a blank, and their header.
+	orderStart := inner.y + len(workspaceFields) + 2
 	if msg.Action == tea.MouseActionPress && msg.Y >= orderStart {
 		row := msg.Y - orderStart
 		if row >= 0 && row < len(m.workspaceEdit.MonitorOrder) {
@@ -1423,14 +1426,13 @@ func (m Model) appContentY() int {
 }
 
 func (m Model) bodyRect() hitRect {
-	title := m.renderTitleBar()
 	tabs := m.renderTabs()
 	footer := m.renderFooterBar()
 	return hitRect{
 		x: m.appContentX(),
-		y: m.appContentY() + lipgloss.Height(title) + lipgloss.Height(tabs),
+		y: m.appContentY() + lipgloss.Height(tabs),
 		w: m.footerContentWidth(),
-		h: m.mainBodyHeight(title, tabs, "", footer),
+		h: m.mainBodyHeight(tabs, "", footer),
 	}
 }
 
@@ -1449,17 +1451,19 @@ func (m Model) layoutInspectorRect() (hitRect, bool) {
 	body := m.bodyRect()
 	if m.useCompactLayout(body.h) {
 		canvasHeight, inspectorHeight := m.compactLayoutHeights(body.h)
-		return hitRect{x: body.x, y: body.y + canvasHeight, w: body.w, h: inspectorHeight}, true
+		preferencesHeight, infoHeight := m.inspectorPaneHeights(inspectorHeight)
+		return hitRect{x: body.x, y: body.y + canvasHeight + infoHeight, w: body.w, h: preferencesHeight}, true
 	}
 
 	canvasWidth, inspectorWidth := m.layoutPaneWidths()
-	return hitRect{x: body.x + canvasWidth + 2, y: body.y, w: inspectorWidth, h: body.h}, false
+	preferencesHeight, infoHeight := m.inspectorPaneHeights(body.h)
+	return hitRect{x: body.x + canvasWidth + paneGapWidth, y: body.y + infoHeight, w: inspectorWidth, h: preferencesHeight}, false
 }
 
 func (m Model) profilesListRect() hitRect {
 	body := m.bodyRect()
 	if m.terminalWidth() < 96 {
-		listHeight := clampInt(len(m.profiles)+3, 4, body.h/3)
+		listHeight := clampInt(len(m.profiles)+2, 4, body.h/3)
 		return hitRect{x: body.x, y: body.y, w: body.w, h: listHeight}
 	}
 
@@ -1479,7 +1483,7 @@ func (m Model) workspaceSettingsRect() hitRect {
 }
 
 func (m Model) workspaceSettingsLineCount() int {
-	count := 2 + len(workspaceFields) + 2
+	count := len(workspaceFields) + 2
 	if len(m.workspaceEdit.MonitorOrder) == 0 {
 		count++
 	} else {
@@ -1496,14 +1500,13 @@ func (m Model) modalOverlayRect(overlay string) hitRect {
 		return hitRect{}
 	}
 
-	titleHeight := lipgloss.Height(m.renderTitleBar())
 	tabsHeight := lipgloss.Height(m.renderTabs())
-	bodyHeight := max(12, m.terminalHeight()-titleHeight-tabsHeight-2)
+	bodyHeight := max(12, m.terminalHeight()-tabsHeight-2)
 	bodyWidth := m.terminalWidth() - m.styles.modalBackdrop.GetHorizontalFrameSize()
 
 	return hitRect{
 		x: m.styles.modalBackdrop.GetPaddingLeft() + max(0, (bodyWidth-lipgloss.Width(overlay))/2),
-		y: titleHeight + tabsHeight + m.styles.modalBackdrop.GetPaddingTop() + max(0, (bodyHeight-lipgloss.Height(overlay))/2),
+		y: tabsHeight + m.styles.modalBackdrop.GetPaddingTop() + max(0, (bodyHeight-lipgloss.Height(overlay))/2),
 		w: lipgloss.Width(overlay),
 		h: lipgloss.Height(overlay),
 	}
@@ -1589,35 +1592,11 @@ func (m Model) canvasMouseHeight() int {
 	panel := m.styles.inactivePane
 	canvasRect, _ := m.layoutCanvasRect()
 	innerHeight := max(1, canvasRect.h-panel.GetVerticalFrameSize())
-	innerWidth := max(1, canvasRect.w-panel.GetHorizontalFrameSize())
-
-	nonCanvasLines := 1
-	if innerHeight >= 8 && innerWidth >= 44 {
-		nonCanvasLines += 2
-	}
-	if innerHeight >= 6 && innerWidth >= 34 {
-		nonCanvasLines += 4
-	}
-	if innerHeight >= 10 {
-		for _, output := range m.editOutputs {
-			if !output.Enabled {
-				nonCanvasLines++
-				break
-			}
-		}
-		for _, output := range m.editOutputs {
-			if output.Enabled && output.MirrorOf != "" {
-				nonCanvasLines++
-				break
-			}
-		}
-	}
-	return max(1, innerHeight-nonCanvasLines)
+	return innerHeight
 }
 
 func (m Model) tabAt(x, y int) (mainTab, bool) {
-	titleH := lipgloss.Height(m.renderTitleBar())
-	tabY := m.appContentY() + titleH
+	tabY := m.appContentY()
 	tabHeight := lipgloss.Height(m.renderTabs())
 	if y < tabY || y >= tabY+tabHeight {
 		return tabLayout, false
@@ -1628,17 +1607,13 @@ func (m Model) tabAt(x, y int) (mainTab, bool) {
 	}
 
 	labels := []string{"Layout", "Profiles", "Workspaces"}
-	cursorX := 0
+	cursorX := 1
 	for idx, label := range labels {
-		style := m.styles.tabInactive
-		if int(m.tab) == idx {
-			style = m.styles.tabActive
-		}
-		width := lipgloss.Width(style.Render(fmt.Sprintf("%d %s", idx+1, label)))
+		width := lipgloss.Width(fmt.Sprintf(" %d %s ", idx+1, label))
 		if localX >= cursorX && localX < cursorX+width {
 			return mainTab(idx), true
 		}
-		cursorX += width
+		cursorX += width + 1
 	}
 	return tabLayout, false
 }
@@ -1651,7 +1626,7 @@ func (m Model) inCanvas(x, y int, canvasRect hitRect, layout canvasGeometry) boo
 func (m Model) canvasLocalPoint(x, y int, canvasRect hitRect) (int, int) {
 	inner := canvasRect.inner(m.styles.inactivePane)
 	canvasX := inner.x
-	canvasY := inner.y + 1
+	canvasY := inner.y
 	return x - canvasX, y - canvasY
 }
 
@@ -1848,8 +1823,10 @@ func (m Model) sidePaneWidths(leftPercent int) (int, int) {
 	return splitPaneWidths(m.terminalWidth(), leftPercent, 16)
 }
 
+const paneGapWidth = 0
+
 func splitPaneWidths(total int, leftPercent int, minPane int) (int, int) {
-	available := max(2, total-2)
+	available := max(2, total-paneGapWidth)
 	left := (available * leftPercent) / 100
 	right := available - left
 	if available >= minPane*2 {

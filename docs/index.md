@@ -29,7 +29,7 @@ hero:
 features:
   - icon: 🖥️
     title: Spatial Layout Editor
-    details: Drag monitors on a canvas, edit mode, scale, VRR, mirror, and position in the inspector, then preview the result before applying.
+    details: Drag monitors on a canvas, then tune display and color settings before previewing and applying the result.
   - icon: 🔌
     title: Hotplug and Lid-Aware Daemon
     details: Save profiles for your real setups. The daemon picks the best match when monitors change or the laptop lid closes.

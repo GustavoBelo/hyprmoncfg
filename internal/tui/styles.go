@@ -7,34 +7,8 @@ import (
 	"github.com/muesli/termenv"
 )
 
-var (
-	activeTabBorder = lipgloss.Border{
-		Top:         "─",
-		Bottom:      " ",
-		Left:        "│",
-		Right:       "│",
-		TopLeft:     "╭",
-		TopRight:    "╮",
-		BottomLeft:  "┘",
-		BottomRight: "└",
-	}
-	inactiveTabBorder = lipgloss.Border{
-		Top:         " ",
-		Bottom:      " ",
-		Left:        " ",
-		Right:       " ",
-		TopLeft:     " ",
-		TopRight:    " ",
-		BottomLeft:  " ",
-		BottomRight: " ",
-	}
-)
-
 type palette struct {
 	text               string
-	titleFg            string
-	titleBg            string
-	subtitle           string
 	header             string
 	subtle             string
 	label              string
@@ -91,8 +65,6 @@ type palette struct {
 type styles struct {
 	palette          palette
 	app              lipgloss.Style
-	title            lipgloss.Style
-	subtitle         lipgloss.Style
 	header           lipgloss.Style
 	subtle           lipgloss.Style
 	label            lipgloss.Style
@@ -131,9 +103,7 @@ func newStyles() styles {
 
 	return styles{
 		palette:          p,
-		app:              withFG(lipgloss.NewStyle().Padding(0, 1), p.text),
-		title:            withBG(withFG(lipgloss.NewStyle().Bold(true).Padding(0, 1), p.titleFg), p.titleBg),
-		subtitle:         withFG(lipgloss.NewStyle(), p.subtitle),
+		app:              withFG(lipgloss.NewStyle(), p.text),
 		header:           withFG(lipgloss.NewStyle().Bold(true), p.header),
 		subtle:           withFG(lipgloss.NewStyle(), p.subtle),
 		label:            withFG(lipgloss.NewStyle(), p.label),
@@ -145,8 +115,8 @@ func newStyles() styles {
 		focused:          withBG(withFG(lipgloss.NewStyle().Bold(true).Padding(0, 1), p.fieldSelectedFg), p.fieldSelectedBg),
 		activePane:       withBG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneActiveBorder)).Padding(0, 1), p.panelBg),
 		inactivePane:     withBG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneBorder)).Padding(0, 1), p.panelBg),
-		tabActive:        lipgloss.NewStyle().Border(activeTabBorder).BorderForeground(lipgloss.Color(p.tabActiveBorder)).Padding(0, 1).Bold(true),
-		tabInactive:      withFG(lipgloss.NewStyle().Border(inactiveTabBorder).BorderForeground(lipgloss.Color(p.tabBorder)).Padding(0, 1), p.tabInactiveFg),
+		tabActive:        withFG(lipgloss.NewStyle().Bold(true), p.tabActiveBorder),
+		tabInactive:      withFG(lipgloss.NewStyle(), p.tabInactiveFg),
 		statusOK:         withFG(lipgloss.NewStyle().Bold(true), p.statusOK),
 		statusError:      withFG(lipgloss.NewStyle().Bold(true), p.statusError),
 		toast:            withBG(withFG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneActiveBorder)).Padding(0, 2).Bold(true), p.badgeOnFg), p.badgeOnBg),
@@ -180,9 +150,6 @@ func newPalette() palette {
 
 	return palette{
 		text:               "",
-		titleFg:            "",
-		titleBg:            softFill,
-		subtitle:           supportText,
 		header:             "",
 		subtle:             supportText,
 		label:              supportText,
@@ -229,10 +196,10 @@ func newPalette() palette {
 		cardDisabledBg:     "",
 		cardDisabledFg:     supportText,
 		cardDisabledMuted:  supportText,
-		cardSelectedBorder: "3",
-		cardSelectedBg:     defaultFG,
-		cardSelectedFg:     defaultBG,
-		cardSelectedMuted:  defaultBG,
+		cardSelectedBorder: "2",
+		cardSelectedBg:     "",
+		cardSelectedFg:     "",
+		cardSelectedMuted:  supportText,
 		snapHighlight:      "3",
 	}
 }
