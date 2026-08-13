@@ -104,10 +104,10 @@ Current status as of 2026-08-13:
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) is published at 1.11.1. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
 | Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10862061](https://copr.fedorainfracloud.org/coprs/build/10862061) publishes 1.11.1 for Fedora 44 and rawhide on `x86_64` and `aarch64`. |
 | Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.11.1 update](https://github.com/NixOS/nixpkgs/pull/552223) is under review. |
-| Gentoo GURU | Published | `gui-apps/hyprmoncfg` 1.10.1 is published in [Gentoo GURU](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg). |
+| Gentoo GURU | Published | `gui-apps/hyprmoncfg` 1.11.1 is published in [Gentoo GURU](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg). |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
 | Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void. Its [1.10.0 update](https://github.com/Event-Horizon-VL/blackhole-vl/pull/261) is open and has been notified about 1.11.1. |
-| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) currently targets 1.10.1; the 1.11.1 update is ready to push. No package is in the Alpine package index yet. |
+| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) now targets 1.11.1; no package is in the Alpine package index yet. |
 | Debian and Ubuntu | Staged | 1.11.1 source package artifacts are staged externally, but official inclusion still needs Debian policy review and sponsor/upload flow. |
 | openSUSE OBS | Staged | The 1.11.1 RPM payload is ready for OBS, but not published. |
 | SlackBuilds.org | Staged | The 1.11.1 SlackBuild payload is ready for manual submission, but not published. |
