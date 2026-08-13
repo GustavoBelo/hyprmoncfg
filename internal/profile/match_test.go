@@ -53,6 +53,36 @@ func TestBestMatchPrefersProfileWithDisabledOutput(t *testing.T) {
 	}
 }
 
+func TestEvaluateMatchReportsConnectedEnabledOutputs(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Make: "BOE", Model: "Panel", Serial: "C3"}
+	external := hypr.Monitor{Name: "DP-6", Make: "Dell", Model: "P3421W", Serial: "DW1"}
+	projector := hypr.Monitor{Name: "HDMI-A-1", Make: "Epson", Model: "Projector", Serial: "P1"}
+
+	desk := New("desk", []OutputConfig{
+		{Key: external.HardwareKey(), Enabled: true, Scale: 1},
+		{Key: laptop.HardwareKey(), Enabled: false},
+	})
+	result := EvaluateMatch(desk, []hypr.Monitor{laptop, external})
+	if result.ConnectedEnabledOutputs != 1 || result.Score != 150 {
+		t.Fatalf("desk match = %+v, want one connected enabled output and score 150", result)
+	}
+
+	unavailable := New("projector", []OutputConfig{{Key: projector.HardwareKey(), Enabled: true, Scale: 1}})
+	result = EvaluateMatch(unavailable, []hypr.Monitor{laptop, external})
+	if result.ConnectedEnabledOutputs != 0 || result.Score != 0 {
+		t.Fatalf("unavailable match = %+v, want zero value", result)
+	}
+
+	unsafe := New("external-only", []OutputConfig{
+		{Key: projector.HardwareKey(), Enabled: true, Scale: 1},
+		{Key: laptop.HardwareKey(), Enabled: false},
+	})
+	result = EvaluateMatch(unsafe, []hypr.Monitor{laptop})
+	if result.ConnectedEnabledOutputs != 0 || result.Score != 0 {
+		t.Fatalf("disabled-only hardware match = %+v, want profile to be unavailable", result)
+	}
+}
+
 func TestBestMatchCountsDuplicateMonitorsSeparately(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{Name: "DP-5", Make: "VIE", Model: "C24PULSE", Serial: "0x01010101"},

@@ -11,10 +11,15 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/scaling"
 )
 
-func MatchScore(p Profile, monitors []hypr.Monitor) int {
+type MatchResult struct {
+	Score                   int
+	ConnectedEnabledOutputs int
+}
+
+func EvaluateMatch(p Profile, monitors []hypr.Monitor) MatchResult {
 	p.Normalize()
 	if len(monitors) == 0 || len(p.Outputs) == 0 {
-		return 0
+		return MatchResult{}
 	}
 
 	connected := make(map[string]int, len(monitors))
@@ -32,7 +37,7 @@ func MatchScore(p Profile, monitors []hypr.Monitor) int {
 		}
 	}
 	if len(profileEnabled) == 0 {
-		return 0
+		return MatchResult{}
 	}
 
 	enabledMatch := 0
@@ -47,7 +52,7 @@ func MatchScore(p Profile, monitors []hypr.Monitor) int {
 		}
 	}
 	if enabledMatch == 0 {
-		return 0
+		return MatchResult{}
 	}
 
 	missingFromCurrent := 0
@@ -61,7 +66,14 @@ func MatchScore(p Profile, monitors []hypr.Monitor) int {
 
 	// High reward for enabled match, moderate reward for disabled match,
 	// moderate penalty for mismatch.
-	return enabledMatch*100 + disabledMatch*50 - missingFromCurrent*30 - unknownCurrent*20
+	return MatchResult{
+		Score:                   enabledMatch*100 + disabledMatch*50 - missingFromCurrent*30 - unknownCurrent*20,
+		ConnectedEnabledOutputs: enabledMatch,
+	}
+}
+
+func MatchScore(p Profile, monitors []hypr.Monitor) int {
+	return EvaluateMatch(p, monitors).Score
 }
 
 func BestMatch(profiles []Profile, monitors []hypr.Monitor) (Profile, int, bool) {
@@ -71,7 +83,7 @@ func BestMatch(profiles []Profile, monitors []hypr.Monitor) (Profile, int, bool)
 	}
 	candidates := make([]candidate, 0, len(profiles))
 	for _, p := range profiles {
-		score := MatchScore(p, monitors)
+		score := EvaluateMatch(p, monitors).Score
 		if score <= 0 {
 			continue
 		}

@@ -65,4 +65,6 @@ After `subscribe`, the daemon pushes a fresh status document whenever monitor or
 {"type":"event","protocol_version":1,"event":"status","data":{}}
 ```
 
-The document schema is versioned independently with `schema_version`. `hyprmoncfg status --json` prints the same shape without requiring clients to speak the socket protocol.
+The document schema is versioned independently with `schema_version`. Each profile summary includes `connected_enabled_outputs` and `match_score`; integrations should only offer a profile for manual selection when `connected_enabled_outputs` is greater than zero. This guarantees that applying the profile leaves at least one currently connected output enabled. `connected_enabled_outputs` can also be shown against `enabled_outputs` to explain how much of the profile is currently available.
+
+Monitor summaries include the connector, make, model, active mode, physical and logical dimensions, position, scale, transform, internal/focused flags, and enabled state. Integrations can therefore render the same monitor identity and layout information as the TUI without querying Hyprland separately. `hyprmoncfg status --json` prints the same shape without requiring clients to speak the socket protocol.

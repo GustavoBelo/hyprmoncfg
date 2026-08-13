@@ -33,18 +33,34 @@ type ProfileMatch struct {
 }
 
 type ProfileSummary struct {
-	Name           string    `json:"name"`
-	OutputCount    int       `json:"output_count"`
-	EnabledOutputs int       `json:"enabled_outputs"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	Active         bool      `json:"active"`
-	Recommended    bool      `json:"recommended"`
+	Name                    string    `json:"name"`
+	OutputCount             int       `json:"output_count"`
+	EnabledOutputs          int       `json:"enabled_outputs"`
+	ConnectedEnabledOutputs int       `json:"connected_enabled_outputs"`
+	MatchScore              int       `json:"match_score"`
+	UpdatedAt               time.Time `json:"updated_at"`
+	Active                  bool      `json:"active"`
+	Recommended             bool      `json:"recommended"`
 }
 
 type MonitorSummary struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     bool   `json:"enabled"`
+	Name          string  `json:"name"`
+	Description   string  `json:"description"`
+	Make          string  `json:"make"`
+	Model         string  `json:"model"`
+	Mode          string  `json:"mode"`
+	Width         int     `json:"width"`
+	Height        int     `json:"height"`
+	RefreshRate   float64 `json:"refresh_rate"`
+	X             int     `json:"x"`
+	Y             int     `json:"y"`
+	Scale         float64 `json:"scale"`
+	Transform     int     `json:"transform"`
+	LogicalWidth  int     `json:"logical_width"`
+	LogicalHeight int     `json:"logical_height"`
+	Internal      bool    `json:"internal"`
+	Focused       bool    `json:"focused"`
+	Enabled       bool    `json:"enabled"`
 }
 
 func Build(version string, daemonRunning bool, profiles []profile.Profile, monitors []hypr.Monitor, rules []hypr.WorkspaceRule) Document {
@@ -69,6 +85,7 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 	}
 
 	for _, saved := range profiles {
+		match := profile.EvaluateMatch(saved, monitors)
 		enabledOutputs := 0
 		for _, output := range saved.Outputs {
 			if output.Enabled {
@@ -76,20 +93,37 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 			}
 		}
 		document.Profiles = append(document.Profiles, ProfileSummary{
-			Name:           saved.Name,
-			OutputCount:    len(saved.Outputs),
-			EnabledOutputs: enabledOutputs,
-			UpdatedAt:      saved.UpdatedAt,
-			Active:         saved.Name == activeName,
-			Recommended:    saved.Name == recommendedName,
+			Name:                    saved.Name,
+			OutputCount:             len(saved.Outputs),
+			EnabledOutputs:          enabledOutputs,
+			ConnectedEnabledOutputs: match.ConnectedEnabledOutputs,
+			MatchScore:              match.Score,
+			UpdatedAt:               saved.UpdatedAt,
+			Active:                  saved.Name == activeName,
+			Recommended:             saved.Name == recommendedName,
 		})
 	}
 
 	for _, monitor := range monitors {
+		logicalWidth, logicalHeight := monitor.LogicalSize()
 		document.Monitors = append(document.Monitors, MonitorSummary{
-			Name:        monitor.Name,
-			Description: monitor.Description,
-			Enabled:     !monitor.Disabled,
+			Name:          monitor.Name,
+			Description:   monitor.Description,
+			Make:          monitor.Make,
+			Model:         monitor.Model,
+			Mode:          monitor.ModeString(),
+			Width:         monitor.Width,
+			Height:        monitor.Height,
+			RefreshRate:   monitor.RefreshRate,
+			X:             monitor.X,
+			Y:             monitor.Y,
+			Scale:         monitor.Scale,
+			Transform:     monitor.Transform,
+			LogicalWidth:  logicalWidth,
+			LogicalHeight: logicalHeight,
+			Internal:      monitor.IsInternal(),
+			Focused:       monitor.Focused,
+			Enabled:       !monitor.Disabled,
 		})
 	}
 

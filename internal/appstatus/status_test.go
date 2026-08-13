@@ -42,8 +42,36 @@ func TestBuildMarksActiveAndRecommendedProfile(t *testing.T) {
 	if len(document.Profiles) != 1 || !document.Profiles[0].Active || !document.Profiles[0].Recommended {
 		t.Fatalf("profile summary = %#v", document.Profiles)
 	}
+	if document.Profiles[0].ConnectedEnabledOutputs != 1 || document.Profiles[0].MatchScore != 100 {
+		t.Fatalf("profile match metadata = %#v", document.Profiles[0])
+	}
 	if len(document.Monitors) != 1 || !document.Monitors[0].Enabled {
 		t.Fatalf("monitor summary = %#v", document.Monitors)
+	}
+	monitorSummary := document.Monitors[0]
+	if monitorSummary.Name != "eDP-1" || monitorSummary.Make != "Framework" || monitorSummary.Model != "Display" {
+		t.Fatalf("monitor identity = %#v", monitorSummary)
+	}
+	if monitorSummary.Mode != "2256x1504@60.00Hz" || monitorSummary.Width != 2256 || monitorSummary.Height != 1504 || monitorSummary.RefreshRate != 60 {
+		t.Fatalf("monitor mode = %#v", monitorSummary)
+	}
+	if monitorSummary.LogicalWidth != 1504 || monitorSummary.LogicalHeight != 1003 || monitorSummary.Scale != 1.5 || !monitorSummary.Internal {
+		t.Fatalf("monitor layout metadata = %#v", monitorSummary)
+	}
+}
+
+func TestBuildMarksProfilesWithoutConnectedEnabledOutputs(t *testing.T) {
+	connected := hypr.Monitor{Name: "eDP-1", Make: "Framework", Model: "Display", Serial: "123"}
+	projector := hypr.Monitor{Name: "HDMI-A-1", Make: "Epson", Model: "Projector", Serial: "P1"}
+	available := profile.New("Laptop", []profile.OutputConfig{{Key: connected.HardwareKey(), Enabled: true, Scale: 1}})
+	unavailable := profile.New("Projector", []profile.OutputConfig{{Key: projector.HardwareKey(), Enabled: true, Scale: 1}})
+
+	document := Build("dev", true, []profile.Profile{available, unavailable}, []hypr.Monitor{connected}, nil)
+	if document.Profiles[0].ConnectedEnabledOutputs != 1 || document.Profiles[0].MatchScore != 100 {
+		t.Fatalf("available profile = %#v", document.Profiles[0])
+	}
+	if document.Profiles[1].ConnectedEnabledOutputs != 0 || document.Profiles[1].MatchScore != 0 {
+		t.Fatalf("unavailable profile = %#v", document.Profiles[1])
 	}
 }
 
