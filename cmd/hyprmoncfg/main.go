@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,13 +18,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
+	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
+	"github.com/crmne/hyprmoncfg/internal/daemonstatus"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
 	"github.com/crmne/hyprmoncfg/internal/tui"
+	"github.com/crmne/hyprmoncfg/internal/writerlock"
 )
 
 func main() {
@@ -53,12 +58,80 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newTUICmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newMonitorsCmd(&configDir))
 	root.AddCommand(newProfilesCmd(&configDir))
+	root.AddCommand(newStatusCmd(&configDir))
 	root.AddCommand(newSaveCmd(&configDir))
 	root.AddCommand(newApplyCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newDeleteCmd(&configDir))
 	root.AddCommand(newVersionCmd("hyprmoncfg"))
 
 	return root
+}
+
+func newStatusCmd(configDir *string) *cobra.Command {
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show current profile and daemon status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 5*time.Second)
+			defer cancel()
+			document, remote, err := daemonStatus(ctx)
+			if err != nil {
+				return err
+			}
+			if !remote {
+				client, store, err := bootstrap(*configDir)
+				if err != nil {
+					return err
+				}
+				profiles, err := store.List()
+				if err != nil {
+					return err
+				}
+				monitors, err := client.Monitors(ctx)
+				if err != nil {
+					return err
+				}
+				rules, err := client.WorkspaceRules(ctx)
+				if err != nil {
+					return err
+				}
+				document = appstatus.Build(buildinfo.Version, daemonstatus.Running(), profiles, monitors, rules)
+			}
+			if jsonOutput {
+				encoder := json.NewEncoder(cmd.OutOrStdout())
+				encoder.SetIndent("", "  ")
+				return encoder.Encode(document)
+			}
+
+			activeProfile := "custom layout"
+			if document.ActiveProfile != nil {
+				activeProfile = document.ActiveProfile.Name
+			}
+			daemonState := "stopped"
+			if document.Daemon.Running {
+				daemonState = "running"
+			}
+			enabledMonitors := 0
+			for _, monitor := range document.Monitors {
+				if monitor.Enabled {
+					enabledMonitors++
+				}
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Active profile: %s\n", activeProfile)
+			if document.RecommendedProfile != nil && document.RecommendedProfile.Name != activeProfile {
+				fmt.Fprintf(cmd.OutOrStdout(), "Recommended profile: %s\n", document.RecommendedProfile.Name)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Daemon: %s\n", daemonState)
+			fmt.Fprintf(cmd.OutOrStdout(), "Displays: %d enabled, %d connected\n", enabledMonitors, len(document.Monitors))
+			fmt.Fprintf(cmd.OutOrStdout(), "Saved profiles: %d\n", len(document.Profiles))
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "Print machine-readable JSON")
+	return cmd
 }
 
 func newTUICmd(configDir *string, monitorsConf *string, hyprConfig *string) *cobra.Command {
@@ -160,7 +233,18 @@ func newSaveCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			p.Exec = existing.Exec
-			if err := profileio.SaveWithSidecars(store, p); err != nil {
+			session, err := openWriterSession(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer session.Close()
+			if session.ipc != nil {
+				saveCtx, saveCancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+				defer saveCancel()
+				if err := session.ipc.Save(saveCtx, ipc.SaveParams{Profile: p}); err != nil {
+					return err
+				}
+			} else if err := profileio.SaveWithSidecars(store, p); err != nil {
 				return err
 			}
 			fmt.Printf("Saved profile %q\n", p.Name)
@@ -185,6 +269,14 @@ func newApplyCmd(configDir *string, monitorsConf *string, hyprConfig *string) *c
 			p, err := store.Load(args[0])
 			if err != nil {
 				return err
+			}
+			session, err := openWriterSession(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer session.Close()
+			if session.ipc != nil {
+				return runRemoteApply(cmd, session.ipc, p, confirmTimeout)
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -292,7 +384,18 @@ func newDeleteCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if err := store.Delete(args[0]); err != nil {
+			session, err := openWriterSession(cmd.Context())
+			if err != nil {
+				return err
+			}
+			defer session.Close()
+			if session.ipc != nil {
+				ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+				defer cancel()
+				if err := session.ipc.Delete(ctx, args[0]); err != nil {
+					return err
+				}
+			} else if err := store.Delete(args[0]); err != nil {
 				return err
 			}
 			fmt.Printf("Deleted profile %q\n", args[0])
@@ -317,7 +420,18 @@ func runTUI(configDir string, monitorsConf string, hyprConfig string) error {
 		return err
 	}
 
+	sessionCtx, sessionCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer sessionCancel()
+	session, err := openWriterSession(sessionCtx)
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
 	model := tui.NewModel(client, store, monitorsConf, hyprConfig)
+	if session.ipc != nil {
+		model = tui.NewModelWithIPC(client, store, monitorsConf, hyprConfig, session.ipc)
+	}
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, runErr := p.Run()
 
@@ -347,6 +461,159 @@ func bootstrap(explicitConfigDir string) (*hypr.Client, *profile.Store, error) {
 		return nil, nil, err
 	}
 	return client, store, nil
+}
+
+type writerSession struct {
+	ipc  *ipc.Client
+	lock *writerlock.Lock
+}
+
+func (s *writerSession) Close() error {
+	if s == nil {
+		return nil
+	}
+	var errs []error
+	if s.ipc != nil {
+		errs = append(errs, s.ipc.Close())
+		s.ipc = nil
+	}
+	if s.lock != nil {
+		errs = append(errs, s.lock.Close())
+		s.lock = nil
+	}
+	return errors.Join(errs...)
+}
+
+func daemonStatus(ctx context.Context) (appstatus.Document, bool, error) {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return appstatus.Document{}, false, nil
+	}
+	client, err := ipc.Dial(ctx, path)
+	if err != nil {
+		return appstatus.Document{}, false, nil
+	}
+	defer client.Close()
+	document, err := client.Status(ctx)
+	if err != nil {
+		return appstatus.Document{}, true, err
+	}
+	return document, true, nil
+}
+
+func openWriterSession(ctx context.Context) (*writerSession, error) {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		// Direct mode predates the daemon socket and remains the recovery path
+		// on sessions without an XDG runtime directory.
+		return &writerSession{}, nil
+	}
+
+	waitCtx := ctx
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, 1500*time.Millisecond)
+		defer cancel()
+	}
+
+	for {
+		dialCtx, cancel := context.WithTimeout(waitCtx, 150*time.Millisecond)
+		client, dialErr := ipc.Dial(dialCtx, path)
+		cancel()
+		if dialErr == nil {
+			return &writerSession{ipc: client}, nil
+		}
+
+		lock, lockErr := writerlock.TryAcquire()
+		if lockErr == nil {
+			return &writerSession{lock: lock}, nil
+		}
+		if !errors.Is(lockErr, writerlock.ErrBusy) {
+			return nil, lockErr
+		}
+
+		timer := time.NewTimer(50 * time.Millisecond)
+		select {
+		case <-waitCtx.Done():
+			timer.Stop()
+			return nil, fmt.Errorf("daemon owns monitor configuration but its IPC socket is unavailable: %w", waitCtx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+func runRemoteApply(cmd *cobra.Command, client *ipc.Client, target profile.Profile, confirmTimeout int) error {
+	isInteractive := confirmTimeout > 0
+	var applySignals chan os.Signal
+	if isInteractive {
+		applySignals = make(chan os.Signal, 1)
+		signal.Notify(applySignals, os.Interrupt, syscall.SIGTERM)
+		defer signal.Stop(applySignals)
+	}
+
+	preview := func(allowOverwrite bool) (ipc.Transaction, error) {
+		timeout := confirmTimeout
+		if timeout <= 0 {
+			timeout = 10
+		}
+		ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
+		defer cancel()
+		return client.Preview(ctx, ipc.PreviewParams{
+			Profile:                 &target,
+			AllowUnmanagedOverwrite: allowOverwrite,
+			TimeoutSeconds:          timeout,
+		})
+	}
+
+	transaction, err := preview(false)
+	if err != nil {
+		var unmanaged *apply.UnmanagedMonitorConfigError
+		if !isInteractive || !errors.As(err, &unmanaged) {
+			return err
+		}
+		overwrite, promptErr := confirmUnmanagedOverwrite(cmd.InOrStdin(), cmd.OutOrStdout(), applySignals, unmanaged)
+		if promptErr != nil {
+			return fmt.Errorf("read overwrite confirmation: %w", promptErr)
+		}
+		if !overwrite {
+			fmt.Fprintln(cmd.OutOrStdout(), "Existing monitor config left unchanged")
+			return nil
+		}
+		transaction, err = preview(true)
+		if err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(cmd.OutOrStdout(), "Applied profile %q\n", target.Name)
+	if !isInteractive {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return client.Confirm(ctx, transaction.ID)
+	}
+
+	keep, confirmErr := confirmApplyWithInput(confirmTimeout, cmd.InOrStdin(), cmd.OutOrStdout(), applySignals)
+	if keep {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := client.Confirm(ctx, transaction.ID); err != nil {
+			return err
+		}
+		fmt.Fprintln(cmd.OutOrStdout(), "Configuration kept")
+		return nil
+	}
+
+	revertCtx, revertCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	revertErr := client.Revert(revertCtx, transaction.ID)
+	revertCancel()
+	if errors.Is(revertErr, ipc.ErrTransactionUnavailable) {
+		revertErr = nil
+	}
+	if revertErr != nil {
+		revertErr = fmt.Errorf("failed to revert unconfirmed configuration: %w", revertErr)
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "Configuration reverted")
+	return errors.Join(confirmErr, revertErr)
 }
 
 func confirmApplyWithInput(timeoutSec int, input io.Reader, output io.Writer, signals <-chan os.Signal) (bool, error) {

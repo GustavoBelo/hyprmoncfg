@@ -1,4 +1,4 @@
-package tui
+package daemonstatus
 
 import (
 	"os"
@@ -51,21 +51,21 @@ func TestIsDaemonCommand(t *testing.T) {
 	}
 }
 
-func TestDaemonRunningIn(t *testing.T) {
+func TestRunningIn(t *testing.T) {
 	root := t.TempDir()
 	writeCmdline(t, root, "100", "/usr/bin/hyprmoncfg\x00")
 	writeCmdline(t, root, "101", "/nix/store/hash-hyprmoncfg/bin/hyprmoncfgd\x00")
 
-	if !daemonRunningIn(root) {
+	if !runningIn(root) {
 		t.Fatal("expected to find the daemon by argv[0]")
 	}
 }
 
-func TestDaemonRunningInReturnsFalseWithoutDaemon(t *testing.T) {
+func TestRunningInReturnsFalseWithoutDaemon(t *testing.T) {
 	root := t.TempDir()
 	writeCmdline(t, root, "100", "/usr/bin/hyprmoncfg\x00")
 
-	if daemonRunningIn(root) {
+	if runningIn(root) {
 		t.Fatal("did not expect to find a daemon")
 	}
 }

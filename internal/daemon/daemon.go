@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
@@ -28,6 +29,13 @@ type Service struct {
 	store        *profile.Store
 	engine       apply.Engine
 	cfg          Config
+	writeMu      sync.Mutex
+	pendingMu    sync.Mutex
+	pending      *pendingTransaction
+	manualMu     sync.Mutex
+	manualSet    string
+	notifyMu     sync.RWMutex
+	notify       func()
 	applied      string
 	lastSeenHash string
 	lidState     lid.State
@@ -145,6 +153,7 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 			if state != s.lidState {
 				s.lidState = state
+				s.clearManualOverride()
 				pushTrigger("lid:" + string(state))
 			}
 		case err, ok := <-lidErrs:
@@ -184,11 +193,23 @@ func (s *Service) Run(ctx context.Context) error {
 			if err := s.applyBest(ctx); err != nil {
 				s.cfg.Logf("apply failed: %v", err)
 			}
+			s.signalChange()
 		}
 	}
 }
 
 func (s *Service) applyBest(ctx context.Context) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	s.pendingMu.Lock()
+	interactive := s.pending != nil
+	s.pendingMu.Unlock()
+	if interactive {
+		s.cfg.Logf("automatic switching paused during interactive preview")
+		return nil
+	}
+
 	monitors, err := s.client.Monitors(ctx)
 	if err != nil {
 		return err
@@ -198,6 +219,11 @@ func (s *Service) applyBest(ctx context.Context) error {
 	}
 
 	hash := profile.MonitorStateHash(monitors)
+	monitorSet := profile.MonitorSetHash(monitors)
+	if s.cfg.ForcedProfile == "" && s.manualOverrideActive(monitorSet) {
+		s.cfg.Logf("keeping manually selected profile until monitor hotplug or lid change")
+		return nil
+	}
 
 	var target profile.Profile
 	if s.cfg.ForcedProfile != "" {
@@ -272,7 +298,48 @@ func (s *Service) applyBest(ctx context.Context) error {
 	s.applied = target.Name + "|" + appliedHash + "|lid=" + string(s.lidState)
 	s.lastSeenHash = appliedHash
 	s.cfg.Logf("applied profile: %s", target.Name)
+	s.signalChange()
 	return nil
+}
+
+func (s *Service) SetNotifier(notify func()) {
+	s.notifyMu.Lock()
+	s.notify = notify
+	s.notifyMu.Unlock()
+}
+
+func (s *Service) signalChange() {
+	s.notifyMu.RLock()
+	notify := s.notify
+	s.notifyMu.RUnlock()
+	if notify != nil {
+		notify()
+	}
+}
+
+func (s *Service) setManualOverride(monitorSet string) {
+	s.manualMu.Lock()
+	s.manualSet = monitorSet
+	s.manualMu.Unlock()
+}
+
+func (s *Service) clearManualOverride() {
+	s.manualMu.Lock()
+	s.manualSet = ""
+	s.manualMu.Unlock()
+}
+
+func (s *Service) manualOverrideActive(monitorSet string) bool {
+	s.manualMu.Lock()
+	defer s.manualMu.Unlock()
+	if s.manualSet == "" {
+		return false
+	}
+	if s.manualSet != monitorSet {
+		s.manualSet = ""
+		return false
+	}
+	return true
 }
 
 func internalOnlyFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool) {

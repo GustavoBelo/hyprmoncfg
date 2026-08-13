@@ -36,6 +36,7 @@ hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-awar
 - **Hotplug and lid-aware daemon** -- apply the right profile automatically when monitors change or the laptop lid closes
 - **Workspace planner** -- assign workspaces across monitors with sequential, interleave, or manual strategies
 - **Safe apply with revert** -- reload Hyprland, verify the result, and revert unless you confirm
+- **One-writer IPC** -- when the daemon is running, the TUI, CLI, and desktop panels send changes through it instead of racing over config files
 - **Include-chain verification** -- refuse to write generated monitor config that Hyprland is not reading
 - **Hyprland 0.55 Lua config support** -- use `monitors.lua` automatically when `hyprland.lua` is active, while preserving legacy `monitors.conf` setups
 - **One hard runtime dependency** -- Hyprland; UPower is optional for immediate lid events
@@ -144,6 +145,8 @@ systemctl --user enable --now hyprmoncfgd
 The daemon scores every profile in `~/.config/hyprmoncfg/profiles/`, so delete throwaway profiles before relying on automatic switching.
 
 On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` stops that exact transient user scope while it owns monitor profiles and restores the watcher when the daemon exits during a live Hyprland session. Generated configuration used without the daemon cannot provide this runtime ownership; static-config users must disable the Omarchy watcher separately.
+
+When the daemon is running, it is the canonical monitor-config writer. The TUI and CLI use its versioned Unix-socket IPC automatically; when it is absent, they keep working through the same core engine in direct mode. A profile selected interactively stays selected until the next monitor hotplug or lid change, when automatic matching resumes.
 
 ## Screenshots
 

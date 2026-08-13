@@ -82,6 +82,31 @@ func TestInternalOnlyFallbackProfileRequiresInternalOutput(t *testing.T) {
 	}
 }
 
+func TestManualOverrideLastsUntilMonitorSetChanges(t *testing.T) {
+	svc := &Service{}
+	svc.setManualOverride("desk-set")
+
+	if !svc.manualOverrideActive("desk-set") {
+		t.Fatal("expected manual profile to remain active for the same monitor set")
+	}
+	if svc.manualOverrideActive("projector-set") {
+		t.Fatal("expected monitor hotplug to clear the manual profile override")
+	}
+	if svc.manualOverrideActive("desk-set") {
+		t.Fatal("expected cleared manual profile override to stay cleared")
+	}
+}
+
+func TestClearManualOverride(t *testing.T) {
+	svc := &Service{}
+	svc.setManualOverride("desk-set")
+	svc.clearManualOverride()
+
+	if svc.manualOverrideActive("desk-set") {
+		t.Fatal("expected explicit clear to remove manual profile override")
+	}
+}
+
 func TestApplyBestUsesInternalFallbackWhenNoProfilesAndAllOutputsDisabled(t *testing.T) {
 	env := newApplyBestTestEnv(t, `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"mirrorOf":""}]`)
 

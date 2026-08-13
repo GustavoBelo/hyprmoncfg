@@ -16,6 +16,8 @@ Running `hyprmoncfg` with no arguments opens the TUI.
 | `hyprmoncfg tui` | Open the TUI (explicit) |
 | `hyprmoncfg monitors` | List connected monitors with hardware details |
 | `hyprmoncfg profiles` | List saved profiles |
+| `hyprmoncfg status` | Show the active profile, daemon state, and connected displays |
+| `hyprmoncfg status --json` | Print the stable status schema as JSON |
 | `hyprmoncfg save <name>` | Save current monitor state as a named profile |
 | `hyprmoncfg apply <name>` | Apply a saved profile |
 | `hyprmoncfg delete <name>` | Delete a saved profile |
@@ -74,3 +76,4 @@ The daemon. Runs in the foreground by default.
 - CLI commands exit non-zero on Hyprland query failures, invalid layouts, missing profiles, or generated-config verification failures.
 - Legacy include-chain failures are reported before writing. For Lua configs, `apply` reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. It restores the previous file if it did not.
 - The daemon exits cleanly on `SIGINT` or `SIGTERM`.
+- Only one monitor writer can run per user session. If the daemon owns the writer lock, the TUI and mutating CLI commands use its IPC socket automatically.

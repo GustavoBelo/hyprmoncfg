@@ -17,6 +17,7 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
@@ -73,9 +74,12 @@ type deleteMsg struct {
 }
 
 type applyMsg struct {
-	profile  profile.Profile
-	snapshot apply.RevertState
-	err      error
+	profile       profile.Profile
+	snapshot      apply.RevertState
+	transactionID string
+	deadline      time.Time
+	remote        bool
+	err           error
 }
 
 type revertMsg struct {
@@ -100,9 +104,11 @@ type clearSnapMsg struct {
 type tickMsg time.Time
 
 type pendingApply struct {
-	profile  profile.Profile
-	snapshot apply.RevertState
-	deadline time.Time
+	profile       profile.Profile
+	snapshot      apply.RevertState
+	transactionID string
+	deadline      time.Time
+	remote        bool
 }
 
 type unmanagedOverwritePrompt struct {
@@ -117,6 +123,14 @@ type pendingRevertGuard struct {
 	snapshot apply.RevertState
 	inFlight int
 	idle     chan struct{}
+}
+
+type pendingRemoteGuard struct {
+	mu            sync.Mutex
+	armed         bool
+	transactionID string
+	inFlight      int
+	idle          chan struct{}
 }
 
 type toastState struct {
@@ -236,6 +250,7 @@ type Model struct {
 	client  *hypr.Client
 	store   *profile.Store
 	engine  apply.Engine
+	ipc     *ipc.Client
 	openURL func(string) error
 
 	styles styles
@@ -259,6 +274,7 @@ type Model struct {
 	pending       *pendingApply
 	unmanaged     *unmanagedOverwritePrompt
 	revertGuard   *pendingRevertGuard
+	remoteGuard   *pendingRemoteGuard
 	saveDialog    *saveDialogState
 	saveOverwrite string
 	picker        *modePickerState
@@ -320,6 +336,14 @@ func NewModel(client *hypr.Client, store *profile.Store, monitorsConfPath string
 	}
 }
 
+func NewModelWithIPC(client *hypr.Client, store *profile.Store, monitorsConfPath string, hyprlandConfigPath string, ipcClient *ipc.Client) Model {
+	model := NewModel(client, store, monitorsConfPath, hyprlandConfigPath)
+	model.ipc = ipcClient
+	model.remoteGuard = &pendingRemoteGuard{}
+	model.daemonOK = ipcClient != nil
+	return model
+}
+
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(m.refreshCmd(false), tickCmd())
 }
@@ -356,7 +380,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		liveChanged := prevSig != nextSig
 		wasDirty := m.dirty
 
-		m.daemonOK = isDaemonRunning()
+		m.daemonOK = m.ipc != nil || isDaemonRunning()
 		m.monitors = msg.monitors
 		m.profiles = msg.profiles
 		m.workspaceRules = msg.workspaceRules
@@ -473,17 +497,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.mode = modeMain
 			return m, nil
 		}
-		m.pending = &pendingApply{
-			profile:  msg.profile,
-			snapshot: msg.snapshot,
-			deadline: time.Now().Add(10 * time.Second),
+		deadline := msg.deadline
+		if deadline.IsZero() {
+			deadline = time.Now().Add(10 * time.Second)
 		}
-		m.armPendingRevert(msg.snapshot)
+		m.pending = &pendingApply{
+			profile:       msg.profile,
+			snapshot:      msg.snapshot,
+			transactionID: msg.transactionID,
+			deadline:      deadline,
+			remote:        msg.remote,
+		}
+		if msg.remote {
+			m.armPendingRemote(msg.transactionID)
+		} else {
+			m.armPendingRevert(msg.snapshot)
+		}
 		m.mode = modeConfirm
 		m.statusErr = false
 		m.status = fmt.Sprintf("%s applied. Changes are live until you confirm or revert.", targetLabel(msg.profile.Name))
 		if m.quitAfterRevert {
-			return m, m.revertCmd(msg.snapshot, "quit")
+			return m, m.revertCmd(*m.pending, "quit")
 		}
 		return m, tickCmd()
 
@@ -502,6 +536,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pending = nil
 		m.quitAfterApply = false
 		m.disarmPendingRevert()
+		m.disarmPendingRemote()
 		m.markClean()
 		m.draftProfileName = ""
 		m.matchedProfileName = ""
@@ -519,11 +554,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		m.daemonOK = isDaemonRunning()
+		m.daemonOK = m.ipc != nil || isDaemonRunning()
 		if m.mode == modeConfirm && m.pending != nil {
 			if time.Now().After(m.pending.deadline) {
-				snapshot := m.pending.snapshot
-				return m, m.revertCmd(snapshot, "timeout")
+				return m, m.revertCmd(*m.pending, "timeout")
 			}
 		}
 		cmds := []tea.Cmd{tickCmd()}
@@ -789,24 +823,40 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c", "q":
 		m.quitAfterRevert = true
-		snapshot := m.pending.snapshot
-		return m, m.revertCmd(snapshot, "quit")
+		return m, m.revertCmd(*m.pending, "quit")
 	case "y", "enter":
 		var toastCmd tea.Cmd
 
 		p := m.pending.profile
+		confirmErr := m.confirmPending(*m.pending)
+		if confirmErr != nil && m.pending.remote {
+			if errors.Is(confirmErr, ipc.ErrTransactionUnavailable) {
+				m.mode = modeMain
+				m.pending = nil
+				m.disarmPendingRemote()
+				m.markClean()
+				m.draftProfileName = ""
+				m.matchedProfileName = ""
+				m.draftExec = ""
+				m.setStatusOK("Configuration reverted: confirmation timeout")
+				return m, m.refreshCmd(false)
+			}
+			m.setStatusErr(fmt.Sprintf("Could not confirm configuration: %v", confirmErr))
+			return m, nil
+		}
 		if target := strings.TrimSpace(p.Name); target != "" && target != "draft" {
 			m.draftProfileName = target
 			m.matchedProfileName = target
 		}
 
-		if err := m.postApply(p); err != nil {
-			toastCmd = m.notifyUser(fmt.Sprintf("Post-apply failed for %q: %v", p.Name, err), true)
+		if confirmErr != nil {
+			toastCmd = m.notifyUser(fmt.Sprintf("Post-apply failed for %q: %v", p.Name, confirmErr), true)
 		}
 
 		m.mode = modeMain
 		m.pending = nil
 		m.disarmPendingRevert()
+		m.disarmPendingRemote()
 		m.markClean()
 		m.setStatusOK("Configuration kept")
 		if m.quitAfterApply {
@@ -815,8 +865,7 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(m.refreshCmd(false), toastCmd)
 	case "n", "esc":
-		snapshot := m.pending.snapshot
-		return m, m.revertCmd(snapshot, "user request")
+		return m, m.revertCmd(*m.pending, "user request")
 	default:
 		return m, nil
 	}
@@ -2268,6 +2317,17 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 }
 
 func (m Model) saveCmd(p profile.Profile) tea.Cmd {
+	if m.ipc != nil {
+		client := m.ipc
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := client.Save(ctx, ipc.SaveParams{Profile: p}); err != nil {
+				return saveMsg{err: err}
+			}
+			return saveMsg{name: p.Name}
+		}
+	}
 	store := m.store
 	return func() tea.Msg {
 		if err := profileio.SaveWithSidecars(store, p); err != nil {
@@ -2278,6 +2338,17 @@ func (m Model) saveCmd(p profile.Profile) tea.Cmd {
 }
 
 func (m Model) saveProfileCmd(p profile.Profile) tea.Cmd {
+	if m.ipc != nil {
+		client := m.ipc
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := client.Save(ctx, ipc.SaveParams{Profile: p}); err != nil {
+				return saveMsg{name: p.Name, err: err, profileTab: true}
+			}
+			return saveMsg{name: p.Name, profileTab: true}
+		}
+	}
 	store := m.store
 	return func() tea.Msg {
 		if err := profileio.SaveWithSidecars(store, p); err != nil {
@@ -2288,6 +2359,17 @@ func (m Model) saveProfileCmd(p profile.Profile) tea.Cmd {
 }
 
 func (m Model) deleteCmd(name string) tea.Cmd {
+	if m.ipc != nil {
+		client := m.ipc
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := client.Delete(ctx, name); err != nil {
+				return deleteMsg{name: name, err: err}
+			}
+			return deleteMsg{name: name}
+		}
+	}
 	store := m.store
 	return func() tea.Msg {
 		if err := store.Delete(name); err != nil {
@@ -2298,6 +2380,39 @@ func (m Model) deleteCmd(name string) tea.Cmd {
 }
 
 func (m Model) applyCmd(p profile.Profile, allowUnmanagedOverwrite ...bool) tea.Cmd {
+	if m.ipc != nil {
+		client := m.ipc
+		guard := m.remoteGuard
+		if guard != nil {
+			guard.begin()
+		}
+		allowOverwrite := len(allowUnmanagedOverwrite) > 0 && allowUnmanagedOverwrite[0]
+		return func() tea.Msg {
+			if guard != nil {
+				defer guard.finish()
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			transaction, err := client.Preview(ctx, ipc.PreviewParams{
+				Profile:                 &p,
+				AllowUnmanagedOverwrite: allowOverwrite,
+				TimeoutSeconds:          10,
+			})
+			if err != nil {
+				return applyMsg{profile: p, remote: true, err: err}
+			}
+			if guard != nil {
+				guard.arm(transaction.ID)
+			}
+			return applyMsg{
+				profile:       transaction.Profile,
+				transactionID: transaction.ID,
+				deadline:      transaction.Deadline,
+				remote:        true,
+			}
+		}
+	}
+
 	client := m.client
 	engine := m.engine
 	guard := m.revertGuard
@@ -2346,7 +2461,35 @@ func (m *Model) disarmPendingRevert() {
 	}
 }
 
+func (m *Model) armPendingRemote(transactionID string) {
+	if m.remoteGuard == nil {
+		m.remoteGuard = &pendingRemoteGuard{}
+	}
+	m.remoteGuard.arm(transactionID)
+}
+
+func (m *Model) disarmPendingRemote() {
+	if m.remoteGuard != nil {
+		m.remoteGuard.disarm()
+	}
+}
+
 func (m Model) RevertPending(ctx context.Context) error {
+	if m.remoteGuard != nil {
+		transactionID, armed, err := m.remoteGuard.pending(ctx)
+		if err != nil {
+			return err
+		}
+		if armed {
+			if m.ipc == nil {
+				return errors.New("cannot revert daemon transaction without IPC connection")
+			}
+			if err := m.ipc.Revert(ctx, transactionID); err != nil && !errors.Is(err, ipc.ErrTransactionUnavailable) {
+				return err
+			}
+			m.remoteGuard.disarm()
+		}
+	}
 	if m.revertGuard == nil {
 		return nil
 	}
@@ -2419,6 +2562,59 @@ func (g *pendingRevertGuard) isArmed() bool {
 	return g.armed
 }
 
+func (g *pendingRemoteGuard) begin() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.inFlight == 0 {
+		g.idle = make(chan struct{})
+	}
+	g.inFlight++
+}
+
+func (g *pendingRemoteGuard) finish() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.inFlight--
+	if g.inFlight == 0 {
+		close(g.idle)
+		g.idle = nil
+	}
+}
+
+func (g *pendingRemoteGuard) arm(transactionID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.transactionID = transactionID
+	g.armed = true
+}
+
+func (g *pendingRemoteGuard) disarm() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.armed = false
+	g.transactionID = ""
+}
+
+func (g *pendingRemoteGuard) pending(ctx context.Context) (string, bool, error) {
+	for {
+		g.mu.Lock()
+		if g.inFlight == 0 {
+			transactionID := g.transactionID
+			armed := g.armed
+			g.mu.Unlock()
+			return transactionID, armed, nil
+		}
+		idle := g.idle
+		g.mu.Unlock()
+
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return "", false, ctx.Err()
+		}
+	}
+}
+
 func (m Model) postApply(p profile.Profile) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2426,7 +2622,45 @@ func (m Model) postApply(p profile.Profile) error {
 	return m.engine.PostApply(ctx, p)
 }
 
-func (m Model) revertCmd(snapshot apply.RevertState, reason string) tea.Cmd {
+func (m Model) confirmPending(pending pendingApply) error {
+	if pending.remote {
+		if m.ipc == nil {
+			return errors.New("cannot confirm daemon transaction without IPC connection")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return m.ipc.Confirm(ctx, pending.transactionID)
+	}
+	return m.postApply(pending.profile)
+}
+
+func (m Model) revertCmd(pending pendingApply, reason string) tea.Cmd {
+	if pending.remote {
+		client := m.ipc
+		guard := m.remoteGuard
+		if guard != nil {
+			guard.begin()
+		}
+		return func() tea.Msg {
+			if guard != nil {
+				defer guard.finish()
+			}
+			if client == nil {
+				return revertMsg{err: errors.New("cannot revert daemon transaction without IPC connection"), reason: reason}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			err := client.Revert(ctx, pending.transactionID)
+			if errors.Is(err, ipc.ErrTransactionUnavailable) {
+				err = nil
+			}
+			if err == nil && guard != nil {
+				guard.disarm()
+			}
+			return revertMsg{err: err, reason: reason}
+		}
+	}
+
 	engine := m.engine
 	guard := m.revertGuard
 	if guard != nil {
@@ -2438,7 +2672,7 @@ func (m Model) revertCmd(snapshot apply.RevertState, reason string) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		err := engine.Revert(ctx, snapshot)
+		err := engine.Revert(ctx, pending.snapshot)
 		if err == nil && guard != nil {
 			guard.disarm()
 		}

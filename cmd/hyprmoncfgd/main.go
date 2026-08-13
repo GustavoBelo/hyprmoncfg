@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -15,9 +16,11 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/daemon"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/writerlock"
 )
 
 func main() {
@@ -42,7 +45,9 @@ func newRootCmd() *cobra.Command {
 		Short:   "Daemon for automatic monitor profile switching",
 		Version: buildinfo.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			signalCtx, stopSignals := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			defer stopSignals()
+			ctx, cancel := context.WithCancel(signalCtx)
 			defer cancel()
 
 			base, err := config.EnsureBaseDir(configDir)
@@ -73,11 +78,29 @@ func newRootCmd() *cobra.Command {
 				HyprConfig:      hyprConfig,
 				Logf:            logf,
 			})
+			socketPath, err := ipc.SocketPath()
+			if err != nil {
+				return err
+			}
+			ownership, err := writerlock.TryAcquire()
+			if err != nil {
+				return fmt.Errorf("claim monitor writer ownership: %w", err)
+			}
+			defer ownership.Close()
+			server := &ipc.Server{Path: socketPath, Handler: svc, Logf: logf}
+			svc.SetNotifier(server.Notify)
 
 			logf("starting daemon")
 			watcherOwner := omarchywatch.New(logf)
 			watcherOwner.Start(ctx)
-			err = svc.Run(ctx)
+
+			errCh := make(chan error, 2)
+			go func() { errCh <- server.Run(ctx) }()
+			go func() { errCh <- svc.Run(ctx) }()
+			firstErr := <-errCh
+			cancel()
+			secondErr := <-errCh
+			err = errors.Join(firstErr, secondErr)
 
 			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			restoreErr := watcherOwner.Release(restoreCtx)

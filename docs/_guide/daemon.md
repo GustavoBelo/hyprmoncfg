@@ -57,6 +57,10 @@ If the winning profile is the same one that's already applied, the daemon skips 
 
 The daemon uses the **same apply engine** as the TUI. There is no separate "best effort" code path. If the TUI can apply a profile correctly, so can the daemon.
 
+When the daemon is running, it is also the canonical writer. The TUI, CLI, and integrations connect to `$XDG_RUNTIME_DIR/hyprmoncfgd.sock` and ask the daemon to preview, confirm, revert, save, or delete through the same versioned IPC protocol. If the daemon is not running, the TUI and CLI acquire the writer lock and use the core engine directly.
+
+Interactive profile changes are deliberate overrides. After you confirm one, the daemon keeps it in place until the monitor set or lid state changes. Automatic matching then resumes.
+
 ## Profile matching
 
 Profiles are matched by hardware identity (make, model, serial) -- not connector name. This means your layout survives when monitors swap between `DP-1` and `DP-2` across reboots. Each profile is scored against the currently connected monitors:
@@ -113,7 +117,7 @@ systemctl --user stop hyprmoncfgd
 hyprmoncfgd --profile conference-projector
 ```
 
-Running two daemons at the same time causes them to fight over the generated monitor config -- your monitors will flicker back and forth between profiles.
+The daemon owns a per-session writer lock. A second daemon or direct writer exits instead of fighting over the generated monitor config.
 
 ## Logs
 
