@@ -120,7 +120,17 @@ func TestCurrentSetupIsPlainTopRailMetadata(t *testing.T) {
 }
 
 func TestTopRailShowsDaemonFailureAndLinksToSetup(t *testing.T) {
-	m := Model{styles: newStyles(), tab: tabLayout, width: 160, height: 30}
+	var openedURL string
+	m := Model{
+		styles: newStyles(),
+		tab:    tabLayout,
+		width:  160,
+		height: 30,
+		openURL: func(url string) error {
+			openedURL = url
+			return nil
+		},
+	}
 	plain := ansi.Strip(m.renderTabs())
 	start, found := visibleTextColumn(plain, "Daemon not running")
 	if !found {
@@ -135,6 +145,9 @@ func TestTopRailShowsDaemonFailureAndLinksToSetup(t *testing.T) {
 	open, ok := msg.(openURLMsg)
 	if !ok || open.url != daemonURL {
 		t.Fatalf("expected daemon setup open command, got %#v", msg)
+	}
+	if openedURL != daemonURL {
+		t.Fatalf("expected fake opener to receive %q, got %q", daemonURL, openedURL)
 	}
 }
 
