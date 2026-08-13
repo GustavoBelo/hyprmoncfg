@@ -67,6 +67,7 @@ The daemon. Runs in the foreground by default.
 | `--hypr-config <path>` | Override `HYPRLAND_CONFIG` and the default root config path (`.conf` or `.lua`) |
 | `--profile <name>` | Force a specific profile instead of auto-matching |
 | `--debounce <duration>` | Delay before applying after a monitor or lid event (default: 1200ms) |
+| `--wake-settle <duration>` | Quiet period after displays wake before reconciling monitor changes (default: 2s) |
 | `--poll-interval <duration>` | Polling frequency for monitor fallback checks (default: 5s) |
 | `--lid-poll-interval <duration>` | Polling frequency for lid-state fallback checks (default: 1s) |
 | `--quiet` | Suppress log output |

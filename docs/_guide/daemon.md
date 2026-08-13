@@ -55,6 +55,8 @@ When the daemon detects a monitor or lid-state change, it runs through these ste
 
 If the winning profile is the same one that's already applied, the daemon skips re-applying it. You won't see unnecessary reloads.
 
+When every enabled display is DPMS-off, the daemon treats monitor add/remove events as part of display sleep rather than physical hotplug. It keeps the current profile in place, waits for the displays to wake, and then waits for two seconds without another monitor event before matching once. A real dock or undock that happened while the machine slept is still applied after the monitor set stabilizes.
+
 The daemon uses the **same apply engine** as the TUI. There is no separate "best effort" code path. If the TUI can apply a profile correctly, so can the daemon.
 
 When the daemon is running, it is also the canonical writer. The TUI, CLI, and integrations connect to `$XDG_RUNTIME_DIR/hyprmoncfgd.sock` and ask the daemon to preview, confirm, revert, save, or delete through the same versioned IPC protocol. If the daemon is not running, the TUI and CLI acquire the writer lock and use the core engine directly.
@@ -100,6 +102,7 @@ hyprmoncfgd
 
 ```bash
 hyprmoncfgd --debounce 1500ms     # wait longer before applying after a plug event
+hyprmoncfgd --wake-settle 2s      # quiet period after displays wake
 hyprmoncfgd --poll-interval 5s    # how often to run fallback monitor checks
 hyprmoncfgd --lid-poll-interval 1s # how often to run fallback lid checks
 hyprmoncfgd --profile desk        # always apply this specific profile

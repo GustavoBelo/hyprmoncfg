@@ -33,6 +33,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	var configDir string
 	var debounce time.Duration
+	var wakeSettle time.Duration
 	var poll time.Duration
 	var lidPoll time.Duration
 	var forceProfile string
@@ -71,6 +72,7 @@ func newRootCmd() *cobra.Command {
 
 			svc := daemon.New(client, store, daemon.Config{
 				Debounce:        debounce,
+				WakeSettle:      wakeSettle,
 				PollInterval:    poll,
 				LidPollInterval: lidPoll,
 				ForcedProfile:   forceProfile,
@@ -118,6 +120,7 @@ func newRootCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&configDir, "config-dir", "", "Config directory (default: ~/.config/hyprmoncfg)")
 	cmd.Flags().DurationVar(&debounce, "debounce", 1200*time.Millisecond, "Debounce duration before applying profile")
+	cmd.Flags().DurationVar(&wakeSettle, "wake-settle", 2*time.Second, "Quiet period after display wake before applying profile")
 	cmd.Flags().DurationVar(&poll, "poll-interval", 5*time.Second, "Polling interval for monitor changes")
 	cmd.Flags().DurationVar(&lidPoll, "lid-poll-interval", lid.DefaultPollInterval, "Polling interval for lid-state fallback checks")
 	cmd.Flags().StringVar(&forceProfile, "profile", "", "Force this profile instead of auto-matching")

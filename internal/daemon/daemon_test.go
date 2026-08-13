@@ -2,15 +2,59 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
+
+func TestDisplayPowerState(t *testing.T) {
+	tests := []struct {
+		name     string
+		monitors []hypr.Monitor
+		want     displayPower
+	}{
+		{name: "none", want: displayPowerUnknown},
+		{name: "disabled", monitors: []hypr.Monitor{{Name: "eDP-1", Disabled: true}}, want: displayPowerUnknown},
+		{name: "asleep", monitors: []hypr.Monitor{{Name: "eDP-1"}}, want: displayPowerAsleep},
+		{name: "awake", monitors: []hypr.Monitor{{Name: "eDP-1", DPMSStatus: true}}, want: displayPowerAwake},
+		{name: "one output awake", monitors: []hypr.Monitor{{Name: "eDP-1", DPMSStatus: true}, {Name: "DP-1"}}, want: displayPowerAwake},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := displayPowerState(tt.monitors); got != tt.want {
+				t.Fatalf("displayPowerState() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDisplaySleepGuardPreservesSleepAcrossMissingOutputs(t *testing.T) {
+	guard := displaySleepGuard{}
+
+	if got := guard.Observe([]hypr.Monitor{{Name: "eDP-1", DPMSStatus: true}}); got != displaySleepUnchanged {
+		t.Fatalf("initial awake transition = %v", got)
+	}
+	if got := guard.Observe([]hypr.Monitor{{Name: "eDP-1"}}); got != displaySleepEntered || !guard.sleeping {
+		t.Fatalf("sleep transition = %v, sleeping = %t", got, guard.sleeping)
+	}
+	if got := guard.Observe(nil); got != displaySleepUnchanged || !guard.sleeping {
+		t.Fatalf("missing-output transition = %v, sleeping = %t", got, guard.sleeping)
+	}
+	if got := guard.Observe([]hypr.Monitor{{Name: "eDP-1", DPMSStatus: true}}); got != displaySleepExited || guard.sleeping {
+		t.Fatalf("wake transition = %v, sleeping = %t", got, guard.sleeping)
+	}
+}
 
 func TestInternalOnlyFallbackProfileEnablesInternalWhenAllOutputsDisabled(t *testing.T) {
 	monitors := []hypr.Monitor{
@@ -203,6 +247,230 @@ func TestApplyBestRefusesUnmanagedMonitorConfig(t *testing.T) {
 	}
 }
 
+func TestApplyBestDefersWhileDisplaysSleep(t *testing.T) {
+	sleeping := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"dpmsStatus":false,"disabled":false,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, sleeping, sleeping)
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	err := svc.applyBest(context.Background())
+	if !errors.Is(err, errDisplaysSleeping) {
+		t.Fatalf("applyBest error = %v, want displays-sleeping sentinel", err)
+	}
+
+	rendered := readMonitorsConf(t, env)
+	if !strings.Contains(rendered, "# initial") {
+		t.Fatalf("sleeping apply changed monitor config:\n%s", rendered)
+	}
+	logBytes, err := os.ReadFile(env.logPath)
+	if err != nil {
+		t.Fatalf("read hyprctl log: %v", err)
+	}
+	if strings.Contains(string(logBytes), "reload") {
+		t.Fatalf("sleeping apply reloaded Hyprland:\n%s", logBytes)
+	}
+}
+
+func TestRunDefersTransientHotplugWhileDisplaysSleep(t *testing.T) {
+	dir := t.TempDir()
+	runtimeDir := filepath.Join(dir, "runtime")
+	socketDir := filepath.Join(runtimeDir, "hypr", "sig-test")
+	if err := os.MkdirAll(socketDir, 0o755); err != nil {
+		t.Fatalf("create socket directory: %v", err)
+	}
+
+	listener, err := net.Listen("unix", filepath.Join(socketDir, ".socket2.sock"))
+	if err != nil {
+		t.Fatalf("listen on fake socket2: %v", err)
+	}
+	defer listener.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err == nil {
+			accepted <- conn
+		}
+	}()
+
+	monitorStatePath := filepath.Join(dir, "monitors.json")
+	logPath := filepath.Join(dir, "hyprctl.log")
+	monitorsConfPath := filepath.Join(dir, "monitors.conf")
+	hyprlandConfigPath := filepath.Join(dir, "hyprland.conf")
+	hyprctlPath := filepath.Join(dir, "hyprctl")
+	fakeHyprctlScript := `#!/bin/bash
+set -eu
+
+if [[ "${1-}" == "--instance" ]]; then
+  shift 2
+fi
+
+printf '%s\n' "$*" >> "$HYPRCTL_LOG"
+
+if [[ "${1-}" == "-j" && "${2-}" == "version" ]]; then
+  printf '{"version":"0.54.0"}'
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "monitors" && "${3-}" == "all" ]]; then
+  cat "$HYPRCTL_MONITORS"
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "workspacerules" ]]; then
+  printf '[]'
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "workspaces" ]]; then
+  printf '[]'
+  exit 0
+fi
+if [[ "${1-}" == "reload" ]]; then
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+`
+
+	if err := os.WriteFile(monitorsConfPath, []byte(config.GeneratedLegacyHeader+"\n# initial\n"), 0o644); err != nil {
+		t.Fatalf("write monitors.conf: %v", err)
+	}
+	if err := os.WriteFile(hyprlandConfigPath, []byte("source = "+monitorsConfPath+"\n"), 0o644); err != nil {
+		t.Fatalf("write hyprland.conf: %v", err)
+	}
+	if err := os.WriteFile(hyprctlPath, []byte(fakeHyprctlScript), 0o755); err != nil {
+		t.Fatalf("write fake hyprctl: %v", err)
+	}
+
+	t.Setenv("HYPRCTL_LOG", logPath)
+	t.Setenv("HYPRCTL_MONITORS", monitorStatePath)
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig-test")
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	homeMonitors := []hypr.Monitor{
+		{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true},
+		{Name: "DP-1", Description: "Dell U2720Q", Make: "Dell", Model: "U2720Q", Serial: "B1", Width: 3840, Height: 2160, RefreshRate: 60, X: 2880, Scale: 2, DPMSStatus: true},
+	}
+	laptopMonitors := []hypr.Monitor{homeMonitors[0]}
+	if err := writeMonitorState(monitorStatePath, homeMonitors); err != nil {
+		t.Fatalf("write initial monitor state: %v", err)
+	}
+
+	store := profile.NewStore(dir)
+	if err := store.Save(profile.FromMonitors("Home", homeMonitors)); err != nil {
+		t.Fatalf("save home profile: %v", err)
+	}
+	if err := store.Save(profile.FromMonitors("Laptop", laptopMonitors)); err != nil {
+		t.Fatalf("save laptop profile: %v", err)
+	}
+	client, err := hypr.NewClient()
+	if err != nil {
+		t.Fatalf("new hypr client: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	svc := New(client, store, Config{
+		Debounce:        20 * time.Millisecond,
+		WakeSettle:      80 * time.Millisecond,
+		PollInterval:    time.Hour,
+		LidPollInterval: time.Hour,
+		EventRetry:      time.Hour,
+		MonitorsConf:    monitorsConfPath,
+		HyprConfig:      hyprlandConfigPath,
+	})
+	go func() { done <- svc.Run(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case conn := <-accepted:
+			_ = conn.Close()
+		default:
+		}
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("daemon returned error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("daemon did not stop")
+		}
+	}()
+
+	var eventConn net.Conn
+	select {
+	case eventConn = <-accepted:
+	case <-time.After(time.Second):
+		t.Fatal("daemon did not connect to fake socket2")
+	}
+	defer eventConn.Close()
+
+	waitFor(t, time.Second, func() bool { return reloadCount(logPath) == 1 }, "startup profile apply")
+
+	sleepingLaptop := append([]hypr.Monitor(nil), laptopMonitors...)
+	sleepingLaptop[0].DPMSStatus = false
+	if err := writeMonitorState(monitorStatePath, sleepingLaptop); err != nil {
+		t.Fatalf("write sleeping monitor state: %v", err)
+	}
+	if _, err := fmt.Fprintln(eventConn, "monitorremoved>>DP-1"); err != nil {
+		t.Fatalf("send sleeping removal event: %v", err)
+	}
+	time.Sleep(4 * svc.cfg.Debounce)
+	if got := reloadCount(logPath); got != 1 {
+		t.Fatalf("sleeping removal applied a profile: reload count = %d, want 1", got)
+	}
+
+	wakingHome := append([]hypr.Monitor(nil), homeMonitors...)
+	wakingHome[1].Scale = 1
+	if err := writeMonitorState(monitorStatePath, wakingHome); err != nil {
+		t.Fatalf("write waking monitor state: %v", err)
+	}
+	if _, err := fmt.Fprintln(eventConn, "monitoradded>>DP-1"); err != nil {
+		t.Fatalf("send wake event: %v", err)
+	}
+	time.Sleep(svc.cfg.WakeSettle / 2)
+	if got := reloadCount(logPath); got != 1 {
+		t.Fatalf("wake reconciled before settle period: reload count = %d, want 1", got)
+	}
+	waitFor(t, time.Second, func() bool { return reloadCount(logPath) == 2 }, "post-wake profile reconciliation")
+}
+
+func writeMonitorState(path string, monitors []hypr.Monitor) error {
+	data, err := json.Marshal(monitors)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+func reloadCount(path string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "reload" {
+			count++
+		}
+	}
+	return count
+}
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool, description string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", description)
+}
+
 type applyBestTestEnv struct {
 	client             *hypr.Client
 	store              *profile.Store
@@ -213,6 +481,12 @@ type applyBestTestEnv struct {
 
 func newApplyBestTestEnv(t *testing.T, afterApplyMonitorsJSON string) applyBestTestEnv {
 	t.Helper()
+	beforeApplyMonitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":3840,"y":0,"scale":1.5,"transform":0,"disabled":true,"mirrorOf":""}]`
+	return newApplyBestTestEnvWithMonitors(t, beforeApplyMonitorsJSON, afterApplyMonitorsJSON)
+}
+
+func newApplyBestTestEnvWithMonitors(t *testing.T, beforeApplyMonitorsJSON, afterApplyMonitorsJSON string) applyBestTestEnv {
+	t.Helper()
 
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "hyprctl.log")
@@ -220,8 +494,6 @@ func newApplyBestTestEnv(t *testing.T, afterApplyMonitorsJSON string) applyBestT
 	monitorsConfPath := filepath.Join(dir, "monitors.conf")
 	hyprlandConfigPath := filepath.Join(dir, "hyprland.conf")
 	hyprctlPath := filepath.Join(dir, "hyprctl")
-	beforeApplyMonitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":3840,"y":0,"scale":1.5,"transform":0,"disabled":true,"mirrorOf":""}]`
-
 	fakeHyprctlScript := `#!/bin/bash
 set -eu
 

@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 type Config struct {
 	Debounce        time.Duration
+	WakeSettle      time.Duration
 	PollInterval    time.Duration
 	LidPollInterval time.Duration
 	EventRetry      time.Duration
@@ -41,9 +43,75 @@ type Service struct {
 	lidState     lid.State
 }
 
+var errDisplaysSleeping = errors.New("displays are sleeping")
+
+type displaySleepTransition uint8
+
+const (
+	displaySleepUnchanged displaySleepTransition = iota
+	displaySleepEntered
+	displaySleepExited
+)
+
+type displaySleepGuard struct {
+	sleeping bool
+}
+
+func (g *displaySleepGuard) Observe(monitors []hypr.Monitor) displaySleepTransition {
+	switch displayPowerState(monitors) {
+	case displayPowerAsleep:
+		if !g.sleeping {
+			g.sleeping = true
+			return displaySleepEntered
+		}
+	case displayPowerAwake:
+		if g.sleeping {
+			g.sleeping = false
+			return displaySleepExited
+		}
+	}
+	return displaySleepUnchanged
+}
+
+func (g *displaySleepGuard) MarkSleeping() bool {
+	if g.sleeping {
+		return false
+	}
+	g.sleeping = true
+	return true
+}
+
+type displayPower uint8
+
+const (
+	displayPowerUnknown displayPower = iota
+	displayPowerAwake
+	displayPowerAsleep
+)
+
+func displayPowerState(monitors []hypr.Monitor) displayPower {
+	enabled := 0
+	for _, monitor := range monitors {
+		if monitor.Disabled {
+			continue
+		}
+		enabled++
+		if monitor.DPMSStatus {
+			return displayPowerAwake
+		}
+	}
+	if enabled > 0 {
+		return displayPowerAsleep
+	}
+	return displayPowerUnknown
+}
+
 func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 	if cfg.Debounce <= 0 {
 		cfg.Debounce = 1200 * time.Millisecond
+	}
+	if cfg.WakeSettle <= 0 {
+		cfg.WakeSettle = 2 * time.Second
 	}
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 5 * time.Second
@@ -79,15 +147,19 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 
-	triggerCh := make(chan string, 8)
-	pushTrigger := func(reason string) {
+	type trigger struct {
+		reason string
+		delay  time.Duration
+	}
+	triggerCh := make(chan trigger, 8)
+	pushTrigger := func(reason string, delay time.Duration) {
 		select {
-		case triggerCh <- reason:
+		case triggerCh <- trigger{reason: reason, delay: delay}:
 		default:
 		}
 	}
 
-	pushTrigger("startup")
+	pushTrigger("startup", s.cfg.Debounce)
 
 	var lidStates <-chan lid.State
 	var lidErrs <-chan error
@@ -116,6 +188,31 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 
 	pending := false
+	settlingAfterWake := false
+	displayGuard := displaySleepGuard{}
+	stopDebounce := func() {
+		if !debounceTimer.Stop() {
+			select {
+			case <-debounceTimer.C:
+			default:
+			}
+		}
+	}
+	deferForDisplaySleep := func(reason string) {
+		pending = true
+		settlingAfterWake = false
+		stopDebounce()
+		if reason != "" {
+			s.cfg.Logf("automatic switching deferred while displays sleep: %s", reason)
+		}
+	}
+	scheduleMonitorTrigger := func(reason string) {
+		delay := s.cfg.Debounce
+		if settlingAfterWake {
+			delay = s.cfg.WakeSettle
+		}
+		pushTrigger(reason, delay)
+	}
 
 	for {
 		select {
@@ -140,7 +237,31 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			pushTrigger(string(ev.Type) + ":" + ev.Value)
+			reason := string(ev.Type) + ":" + ev.Value
+			monitors, err := s.client.Monitors(ctx)
+			if err != nil {
+				if displayGuard.sleeping {
+					deferForDisplaySleep(reason)
+					continue
+				}
+			} else {
+				switch displayGuard.Observe(monitors) {
+				case displaySleepEntered:
+					s.cfg.Logf("display sleep detected; pausing automatic switching")
+					deferForDisplaySleep(reason)
+					continue
+				case displaySleepExited:
+					settlingAfterWake = true
+					s.cfg.Logf("display wake detected; waiting %s for monitors to settle", s.cfg.WakeSettle)
+					scheduleMonitorTrigger("display-wake:" + reason)
+					continue
+				}
+				if displayGuard.sleeping {
+					deferForDisplaySleep(reason)
+					continue
+				}
+			}
+			scheduleMonitorTrigger(reason)
 		case <-eventRetry:
 			eventRetry = nil
 			if events == nil && eventErrs == nil {
@@ -154,7 +275,12 @@ func (s *Service) Run(ctx context.Context) error {
 			if state != s.lidState {
 				s.lidState = state
 				s.clearManualOverride()
-				pushTrigger("lid:" + string(state))
+				reason := "lid:" + string(state)
+				if displayGuard.sleeping {
+					deferForDisplaySleep(reason)
+				} else {
+					scheduleMonitorTrigger(reason)
+				}
 			}
 		case err, ok := <-lidErrs:
 			if !ok {
@@ -170,27 +296,50 @@ func (s *Service) Run(ctx context.Context) error {
 				s.cfg.Logf("poll monitors failed: %v", err)
 				continue
 			}
+			switch displayGuard.Observe(monitors) {
+			case displaySleepEntered:
+				s.cfg.Logf("display sleep detected; pausing automatic switching")
+				deferForDisplaySleep("")
+				continue
+			case displaySleepExited:
+				settlingAfterWake = true
+				s.cfg.Logf("display wake detected; waiting %s for monitors to settle", s.cfg.WakeSettle)
+				scheduleMonitorTrigger("display-wake")
+				continue
+			}
+			if displayGuard.sleeping {
+				continue
+			}
+
 			h := profile.MonitorStateHash(monitors)
 			if h != s.lastSeenHash {
 				s.lastSeenHash = h
-				pushTrigger("poll-change")
+				scheduleMonitorTrigger("poll-change")
 			}
-		case reason := <-triggerCh:
-			s.cfg.Logf("triggered: %s", reason)
+		case next := <-triggerCh:
+			if displayGuard.sleeping {
+				deferForDisplaySleep(next.reason)
+				continue
+			}
+			s.cfg.Logf("triggered: %s", next.reason)
 			pending = true
-			if !debounceTimer.Stop() {
-				select {
-				case <-debounceTimer.C:
-				default:
-				}
-			}
-			debounceTimer.Reset(s.cfg.Debounce)
+			stopDebounce()
+			debounceTimer.Reset(next.delay)
 		case <-debounceTimer.C:
 			if !pending {
 				continue
 			}
+			err := s.applyBest(ctx)
+			if errors.Is(err, errDisplaysSleeping) {
+				if displayGuard.MarkSleeping() {
+					s.cfg.Logf("display sleep detected; pausing automatic switching")
+				}
+				deferForDisplaySleep("")
+				continue
+			}
 			pending = false
-			if err := s.applyBest(ctx); err != nil {
+			settlingAfterWake = false
+			if err != nil {
 				s.cfg.Logf("apply failed: %v", err)
 			}
 			s.signalChange()
@@ -216,6 +365,9 @@ func (s *Service) applyBest(ctx context.Context) error {
 	}
 	if len(monitors) == 0 {
 		return nil
+	}
+	if displayPowerState(monitors) == displayPowerAsleep {
+		return errDisplaysSleeping
 	}
 
 	hash := profile.MonitorStateHash(monitors)
