@@ -58,6 +58,7 @@ type refreshMsg struct {
 	workspaceRules []hypr.WorkspaceRule
 	workspaces     []hypr.WorkspaceState
 	lidState       lid.State
+	daemonOK       bool
 	background     bool
 	err            error
 }
@@ -370,6 +371,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshMsg:
 		m.refreshInFlight = false
+		m.daemonOK = msg.daemonOK
 		if msg.err != nil {
 			m.setStatusErr(msg.err.Error())
 			return m, nil
@@ -380,7 +382,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		liveChanged := prevSig != nextSig
 		wasDirty := m.dirty
 
-		m.daemonOK = m.ipc != nil || isDaemonRunning()
 		m.monitors = msg.monitors
 		m.profiles = msg.profiles
 		m.workspaceRules = msg.workspaceRules
@@ -554,7 +555,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tickMsg:
-		m.daemonOK = m.ipc != nil || isDaemonRunning()
 		if m.mode == modeConfirm && m.pending != nil {
 			if time.Now().After(m.pending.deadline) {
 				return m, m.revertCmd(*m.pending, "timeout")
@@ -2280,25 +2280,33 @@ func (m Model) liveConfigSignature() string {
 func (m Model) refreshCmd(background bool) tea.Cmd {
 	client := m.client
 	store := m.store
+	ipcClient := m.ipc
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
+		daemonOK := false
+		if ipcClient != nil {
+			healthCtx, healthCancel := context.WithTimeout(ctx, time.Second)
+			_, err := ipcClient.Status(healthCtx)
+			healthCancel()
+			daemonOK = err == nil
+		}
 
 		monitors, err := client.Monitors(ctx)
 		if err != nil {
-			return refreshMsg{background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, background: background, err: err}
 		}
 		profiles, err := store.List()
 		if err != nil {
-			return refreshMsg{background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, background: background, err: err}
 		}
 		workspaceRules, err := client.WorkspaceRules(ctx)
 		if err != nil {
-			return refreshMsg{background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, background: background, err: err}
 		}
 		workspaces, err := client.Workspaces(ctx)
 		if err != nil {
-			return refreshMsg{background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, background: background, err: err}
 		}
 		lidState, err := lid.ReadState(ctx)
 		if err != nil {
@@ -2311,6 +2319,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			workspaceRules: workspaceRules,
 			workspaces:     workspaces,
 			lidState:       lidState,
+			daemonOK:       daemonOK,
 			background:     background,
 		}
 	}

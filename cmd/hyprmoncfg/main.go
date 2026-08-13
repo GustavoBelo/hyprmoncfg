@@ -21,7 +21,6 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
-	"github.com/crmne/hyprmoncfg/internal/daemonstatus"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
@@ -97,7 +96,7 @@ func newStatusCmd(configDir *string) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				document = appstatus.Build(buildinfo.Version, daemonstatus.Running(), profiles, monitors, rules)
+				document = appstatus.Build(buildinfo.Version, false, profiles, monitors, rules)
 			}
 			if jsonOutput {
 				encoder := json.NewEncoder(cmd.OutOrStdout())
@@ -521,7 +520,13 @@ func openWriterSession(ctx context.Context) (*writerSession, error) {
 		client, dialErr := ipc.Dial(dialCtx, path)
 		cancel()
 		if dialErr == nil {
-			return &writerSession{ipc: client}, nil
+			healthCtx, healthCancel := context.WithTimeout(waitCtx, 750*time.Millisecond)
+			_, statusErr := client.Status(healthCtx)
+			healthCancel()
+			if statusErr == nil {
+				return &writerSession{ipc: client}, nil
+			}
+			_ = client.Close()
 		}
 
 		lock, lockErr := writerlock.TryAcquire()
