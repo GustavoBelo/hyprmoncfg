@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=hyprmoncfg (Omarchy)
+Comment=Configure Hyprland monitor layouts in a centered terminal
+Exec=xdg-terminal-exec --app-id=TUI.float -e hyprmoncfg
+Terminal=false
+NoDisplay=true
+Categories=Settings;
+Keywords=Hyprland;monitor;display;screen;layout;profiles;
+Icon=hyprmoncfg
+StartupNotify=true

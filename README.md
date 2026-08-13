@@ -5,7 +5,8 @@
   <img src="docs/assets/images/logotype.svg" alt="hyprmoncfg" height="120">
 </picture>
 
-<strong>Arrange Hyprland monitors without coordinate math.</strong>
+<strong>A spatial layout editor for Hyprland monitors.</strong><br>
+Arrange once. Switch automatically on hotplug and lid events.
 
 [![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
 [![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)

@@ -46,8 +46,8 @@ Build time:
 Packagers should set build metadata through `internal/buildinfo`:
 
 ```sh
-version=1.11.1
-commit=fedb356
+version=1.12.0
+commit="$(git rev-parse --short HEAD)"
 build_date="$(date -u +%FT%TZ)"
 ldflags="-s -w"
 ldflags="$ldflags -X github.com/crmne/hyprmoncfg/internal/buildinfo.Version=$version"
@@ -62,7 +62,7 @@ go test ./...
 For offline builds with a Go module cache tarball:
 
 ```sh
-tar -xf hyprmoncfg-1.11.1-deps.tar.xz
+tar -xf hyprmoncfg-1.12.0-deps.tar.xz
 GOMODCACHE="$PWD/go-mod" GOPROXY=off CGO_ENABLED=0 go build -trimpath -mod=readonly ./cmd/hyprmoncfg
 ```
 
@@ -74,6 +74,7 @@ Recommended installed files:
 /usr/bin/hyprmoncfg
 /usr/bin/hyprmoncfgd
 /usr/share/applications/hyprmoncfg.desktop
+/usr/share/applications/hyprmoncfg-omarchy.desktop
 /usr/share/icons/hicolor/scalable/apps/hyprmoncfg.svg
 /usr/share/licenses/hyprmoncfg/LICENSE
 /usr/share/doc/hyprmoncfg/README.md
@@ -125,6 +126,7 @@ hyprmoncfg version
 hyprmoncfg --help
 hyprmoncfgd --help
 test -f /usr/share/applications/hyprmoncfg.desktop
+test -f /usr/share/applications/hyprmoncfg-omarchy.desktop
 test -f /usr/share/icons/hicolor/scalable/apps/hyprmoncfg.svg
 ```
 

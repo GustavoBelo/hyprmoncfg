@@ -49,6 +49,7 @@ archives:
       - README.md
       - LICENSE
       - packaging/applications/hyprmoncfg.desktop
+      - packaging/applications/hyprmoncfg-omarchy.desktop
       - packaging/icons/hyprmoncfg.svg
       - packaging/systemd/hyprmoncfgd.service
       - packaging/systemd/hyprmoncfgd.local.service

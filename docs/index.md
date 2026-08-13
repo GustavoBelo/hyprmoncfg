@@ -5,8 +5,8 @@ description: Hyprland monitor configuration that actually works.
 permalink: /
 hero:
   name: hyprmoncfg
-  text: Arrange Hyprland monitors without doing coordinate math
-  tagline: Drag displays into place, save hardware-aware profiles, and let hyprmoncfg switch them automatically when monitors or your laptop lid change.
+  text: A spatial layout editor for Hyprland monitors
+  tagline: Arrange once. Save hardware-aware profiles. Switch automatically on monitor hotplug and laptop lid events.
   actions:
     - theme: brand
       text: Install hyprmoncfg
