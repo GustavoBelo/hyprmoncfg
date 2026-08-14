@@ -6,9 +6,11 @@ nav_order: 4
 
 ## Displays, handled
 
-The [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) plugin lets you create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events. Open the panel to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
+The [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://github.com/crmne/omarchy-hyprmoncfg) plugin lets you create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events. Open the panel to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
+
+If you find the panel useful, I'd appreciate a [star on GitHub](https://github.com/crmne/omarchy-hyprmoncfg). It helps get the word out.
 
 Turn management on and hyprmoncfg switches profiles automatically on monitor hotplug and laptop lid events. Turn it off and display ownership goes cleanly back to Omarchy. **Layout and settings** opens the full spatial editor in Omarchy's centered TUI window.
 
