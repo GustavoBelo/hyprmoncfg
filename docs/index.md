@@ -46,7 +46,7 @@ features:
     details: Assign workspaces with sequential, interleave, or manual strategies and apply them together with the monitor layout.
   - icon: 🟧
     title: Omarchy Quattro Panel
-    details: See the live layout and active profile in your bar. Turn automatic display management on or hand it cleanly back to Omarchy.
+    details: Create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events.
     link: /omarchy/
     link_text: Install the panel
 ---

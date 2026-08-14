@@ -1,12 +1,12 @@
 ---
 title: Omarchy Quattro Panel
-description: Put your live layout, active profile, and automatic monitor switching in the Omarchy bar.
+description: Create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events.
 nav_order: 4
 ---
 
 ## Displays, handled
 
-The [hyprmoncfg: Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) plugin brings hyprmoncfg into the Omarchy Quattro bar. Open it to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
+The [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) plugin lets you create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events. Open the panel to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
 
