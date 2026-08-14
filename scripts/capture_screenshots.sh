@@ -10,15 +10,49 @@ window_class="${WINDOW_CLASS:-TUI.float}"
 font_size="${FONT_SIZE:-12}"
 light_theme="${LIGHT_THEME:-ruby-llm}"
 dark_theme="${DARK_THEME:-ruby-llm-dark}"
+omarchy_path="${OMARCHY_PATH:-/usr/share/omarchy}"
 
 mkdir -p "$output_dir"
+temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/hyprmoncfg-screenshots.XXXXXX")"
 
-for cmd in "$app_bin" "$terminal_bin" hyprctl grim jq wtype; do
+cleanup() {
+  find "$temp_dir" -maxdepth 1 -type f -delete
+  rmdir "$temp_dir" 2>/dev/null || true
+}
+
+trap cleanup EXIT INT TERM
+
+for cmd in "$app_bin" "$terminal_bin" hyprctl grim jq wtype omarchy-theme-color; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
     echo "missing: $cmd" >&2
     exit 1
   fi
 done
+
+render_ghostty_theme() {
+  local colors_file="$1"
+  local output_file="$2"
+  local template="$omarchy_path/default/themed/ghostty.conf.tpl"
+
+  if [[ ! -f "$template" ]]; then
+    printf 'Ghostty theme template not found: %s\n' "$template" >&2
+    return 1
+  fi
+
+  awk -F '\t' '
+    NR == FNR { colors[$1] = $2; next }
+    {
+      line = $0
+      while (match(line, /\{\{[[:space:]]*[A-Za-z0-9_]+[[:space:]]*\}\}/)) {
+        token = substr(line, RSTART, RLENGTH)
+        key = token
+        gsub(/[{}[:space:]]/, "", key)
+        line = substr(line, 1, RSTART - 1) colors[key] substr(line, RSTART + RLENGTH)
+      }
+      print line
+    }
+  ' <(omarchy-theme-color --file "$colors_file" --all) "$template" >"$output_file"
+}
 
 theme_file() {
   local theme="$1"
@@ -31,7 +65,21 @@ theme_file() {
       return 0
     fi
   done
-  printf 'Ghostty theme not found: %s\n' "$theme" >&2
+
+  for candidate in \
+    "$HOME/.config/omarchy/themes/$theme/colors.toml" \
+    "$omarchy_path/themes/$theme/colors.toml"; do
+    if [[ -f "$candidate" ]]; then
+      local rendered="$temp_dir/$theme-ghostty.conf"
+      if [[ ! -f "$rendered" ]]; then
+        render_ghostty_theme "$candidate" "$rendered"
+      fi
+      printf '%s\n' "$rendered"
+      return 0
+    fi
+  done
+
+  printf 'Ghostty theme or colors.toml not found: %s\n' "$theme" >&2
   return 1
 }
 

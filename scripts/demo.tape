@@ -7,7 +7,7 @@ Set FontFamily "BlexMono Nerd Font"
 Set Width 1400
 Set Height 800
 Set Padding 12
-Set Theme "tokyonight"
+Set Theme { "name": "RubyLLM Dark", "black": "#171315", "red": "#b30000", "green": "#759d82", "yellow": "#d8a07a", "blue": "#7aa2c8", "magenta": "#d4b4a5", "cyan": "#6aa6a6", "white": "#f5ede8", "brightBlack": "#4a3b42", "brightRed": "#c9271e", "brightGreen": "#a0d2a8", "brightYellow": "#ffb074", "brightBlue": "#9fc2e6", "brightMagenta": "#e0c8bc", "brightCyan": "#8bc4c4", "brightWhite": "#f5ede8", "background": "#171315", "foreground": "#f5ede8", "selection": "#3a2f35", "cursor": "#f5ede8" }
 
 Hide
 Type "set -e NO_COLOR; set -e FORCE_COLOR; set -e CLICOLOR_FORCE; set -gx TERM xterm-256color; set -gx COLORTERM truecolor; set -gx CLICOLOR 1; clear"

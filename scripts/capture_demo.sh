@@ -80,8 +80,8 @@ wait_for_recording() {
 trap cleanup EXIT INT TERM
 
 sed \
-  -e "s|^Output docs/assets/images/demo.gif$|Output $temp_gif|" \
-  -e "s|^Output docs/assets/images/demo.mp4$|Output $temp_mp4|" \
+  -e "s|^Output docs/assets/images/demo.gif$|Output \"$temp_gif\"|" \
+  -e "s|^Output docs/assets/images/demo.mp4$|Output \"$temp_mp4\"|" \
   "$repo_root/scripts/demo.tape" >"$temp_tape"
 
 (
