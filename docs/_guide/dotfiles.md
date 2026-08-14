@@ -1,7 +1,7 @@
 ---
 title: Dotfiles Integration
 description: Version your monitor profiles and share them across machines.
-nav_order: 4
+nav_order: 5
 ---
 
 ## The idea

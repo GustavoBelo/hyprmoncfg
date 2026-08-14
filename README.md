@@ -149,6 +149,18 @@ On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` 
 
 When the daemon is running, it is the canonical monitor-config writer. The TUI, CLI, and desktop integrations use its versioned Unix-socket IPC; when it is absent, the TUI and CLI keep working through the same core engine in direct mode. A profile selected interactively stays selected until the next monitor hotplug or lid change, when automatic matching resumes.
 
+## Omarchy Quattro panel
+
+On Omarchy Quattro, the [hyprmoncfg — Spatial Layout Editor for Hyprland Monitors](https://github.com/crmne/omarchy-hyprmoncfg) panel puts your live monitor layout, active profile, and automatic switching in the bar:
+
+![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
+
+```bash
+omarchy plugin add https://github.com/crmne/omarchy-hyprmoncfg.git --enable
+```
+
+If hyprmoncfg is not installed yet, open the panel and choose **Install hyprmoncfg**. It installs the stable AUR package, starts the daemon, and opens the layout editor so you can arrange and save your first profile. See the [Omarchy Quattro panel guide](https://hyprmoncfg.dev/omarchy/) for the full workflow.
+
 ## Screenshots
 
 hyprmoncfg adapts to your theme. Here are some examples:
