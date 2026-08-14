@@ -30,6 +30,11 @@ features:
   - icon: 🖥️
     title: Spatial Layout Editor
     details: Drag monitors on a canvas, then tune display and color settings before previewing and applying the result.
+  - icon: 🧩
+    title: Hardware-Aware Profiles
+    details: Save every setup once. Profiles follow monitor make, model, and serial instead of unstable connector names.
+    link: /getting-started/#create-your-first-profile
+    link_text: Create your first profile
   - icon: 🔌
     title: Hotplug and Lid-Aware Daemon
     details: Save profiles for your real setups. The daemon picks the best match when monitors change or the laptop lid closes.
@@ -39,4 +44,9 @@ features:
   - icon: 🗂️
     title: Workspace Planning
     details: Assign workspaces with sequential, interleave, or manual strategies and apply them together with the monitor layout.
+  - icon: 🟧
+    title: Omarchy Quattro Panel
+    details: See the live layout and active profile in your bar. Turn automatic display management on or hand it cleanly back to Omarchy.
+    link: /omarchy/
+    link_text: Install the panel
 ---
