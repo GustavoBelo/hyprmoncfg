@@ -6,7 +6,7 @@ nav_order: 4
 
 ## Displays, handled
 
-The [hyprmoncfg — Spatial Layout Editor for Hyprland Monitors](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) plugin brings hyprmoncfg into the Omarchy Quattro bar. Open it to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
+The [hyprmoncfg: Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) plugin brings hyprmoncfg into the Omarchy Quattro bar. Open it to see the layout that is live right now, the profile that matched it, and whether hyprmoncfg is managing your displays.
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
 
