@@ -1,6 +1,6 @@
 ---
 title: What is hyprmoncfg?
-description: Why hyprmoncfg exists, what problems it solves, and how it compares to other tools.
+description: Create multi-monitor layouts for Hyprland, save them as profiles, and switch them automatically.
 nav_order: 0
 ---
 

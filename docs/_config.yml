@@ -1,5 +1,5 @@
 title: hyprmoncfg
-description: Hyprland monitor configuration that actually works.
+description: Create multi-monitor layouts for Hyprland and switch them automatically on hotplug and lid events.
 lang: en-US
 timezone: Europe/Berlin
 url: https://hyprmoncfg.dev
@@ -96,8 +96,8 @@ ai_visible_content:
       - Hyprland monitor configuration
       - Hyprland monitor config
     description: >-
-      an open source terminal UI and daemon for editing, saving, and
-      automatically applying Hyprland monitor layouts.
+      an open source visual multi-monitor layout editor and automatic profile
+      switcher for Hyprland.
     image: /assets/images/logo.svg
     knows_about:
       - Hyprland
@@ -149,16 +149,15 @@ ai_visible_content:
     enabled: false
     title: hyprmoncfg
     description: >-
-      Documentation for hyprmoncfg, a Hyprland monitor configuration tool with
-      a terminal layout editor, named profiles, automatic hotplug and lid
-      switching, workspace planning, and safe apply with rollback.
+      Documentation for hyprmoncfg, a visual multi-monitor layout editor and
+      automatic profile switcher for Hyprland.
     include_full_text: false
     sections:
       - heading: What hyprmoncfg is
         content: >-
-          hyprmoncfg helps Hyprland users arrange monitors visually, save
-          layouts as hardware-aware profiles, apply profiles safely, and run a
-          daemon that reacts to monitor hotplug and laptop lid changes.
+          Create multi-monitor layouts for Hyprland visually, save each setup
+          as a hardware-aware profile, and switch profiles automatically on
+          hotplug and lid events.
       - heading: Primary documentation paths
         content: >-
           Start with /what-is-hyprmoncfg/ for the overview, /getting-started/
@@ -189,7 +188,7 @@ ai_visible_content:
       hyprmoncfg:
         name: hyprmoncfg
         url: https://hyprmoncfg.dev/
-        description: Terminal UI and daemon for Hyprland monitor profiles.
+        description: Visual multi-monitor layout editor and automatic profile switcher for Hyprland.
       carmine-paolino:
         name: Carmine Paolino
         url: https://paolino.me/

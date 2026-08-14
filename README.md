@@ -5,8 +5,8 @@
   <img src="docs/assets/images/logotype.svg" alt="hyprmoncfg" height="120">
 </picture>
 
-<strong>A spatial layout editor for Hyprland monitors.</strong><br>
-Arrange once. Switch automatically on hotplug and lid events.
+<strong>Create multi-monitor layouts for Hyprland.</strong><br>
+Arrange visually. Save each setup. Switch automatically on hotplug and lid events.
 
 [![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
 [![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)
@@ -25,7 +25,7 @@ Arrange once. Switch automatically on hotplug and lid events.
 
 ---
 
-hyprmoncfg is a terminal layout editor, CLI, profile store, and hotplug/lid-aware daemon for Hyprland monitor setups. Drag displays into place, save hardware-aware profiles, apply them safely, and let the daemon switch profiles when monitors or your laptop lid changes.
+hyprmoncfg is a visual multi-monitor layout editor and automatic profile switcher for Hyprland. Drag displays into place, save each setup as a hardware-aware profile, and let the daemon apply the right one when monitors or your laptop lid change.
 
 ![hyprmoncfg demo](docs/assets/images/demo.gif)
 
@@ -151,7 +151,7 @@ When the daemon is running, it is the canonical monitor-config writer. The TUI, 
 
 ## Omarchy Quattro panel
 
-On Omarchy Quattro, [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) lets you create Hyprland monitor layouts in a visual editor and switch them automatically on hotplug and lid events. The panel shows your live layout and active profile right in the bar:
+On Omarchy Quattro, [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) lets you create multi-monitor layouts for Hyprland in a visual editor and switch them automatically on hotplug and lid events. The panel shows your live layout and active profile right in the bar:
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
 
