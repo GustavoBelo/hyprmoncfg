@@ -151,9 +151,11 @@ When the daemon is running, it is the canonical monitor-config writer. The TUI, 
 
 ## Omarchy Quattro panel
 
-On Omarchy Quattro, the [hyprmoncfg — Spatial Layout Editor for Hyprland Monitors](https://github.com/crmne/omarchy-hyprmoncfg) panel puts your live monitor layout, active profile, and automatic switching in the bar:
+On Omarchy Quattro, the [hyprmoncfg — Spatial Layout Editor for Hyprland Monitors](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) panel puts your live monitor layout, active profile, and automatic switching in the bar:
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
+
+Get it from the [Omarchy Plugins marketplace](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg), or install it directly:
 
 ```bash
 omarchy plugin add https://github.com/crmne/omarchy-hyprmoncfg.git --enable
