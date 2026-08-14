@@ -2,7 +2,6 @@
 title: About hyprmoncfg
 description: Project identity, source code, packages, and authoritative links for hyprmoncfg.
 permalink: /about/
-sitemap: false
 ---
 
 hyprmoncfg lets you visually create multi-monitor layouts for Hyprland, save each setup as a profile, and switch profiles automatically on hotplug and lid events. It ships as two compiled Go binaries with no graphical toolkit or runtime dependency beyond Hyprland.

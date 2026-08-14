@@ -43,6 +43,31 @@ defaults:
       layout: default
 
 jekyll_vitepress:
+  seo:
+    page_type: TechArticle
+    image:
+      path: /assets/images/screenshots/layout-dark.png
+      alt: hyprmoncfg visual monitor layout editor
+    publisher:
+      type: Organization
+      name: hyprmoncfg
+      url: https://hyprmoncfg.dev
+      logo: /assets/images/logo.svg
+      same_as:
+        - https://github.com/crmne/hyprmoncfg
+        - https://aur.archlinux.org/packages/hyprmoncfg
+        - https://aur.archlinux.org/packages/hyprmoncfg-git
+        - https://terminaltrove.com/hyprmoncfg/
+  llms:
+    title: hyprmoncfg
+    description: >-
+      Documentation for hyprmoncfg, a visual multi-monitor layout editor and
+      automatic profile switcher for Hyprland.
+    full: true
+    details: >-
+      Start with the overview and getting-started guides, then use the TUI,
+      daemon, dotfiles, commands, and configuration-file references. The
+      authoritative source is [crmne/hyprmoncfg](https://github.com/crmne/hyprmoncfg).
   branding:
     site_title: hyprmoncfg
     logo:
@@ -83,126 +108,6 @@ jekyll_vitepress:
 plugins:
   - jekyll-vitepress-theme
   - jekyll-redirect-from
-  - jekyll-ai-visible-content
-  - jekyll-sitemap
-
-ai_visible_content:
-  enabled: true
-  entity:
-    type: Organization
-    id_slug: hyprmoncfg
-    name: hyprmoncfg
-    alternate_names:
-      - Hyprland monitor configuration
-      - Hyprland monitor config
-    description: >-
-      an open source visual multi-monitor layout editor and automatic profile
-      switcher for Hyprland.
-    image: /assets/images/logo.svg
-    knows_about:
-      - Hyprland
-      - Wayland
-      - monitor configuration
-      - monitor profiles
-      - hotplug automation
-      - lid-aware monitor switching
-      - workspace management
-      - terminal user interfaces
-    same_as:
-      - https://github.com/crmne/hyprmoncfg
-      - https://aur.archlinux.org/packages/hyprmoncfg
-      - https://aur.archlinux.org/packages/hyprmoncfg-git
-      - https://terminaltrove.com/hyprmoncfg/
-  json_ld:
-    auto_inject: true
-    include_website_schema: true
-    include_breadcrumbs: true
-    include_blog_posting: true
-    include_faq: true
-    include_how_to: true
-    article_body: excerpt
-    compact: true
-  crawlers:
-    allow_gptbot: true
-    allow_perplexitybot: true
-    allow_claudebot: true
-    allow_googlebot: true
-    allow_bingbot: true
-    generate_robots_txt: true
-    custom_rules:
-      - user_agent: OAI-SearchBot
-        directive: Allow
-        path: /
-      - user_agent: ChatGPT-User
-        directive: Allow
-        path: /
-      - user_agent: Claude-SearchBot
-        directive: Allow
-        path: /
-      - user_agent: Claude-User
-        directive: Allow
-        path: /
-      - user_agent: Perplexity-User
-        directive: Allow
-        path: /
-  llms_txt:
-    enabled: false
-    title: hyprmoncfg
-    description: >-
-      Documentation for hyprmoncfg, a visual multi-monitor layout editor and
-      automatic profile switcher for Hyprland.
-    include_full_text: false
-    sections:
-      - heading: What hyprmoncfg is
-        content: >-
-          Create multi-monitor layouts for Hyprland visually, save each setup
-          as a hardware-aware profile, and switch profiles automatically on
-          hotplug and lid events.
-      - heading: Primary documentation paths
-        content: >-
-          Start with /what-is-hyprmoncfg/ for the overview, /getting-started/
-          for installation, /tui/ for the layout editor, /daemon/ for automatic
-          switching, /dotfiles/ for profile versioning, /commands/ for the CLI
-          reference, and /configuration-files/ for profile and generated file
-          details. Full documentation text is available at /llms-full.txt.
-      - heading: Authoritative source
-        content: >-
-          The source repository is https://github.com/crmne/hyprmoncfg. Packages
-          are published in the AUR, Fedora COPR, Nixpkgs, Gentoo GURU, and
-          unofficially for Void Linux through Blackhole-vl.
-  linking:
-    enable_entity_links: false
-    apply_to_metadata: false
-    max_links_per_entity_per_post: 1
-    enable_related_posts: true
-    related_posts_limit: 3
-    entity_definitions:
-      hyprland:
-        name: Hyprland
-        url: https://hypr.land/
-        description: A dynamic tiling Wayland compositor.
-      wayland:
-        name: Wayland
-        url: https://wayland.freedesktop.org/
-        description: The display server protocol used by Hyprland.
-      hyprmoncfg:
-        name: hyprmoncfg
-        url: https://hyprmoncfg.dev/
-        description: Visual multi-monitor layout editor and automatic profile switcher for Hyprland.
-      carmine-paolino:
-        name: Carmine Paolino
-        url: https://paolino.me/
-        description: Creator of hyprmoncfg.
-  validation:
-    warn_name_inconsistency: true
-    warn_missing_same_as: true
-    warn_missing_dates: true
-    warn_orphan_pages: true
-    warn_missing_descriptions: true
-    fail_build_on_error: false
-    content_only: true
-    verbose: false
-    max_examples: 5
 
 exclude:
   - _site
