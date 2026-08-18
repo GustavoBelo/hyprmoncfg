@@ -440,8 +440,18 @@ func TestATopStatusAsksForARestartWhenTheDaemonIsBehind(t *testing.T) {
 	if !behind.daemonNeedsRestart() {
 		t.Fatal("expected an older running daemon to ask for a restart")
 	}
-	if got := ansi.Strip(behind.renderTopStatus()); !strings.Contains(got, "1.13.0") || !strings.Contains(got, "restart") {
+	if got := ansi.Strip(behind.renderTopStatus()); !strings.Contains(got, "1.13.0") || !strings.Contains(got, "restart: R") {
 		t.Fatalf("expected the status to name the running version and offer a restart, got %q", got)
+	}
+
+	// The tab row swaps in a compact status when the full one does not fit, and
+	// a laptop terminal is narrow enough to reach that. Dropping the one thing
+	// the reader can act on is the wrong thing to drop.
+	for _, width := range []int{160, 120, 100, 90, 80} {
+		narrow := Model{styles: newStyles(), width: width, height: 32, daemonOK: true, daemonVersion: "1.13.0"}
+		if got := ansi.Strip(narrow.renderTabs()); !strings.Contains(got, "restart: R") {
+			t.Fatalf("width %d dropped the restart hint: %q", width, strings.TrimSpace(got))
+		}
 	}
 
 	// The message is the click target, so it has to be reachable by mouse too.

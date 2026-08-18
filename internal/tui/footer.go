@@ -122,8 +122,10 @@ func (m Model) daemonNeedsRestart() bool {
 }
 
 // restartHint is one clickable run of text, so its width can be hit-tested.
+// It stays short because the tab row drops the whole status when it does not
+// fit, and this is the part worth keeping.
 func (m Model) restartHint() string {
-	return fmt.Sprintf("Daemon on %s · click or press R to restart", m.daemonVersion)
+	return fmt.Sprintf("Daemon %s · restart: R", m.daemonVersion)
 }
 
 func (m Model) renderTopStatus() string {
@@ -149,10 +151,15 @@ func (m Model) renderTopStatus() string {
 	return strings.Join(parts, "  ")
 }
 
+// renderCompactTopStatus keeps whatever the reader can act on. A narrow window
+// has room for one thing, and "Current setup" is not it.
 func (m Model) renderCompactTopStatus() string {
 	if !m.daemonOK {
 		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
 		return osc8Link(daemonURL, daemon)
+	}
+	if m.daemonNeedsRestart() {
+		return m.styles.warning.Render(m.restartHint())
 	}
 	return m.unsavedBadge()
 }
