@@ -125,6 +125,13 @@ func newStatusCmd(configDir *string) *cobra.Command {
 				fmt.Fprintf(cmd.OutOrStdout(), "Recommended profile: %s\n", document.RecommendedProfile.Name)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Daemon: %s\n", daemonState)
+			if running := strings.TrimSpace(document.Version); running != "" && document.Daemon.Running {
+				if installed := strings.TrimSpace(buildinfo.Version); installed != "" && installed != running {
+					fmt.Fprintf(cmd.OutOrStdout(),
+						"Daemon is still running %s while %s is installed; restart it with `systemctl --user restart hyprmoncfgd`\n",
+						running, installed)
+				}
+			}
 			fmt.Fprintf(cmd.OutOrStdout(), "Displays: %d enabled, %d connected\n", enabledMonitors, len(document.Monitors))
 			fmt.Fprintf(cmd.OutOrStdout(), "Saved profiles: %d\n", len(document.Profiles))
 			return nil

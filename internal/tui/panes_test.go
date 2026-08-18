@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
@@ -428,5 +429,27 @@ func TestQuestionMarkShowsTheKeysForTheCurrentTab(t *testing.T) {
 	closed, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	if mustModel(t, closed).mode != modeMain {
 		t.Fatal("expected any key to close the dialog")
+	}
+}
+
+func TestATopStatusAsksForARestartWhenTheDaemonIsBehind(t *testing.T) {
+	// Upgrading the package leaves the old daemon binary serving until someone
+	// restarts the user service, and nothing in packaging can do that.
+	behind := Model{styles: newStyles(), daemonOK: true, daemonVersion: "1.13.0"}
+	if !behind.daemonNeedsRestart() {
+		t.Fatal("expected an older running daemon to ask for a restart")
+	}
+	if got := ansi.Strip(behind.renderTopStatus()); !strings.Contains(got, "systemctl --user restart hyprmoncfgd") {
+		t.Fatalf("expected the status to name the command, got %q", got)
+	}
+
+	current := Model{styles: newStyles(), daemonOK: true, daemonVersion: buildinfo.Version}
+	if current.daemonNeedsRestart() {
+		t.Fatal("expected a matching daemon to be left alone")
+	}
+	// A daemon that never answered says nothing about its version.
+	unknown := Model{styles: newStyles(), daemonOK: true}
+	if unknown.daemonNeedsRestart() {
+		t.Fatal("expected no restart nag without a reported version")
 	}
 }

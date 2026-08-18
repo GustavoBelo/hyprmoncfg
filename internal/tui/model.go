@@ -69,6 +69,7 @@ type refreshMsg struct {
 	lidState       lid.State
 	daemonOK       bool
 	daemonUnknown  bool
+	daemonVersion  string
 	background     bool
 	err            error
 }
@@ -301,6 +302,7 @@ type Model struct {
 	activeProfileName  string
 	draftExec          string
 	daemonOK           bool
+	daemonVersion      string
 	refreshInFlight    bool
 	applying           bool
 	quitAfterApply     bool
@@ -378,6 +380,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.refreshInFlight = false
 		if !msg.daemonUnknown {
 			m.daemonOK = msg.daemonOK
+			m.daemonVersion = msg.daemonVersion
 		}
 		if msg.err != nil {
 			m.setStatusErr(msg.err.Error())
@@ -2460,23 +2463,23 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		daemonOK, daemonUnknown := daemonReachable(ctx, ipcClient)
+		daemonOK, daemonUnknown, daemonVersion := daemonReachable(ctx, ipcClient)
 
 		monitors, err := client.Monitors(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
 		}
 		profiles, err := store.List()
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
 		}
 		workspaceRules, err := client.WorkspaceRules(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
 		}
 		workspaces, err := client.Workspaces(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
 		}
 		lidState, err := lid.ReadState(ctx)
 		if err != nil {
@@ -2491,6 +2494,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			lidState:       lidState,
 			daemonOK:       daemonOK,
 			daemonUnknown:  daemonUnknown,
+			daemonVersion:  daemonVersion,
 			background:     background,
 		}
 	}
@@ -2500,17 +2504,18 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 // applying a profile can miss the deadline while being perfectly alive, so a
 // timeout reports "unknown" and leaves the last answer standing; only a broken
 // connection counts as "not running".
-func daemonReachable(ctx context.Context, client *ipc.Client) (ok bool, unknown bool) {
+func daemonReachable(ctx context.Context, client *ipc.Client) (ok bool, unknown bool, version string) {
 	if client == nil {
-		return false, false
+		return false, false, ""
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
 	defer cancel()
-	if _, err := client.Status(probeCtx); err != nil {
-		return false, isTimeout(err)
+	document, err := client.Status(probeCtx)
+	if err != nil {
+		return false, isTimeout(err), ""
 	}
-	return true, false
+	return true, false, strings.TrimSpace(document.Version)
 }
 
 const daemonProbeTimeout = 3 * time.Second

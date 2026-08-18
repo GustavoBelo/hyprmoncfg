@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -108,6 +109,18 @@ func (m Model) activeProfileLabel() string {
 	return m.styles.statusOK.Render(m.activeProfileName)
 }
 
+// daemonNeedsRestart reports a daemon still running an older build than the one
+// that just got installed. Nothing restarts a user service on upgrade, so the
+// old binary keeps serving until someone says so.
+func (m Model) daemonNeedsRestart() bool {
+	installed := strings.TrimSpace(buildinfo.Version)
+	running := strings.TrimSpace(m.daemonVersion)
+	if !m.daemonOK || installed == "" || running == "" {
+		return false
+	}
+	return installed != running
+}
+
 func (m Model) renderTopStatus() string {
 	parts := []string{m.unsavedBadge()}
 	if label := m.activeProfileLabel(); label != "" {
@@ -116,6 +129,9 @@ func (m Model) renderTopStatus() string {
 	if !m.daemonOK {
 		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
 		parts = append(parts, osc8Link(daemonURL, daemon))
+	} else if m.daemonNeedsRestart() {
+		parts = append(parts, m.styles.warning.Render(
+			fmt.Sprintf("Daemon still on %s · systemctl --user restart hyprmoncfgd", m.daemonVersion)))
 	}
 	if m.layoutErr != nil {
 		parts = append(parts, m.styles.statusError.Render(m.layoutErr.Error()))
