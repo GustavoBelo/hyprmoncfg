@@ -97,6 +97,39 @@ wait_for_client() {
   return 1
 }
 
+wait_for_client_gone() {
+  local address="$1"
+  local attempts="${2:-20}"
+  for _ in $(seq 1 "$attempts"); do
+    if [[ -z "$(hyprctl -j clients | jq -c --arg address "$address" '.[] | select(.address == $address)')" ]]; then
+      return 0
+    fi
+    sleep 0.15
+  done
+  return 1
+}
+
+# Ask the window to close, then make sure it did. Closing politely depends on
+# the terminal: ghostty's confirm-close-surface defaults to on, and a terminal
+# asking "really close?" would leave a window per shot behind. Hyprland knows
+# which process owns the window, so fall back to ending that.
+close_client() {
+  local address="$1"
+
+  hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
+  wait_for_client_gone "$address" && return 0
+
+  local pid
+  pid="$(hyprctl -j clients | jq -r --arg address "$address" '.[] | select(.address == $address) | .pid')"
+  if [[ -n $pid && $pid != "null" ]]; then
+    kill "$pid" 2>/dev/null || true
+    wait_for_client_gone "$address" && return 0
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+
+  wait_for_client_gone "$address" 40
+}
+
 focused_monitor() {
   hyprctl -j monitors | jq -c '((map(select(.focused)) | .[0]) // .[0])'
 }
@@ -122,6 +155,7 @@ fit_and_center_window() {
   hyprctl eval "hl.dispatch(hl.dsp.window.resize({ x = $target_w, y = $target_h, relative = false, window = \"address:$address\" }))" >/dev/null
   hyprctl eval "hl.dispatch(hl.dsp.window.center({ window = \"address:$address\" }))" >/dev/null
   hyprctl eval "hl.dispatch(hl.dsp.focus({ window = \"address:$address\" }))" >/dev/null
+
 }
 
 capture_state() {
@@ -165,7 +199,9 @@ capture_state() {
   border="$(hyprctl getoption general:border_size -j | jq -r '.int')"
 
   grim -g "$((x - border)),$((y - border)) $((w + 2 * border))x$((h + 2 * border))" "$screenshot"
-  hyprctl dispatch closewindow "address:$address" >/dev/null 2>&1 || true
+  # Every shot lands in the same centred rectangle, so a window still closing
+  # shows through the next one and leaves the previous screen ghosted into it.
+  close_client "$address"
 }
 
 capture_themed() {
