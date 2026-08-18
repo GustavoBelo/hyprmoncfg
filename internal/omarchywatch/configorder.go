@@ -5,6 +5,8 @@ import (
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/crmne/hyprmoncfg/internal/config"
 )
 
 // Omarchy loads its dynamic toggles last, and one of them is the clamshell rule
@@ -53,6 +55,50 @@ func inspectConfigOrder(content string) ConfigOrder {
 	}
 	return ConfigOrder{Applicable: true, MonitorsLast: monitors[0] > toggles[0]}
 }
+
+// Reorder reports what EnsureConfigOrder did to a config.
+type Reorder struct {
+	Path       string
+	Changed    bool
+	BackupPath string
+}
+
+// EnsureConfigOrder gives hyprmoncfg's monitor rules the last word in a Hyprland
+// Lua config, keeping the previous file alongside. A config it does not govern
+// is left untouched.
+func EnsureConfigOrder(path string) (Reorder, error) {
+	result := Reorder{Path: path}
+	if strings.TrimSpace(path) == "" {
+		return result, nil
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return result, fmt.Errorf("read %s: %w", path, err)
+	}
+
+	reordered, changed := ReorderConfig(string(content))
+	if !changed {
+		return result, nil
+	}
+
+	backup := path + backupSuffix
+	if err := config.WriteFileAtomic(backup, content, 0o644); err != nil {
+		return result, fmt.Errorf("back up %s: %w", path, err)
+	}
+	if err := config.WriteFileAtomic(path, []byte(reordered), 0o644); err != nil {
+		return result, fmt.Errorf("rewrite %s: %w", path, err)
+	}
+
+	result.Changed = true
+	result.BackupPath = backup
+	return result, nil
+}
+
+const backupSuffix = ".hyprmoncfg-backup"
 
 // ReorderConfig moves the monitors require below Omarchy's toggles so the rules
 // hyprmoncfg generates are the last ones Hyprland reads. It returns the rewritten

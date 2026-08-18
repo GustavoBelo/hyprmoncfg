@@ -455,28 +455,19 @@ func runDoctor(cmd *cobra.Command, monitorsConf string, hyprConfig string, fix b
 	fmt.Fprintln(out, "         Omarchy writes a clamshell rule into those toggles and reloads Hyprland,")
 	fmt.Fprintln(out, "         so on every lid or wake event its rule overrides the layout you applied.")
 	if !fix {
-		fmt.Fprintln(out, "         Run `hyprmoncfg doctor --fix` to move the monitors require below the toggles.")
+		fmt.Fprintln(out, "         The daemon fixes this on startup. Run `hyprmoncfg doctor --fix` to do it now.")
 		return nil
 	}
 
-	content, err := os.ReadFile(resolved.RootPath)
+	reorder, err := omarchywatch.EnsureConfigOrder(resolved.RootPath)
 	if err != nil {
 		return err
 	}
-	reordered, changed := omarchywatch.ReorderConfig(string(content))
-	if !changed {
+	if !reorder.Changed {
 		return fmt.Errorf("could not move the monitors require in %s; reorder it by hand", resolved.RootPath)
 	}
 
-	backup := resolved.RootPath + ".hyprmoncfg-backup"
-	if err := config.WriteFileAtomic(backup, content, 0o644); err != nil {
-		return fmt.Errorf("back up %s: %w", resolved.RootPath, err)
-	}
-	if err := config.WriteFileAtomic(resolved.RootPath, []byte(reordered), 0o644); err != nil {
-		return fmt.Errorf("rewrite %s: %w", resolved.RootPath, err)
-	}
-
-	fmt.Fprintf(out, "FIXED    hyprmoncfg's monitors now load last. Previous config saved to %s\n", backup)
+	fmt.Fprintf(out, "FIXED    hyprmoncfg's monitors now load last. Previous config saved to %s\n", reorder.BackupPath)
 	fmt.Fprintln(out, "         Run `hyprctl reload` or restart Hyprland to pick up the new order.")
 	return nil
 }

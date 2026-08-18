@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
+	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
+	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -147,6 +149,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err := s.store.Ensure(); err != nil {
 		return err
 	}
+	s.ensureConfigOrder(ctx)
 
 	type trigger struct {
 		reason string
@@ -345,6 +348,38 @@ func (s *Service) Run(ctx context.Context) error {
 			}
 			s.signalChange()
 		}
+	}
+}
+
+// ensureConfigOrder takes the last word in the Hyprland config, the same way
+// the daemon takes the monitor watcher: Omarchy loads its dynamic toggles after
+// the personal overrides, so a config that reads our monitors earlier lets its
+// clamshell rule override every layout we apply.
+func (s *Service) ensureConfigOrder(ctx context.Context) {
+	version := ""
+	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	if info, err := s.client.Version(versionCtx); err == nil {
+		version = info.Version
+	}
+	cancel()
+
+	resolved, err := config.ResolveHyprlandConfig(version, s.cfg.MonitorsConf, s.cfg.HyprConfig)
+	if err != nil {
+		s.cfg.Logf("could not resolve the Hyprland config to check its load order: %v", err)
+		return
+	}
+
+	reorder, err := omarchywatch.EnsureConfigOrder(resolved.RootPath)
+	if err != nil {
+		s.cfg.Logf("could not give hyprmoncfg's monitors the last word in %s: %v", resolved.RootPath, err)
+		return
+	}
+	if reorder.Changed {
+		s.cfg.Logf(
+			"moved hyprmoncfg's monitors below Omarchy's toggles in %s so its clamshell rule cannot override applied layouts (previous config: %s)",
+			reorder.Path,
+			reorder.BackupPath,
+		)
 	}
 }
 

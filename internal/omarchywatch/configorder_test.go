@@ -1,6 +1,8 @@
 package omarchywatch
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -74,5 +76,62 @@ func TestReorderConfigGivesHyprmoncfgTheLastWord(t *testing.T) {
 	}
 	if _, changed := ReorderConfig(reordered); changed {
 		t.Fatal("expected a settled config to be left alone")
+	}
+}
+
+func TestEnsureConfigOrderRewritesOnceAndKeepsTheOriginal(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hyprland.lua")
+	if err := os.WriteFile(path, []byte(omarchyConfig), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	reorder, err := EnsureConfigOrder(path)
+	if err != nil {
+		t.Fatalf("EnsureConfigOrder: %v", err)
+	}
+	if !reorder.Changed || reorder.BackupPath == "" {
+		t.Fatalf("expected the shipped order to be rewritten with a backup, got %+v", reorder)
+	}
+
+	backup, err := os.ReadFile(reorder.BackupPath)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backup) != omarchyConfig {
+		t.Fatal("expected the backup to hold the config as it was")
+	}
+
+	// Starting the daemon again must not keep rewriting a settled config.
+	again, err := EnsureConfigOrder(path)
+	if err != nil {
+		t.Fatalf("second EnsureConfigOrder: %v", err)
+	}
+	if again.Changed {
+		t.Fatal("expected a settled config to be left alone")
+	}
+}
+
+func TestEnsureConfigOrderLeavesForeignConfigsAlone(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hyprland.lua")
+	const plain = "require(\"hypr.monitors\")\n"
+	if err := os.WriteFile(path, []byte(plain), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	reorder, err := EnsureConfigOrder(path)
+	if err != nil {
+		t.Fatalf("EnsureConfigOrder: %v", err)
+	}
+	if reorder.Changed {
+		t.Fatal("expected a config without Omarchy's toggles to be left alone")
+	}
+	if content, _ := os.ReadFile(path); string(content) != plain {
+		t.Fatalf("expected the file to be untouched, got %q", content)
+	}
+
+	if reorder, err := EnsureConfigOrder(filepath.Join(dir, "missing.lua")); err != nil || reorder.Changed {
+		t.Fatalf("expected a missing config to be a quiet no-op, got %+v (err=%v)", reorder, err)
 	}
 }

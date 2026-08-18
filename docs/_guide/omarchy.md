@@ -44,7 +44,7 @@ Whether that rule wins comes down to load order. Omarchy's `hyprland.lua` loads 
 hyprmoncfg doctor
 ```
 
-If it reports a problem, `hyprmoncfg doctor --fix` moves the `require("hypr.monitors")` line below `require("default.hypr.toggles")` and saves your previous config next to it. Run `hyprctl reload` afterwards. Adding a second require later in the file does not work: Lua caches modules, so the repeat call does nothing.
+The daemon fixes this for you at startup, the same way it stops Omarchy's monitor watcher: it moves the `require("hypr.monitors")` line below `require("default.hypr.toggles")` and saves your previous config next to it as `hyprland.lua.hyprmoncfg-backup`. `hyprmoncfg doctor --fix` does the same thing on demand. Adding a second require later in the file does not work: Lua caches modules, so the repeat call does nothing.
 
 The daemon also puts a profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand.
 
