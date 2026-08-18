@@ -1211,6 +1211,10 @@ func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && m.restartHintAt(msg.X, msg.Y) {
+		return m, m.restartDaemonCmd()
+	}
+
 	if tab, ok := m.tabAt(msg.X, msg.Y); ok && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 		m.tab = tab
 		return m, nil
@@ -1594,6 +1598,18 @@ func (m Model) canvasMouseHeight() int {
 	canvasRect, _ := m.layoutCanvasRect()
 	innerHeight := max(1, canvasRect.h-panel.GetVerticalFrameSize())
 	return innerHeight
+}
+
+// restartHintAt reports a click on the stale-daemon message, which sits at the
+// right end of the tab row.
+func (m Model) restartHintAt(x, y int) bool {
+	if !m.daemonNeedsRestart() || y != m.appContentY() {
+		return false
+	}
+	width := m.footerContentWidth()
+	hint := lipgloss.Width(m.restartHint())
+	localX := x - m.appContentX()
+	return localX > width-hint-2 && localX <= width
 }
 
 func (m Model) tabAt(x, y int) (mainTab, bool) {

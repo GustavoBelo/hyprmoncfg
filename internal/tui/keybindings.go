@@ -76,6 +76,7 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 			{"s", "Save the current draft as a profile"},
 			{"r", "Reset from live Hyprland state"},
 			{"?", "Show these keys"},
+			{"R", "Restart the daemon after an upgrade"},
 			{"q", "Quit"},
 		},
 	})

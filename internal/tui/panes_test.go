@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
@@ -439,8 +440,18 @@ func TestATopStatusAsksForARestartWhenTheDaemonIsBehind(t *testing.T) {
 	if !behind.daemonNeedsRestart() {
 		t.Fatal("expected an older running daemon to ask for a restart")
 	}
-	if got := ansi.Strip(behind.renderTopStatus()); !strings.Contains(got, "systemctl --user restart hyprmoncfgd") {
-		t.Fatalf("expected the status to name the command, got %q", got)
+	if got := ansi.Strip(behind.renderTopStatus()); !strings.Contains(got, "1.13.0") || !strings.Contains(got, "restart") {
+		t.Fatalf("expected the status to name the running version and offer a restart, got %q", got)
+	}
+
+	// The message is the click target, so it has to be reachable by mouse too.
+	behind.width, behind.height = 120, 32
+	x := behind.footerContentWidth() - lipgloss.Width(behind.restartHint())
+	if !behind.restartHintAt(behind.appContentX()+x, behind.appContentY()) {
+		t.Fatal("expected the message to be clickable")
+	}
+	if behind.restartHintAt(behind.appContentX(), behind.appContentY()) {
+		t.Fatal("expected a click on the tabs to be left alone")
 	}
 
 	current := Model{styles: newStyles(), daemonOK: true, daemonVersion: buildinfo.Version}

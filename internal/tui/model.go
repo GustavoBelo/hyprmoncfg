@@ -7,6 +7,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -70,6 +71,7 @@ type refreshMsg struct {
 	daemonOK       bool
 	daemonUnknown  bool
 	daemonVersion  string
+	daemonClient   *ipc.Client
 	background     bool
 	err            error
 }
@@ -92,6 +94,10 @@ type applyMsg struct {
 	deadline      time.Time
 	remote        bool
 	err           error
+}
+
+type daemonRestartMsg struct {
+	err error
 }
 
 type revertMsg struct {
@@ -378,6 +384,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case refreshMsg:
 		m.refreshInFlight = false
+		if msg.daemonClient != nil {
+			if m.ipc != nil {
+				_ = m.ipc.Close()
+			}
+			m.ipc = msg.daemonClient
+		}
 		if !msg.daemonUnknown {
 			m.daemonOK = msg.daemonOK
 			m.daemonVersion = msg.daemonVersion
@@ -454,6 +466,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusOK(fmt.Sprintf("Saved profile %q", msg.name))
 		return m, m.refreshCmd(false)
+
+	case daemonRestartMsg:
+		if msg.err != nil {
+			m.setStatusErr(msg.err.Error())
+			return m, nil
+		}
+		m.setStatusOK("Daemon restarted")
+		return m, m.refreshCmd(true)
 
 	case clearSnapMsg:
 		if m.snap != nil && msg.token == m.snap.Token {
@@ -643,6 +663,8 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "?":
 		m.mode = modeKeybindings
 		return m, nil
+	case "R":
+		return m, m.restartDaemonCmd()
 	case "r":
 		m.resetRequested = true
 		m.draftProfileName = ""
@@ -2456,6 +2478,33 @@ func (m Model) liveConfigSignature() string {
 	return liveConfigSignature(m.monitors, m.lidState)
 }
 
+// restartDaemonCmd hands the running daemon over to the installed build. The
+// package manager cannot do this: it installs as root, while the daemon is a
+// user service only the session can restart.
+func (m *Model) restartDaemonCmd() tea.Cmd {
+	if !m.daemonNeedsRestart() {
+		return nil
+	}
+	m.setStatusOK("Restarting the daemon...")
+
+	return tea.Sequence(
+		func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			out, err := exec.CommandContext(ctx, "systemctl", "--user", "restart", "hyprmoncfgd.service").CombinedOutput()
+			if err != nil {
+				detail := strings.TrimSpace(string(out))
+				if detail == "" {
+					detail = err.Error()
+				}
+				return daemonRestartMsg{err: fmt.Errorf("restart hyprmoncfgd: %s", detail)}
+			}
+			return daemonRestartMsg{}
+		},
+		m.refreshCmd(true),
+	)
+}
+
 func (m Model) refreshCmd(background bool) tea.Cmd {
 	client := m.client
 	store := m.store
@@ -2464,22 +2513,30 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
 		daemonOK, daemonUnknown, daemonVersion := daemonReachable(ctx, ipcClient)
+		// A failure that is not a timeout means the connection is gone, not
+		// that the daemon is: reconnect before calling it stopped.
+		var replacement *ipc.Client
+		if ipcClient != nil && !daemonOK && !daemonUnknown {
+			if replacement = redialDaemon(ctx); replacement != nil {
+				daemonOK, daemonUnknown, daemonVersion = daemonReachable(ctx, replacement)
+			}
+		}
 
 		monitors, err := client.Monitors(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
 		profiles, err := store.List()
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
 		workspaceRules, err := client.WorkspaceRules(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
 		workspaces, err := client.Workspaces(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
 		lidState, err := lid.ReadState(ctx)
 		if err != nil {
@@ -2495,6 +2552,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			daemonOK:       daemonOK,
 			daemonUnknown:  daemonUnknown,
 			daemonVersion:  daemonVersion,
+			daemonClient:   replacement,
 			background:     background,
 		}
 	}
@@ -2516,6 +2574,31 @@ func daemonReachable(ctx context.Context, client *ipc.Client) (ok bool, unknown 
 		return false, isTimeout(err), ""
 	}
 	return true, false, strings.TrimSpace(document.Version)
+}
+
+// redialDaemon reconnects after the daemon was restarted, which the connection
+// dialed at startup cannot survive. Without this a restart, an upgrade, or a
+// crash would leave the session reporting a stopped daemon until it is
+// relaunched.
+func redialDaemon(ctx context.Context) *ipc.Client {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return nil
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	client, err := ipc.Dial(dialCtx, path)
+	if err != nil {
+		return nil
+	}
+
+	probeCtx, probeCancel := context.WithTimeout(ctx, daemonProbeTimeout)
+	defer probeCancel()
+	if _, err := client.Status(probeCtx); err != nil {
+		_ = client.Close()
+		return nil
+	}
+	return client
 }
 
 const daemonProbeTimeout = 3 * time.Second

@@ -121,6 +121,11 @@ func (m Model) daemonNeedsRestart() bool {
 	return installed != running
 }
 
+// restartHint is one clickable run of text, so its width can be hit-tested.
+func (m Model) restartHint() string {
+	return fmt.Sprintf("Daemon on %s · click or press R to restart", m.daemonVersion)
+}
+
 func (m Model) renderTopStatus() string {
 	parts := []string{m.unsavedBadge()}
 	if label := m.activeProfileLabel(); label != "" {
@@ -130,8 +135,7 @@ func (m Model) renderTopStatus() string {
 		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
 		parts = append(parts, osc8Link(daemonURL, daemon))
 	} else if m.daemonNeedsRestart() {
-		parts = append(parts, m.styles.warning.Render(
-			fmt.Sprintf("Daemon still on %s · systemctl --user restart hyprmoncfgd", m.daemonVersion)))
+		parts = append(parts, m.styles.warning.Render(m.restartHint()))
 	}
 	if m.layoutErr != nil {
 		parts = append(parts, m.styles.statusError.Render(m.layoutErr.Error()))
