@@ -61,6 +61,10 @@ type MonitorSummary struct {
 	Internal      bool    `json:"internal"`
 	Focused       bool    `json:"focused"`
 	Enabled       bool    `json:"enabled"`
+	// MirrorOf names the connector this monitor mirrors, empty when it drives
+	// its own image. A mirroring monitor shares the position of its source, so
+	// anything drawing a layout has to leave it out and name it separately.
+	MirrorOf string `json:"mirror_of,omitempty"`
 }
 
 func Build(version string, daemonRunning bool, profiles []profile.Profile, monitors []hypr.Monitor, rules []hypr.WorkspaceRule) Document {
@@ -124,6 +128,7 @@ func Build(version string, daemonRunning bool, profiles []profile.Profile, monit
 			Internal:      monitor.IsInternal(),
 			Focused:       monitor.Focused,
 			Enabled:       !monitor.Disabled,
+			MirrorOf:      monitor.MirrorOf,
 		})
 	}
 
