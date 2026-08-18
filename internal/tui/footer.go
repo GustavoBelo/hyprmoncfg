@@ -307,7 +307,7 @@ func (m Model) decorateFooterBar(footer string) string {
 		help = rest
 	}
 
-	// Version — replace before inserting URLs that might contain "dev"
+	// Version: replace before inserting URLs that might contain "dev"
 	version := footerVersionLabel()
 	styled = replaceLastOccurrence(styled, version, osc8Link(releasesURL, m.styles.footerVersion.Render(version)))
 

@@ -288,7 +288,7 @@ func TestFooterLinkAtReturnsClickableRegionsOnly(t *testing.T) {
 		t.Fatalf("expected at least 3 clickable footer links, got %+v", layout.links)
 	}
 
-	// Find the Ask link — simulate a real click on the rendered footer,
+	// Find the Ask link: simulate a real click on the rendered footer,
 	// which is shifted right by the badge padding added during decoration.
 	var askFound bool
 	for _, link := range layout.links {

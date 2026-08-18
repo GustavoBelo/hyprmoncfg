@@ -6,7 +6,7 @@ set -euo pipefail
 echo "pre-commit: go mod tidy"
 go mod tidy
 if ! git diff --quiet go.mod go.sum; then
-  echo "error: go.mod/go.sum not tidy — staged the fix, please re-commit"
+  echo "error: go.mod/go.sum not tidy; staged the fix, please re-commit"
   git add go.mod go.sum
   exit 1
 fi
