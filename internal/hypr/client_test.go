@@ -247,3 +247,35 @@ exit 1
 		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
+
+func TestNormalizeMirrorTargetsResolvesMonitorIDs(t *testing.T) {
+	// hyprctl reports the mirror source as a monitor ID, and "none" when a
+	// monitor mirrors nothing.
+	monitors := []Monitor{
+		{ID: 1, Name: "DP-1", MirrorOf: "none"},
+		{ID: 0, Name: "HDMI-A-1", MirrorOf: "1"},
+		{ID: 2, Name: "DP-2", MirrorOf: "DP-1"},
+		{ID: 3, Name: "DP-3", MirrorOf: "7"},
+	}
+
+	normalizeMirrorTargets(monitors)
+
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{"DP-1", ""},
+		{"HDMI-A-1", "DP-1"},
+		{"DP-2", "DP-1"},
+		{"DP-3", "7"},
+	} {
+		for _, monitor := range monitors {
+			if monitor.Name != tc.name {
+				continue
+			}
+			if monitor.MirrorOf != tc.want {
+				t.Fatalf("%s mirrors %q, want %q", tc.name, monitor.MirrorOf, tc.want)
+			}
+		}
+	}
+}

@@ -63,13 +63,34 @@ func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
 	if err := json.Unmarshal(out, &monitors); err != nil {
 		return nil, fmt.Errorf("failed to decode hyprctl monitors JSON: %w", err)
 	}
-	for i := range monitors {
-		if monitors[i].MirrorOf == "none" {
-			monitors[i].MirrorOf = ""
-		}
-	}
+	normalizeMirrorTargets(monitors)
 	enrichMonitorConnectorPaths(monitors)
 	return monitors, nil
+}
+
+// normalizeMirrorTargets rewrites what hyprctl reports for a mirroring monitor
+// into the connector name every other code path keys on. Hyprland says "none"
+// when nothing is mirrored and otherwise names the source by monitor ID, which
+// matches no connector and would silently drop the mirror when a profile is
+// saved from live state.
+func normalizeMirrorTargets(monitors []Monitor) {
+	nameByID := make(map[string]string, len(monitors))
+	for _, monitor := range monitors {
+		nameByID[strconv.Itoa(monitor.ID)] = monitor.Name
+	}
+
+	for i := range monitors {
+		target := strings.TrimSpace(monitors[i].MirrorOf)
+		if target == "" || target == "none" {
+			monitors[i].MirrorOf = ""
+			continue
+		}
+		if name, ok := nameByID[target]; ok {
+			monitors[i].MirrorOf = name
+			continue
+		}
+		monitors[i].MirrorOf = target
+	}
 }
 
 func (c *Client) Workspaces(ctx context.Context) ([]WorkspaceState, error) {
