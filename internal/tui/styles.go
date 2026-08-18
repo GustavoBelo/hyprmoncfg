@@ -19,11 +19,9 @@ type palette struct {
 	groupTitle         string
 	paneBorder         string
 	paneActiveBorder   string
-	tabBorder          string
-	tabActiveBorder    string
+	paneStaticBorder   string
 	tabInactiveFg      string
 	tabActiveFg        string
-	tabActiveBg        string
 	statusOK           string
 	statusError        string
 	help               string
@@ -48,6 +46,7 @@ type palette struct {
 	canvasGrid         string
 	canvasAxis         string
 	cardBorder         string
+	cardStaticBorder   string
 	cardBg             string
 	cardFg             string
 	cardMuted          string
@@ -76,6 +75,7 @@ type styles struct {
 	focused          lipgloss.Style
 	activePane       lipgloss.Style
 	inactivePane     lipgloss.Style
+	staticPane       lipgloss.Style
 	tabActive        lipgloss.Style
 	tabInactive      lipgloss.Style
 	statusOK         lipgloss.Style
@@ -115,7 +115,8 @@ func newStyles() styles {
 		focused:          withBG(withFG(lipgloss.NewStyle().Bold(true).Padding(0, 1), p.fieldSelectedFg), p.fieldSelectedBg),
 		activePane:       withBG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneActiveBorder)).Padding(0, 1), p.panelBg),
 		inactivePane:     withBG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneBorder)).Padding(0, 1), p.panelBg),
-		tabActive:        withFG(lipgloss.NewStyle().Bold(true), p.tabActiveBorder),
+		staticPane:       withBG(lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color(p.paneStaticBorder)).Padding(0, 1), p.panelBg),
+		tabActive:        withFG(lipgloss.NewStyle().Bold(true), p.tabActiveFg),
 		tabInactive:      withFG(lipgloss.NewStyle(), p.tabInactiveFg),
 		statusOK:         withFG(lipgloss.NewStyle().Bold(true), p.statusOK),
 		statusError:      withFG(lipgloss.NewStyle().Bold(true), p.statusError),
@@ -146,6 +147,9 @@ func newPalette() palette {
 	supportText := blendedTerminalColor(fgColor, bgColor, 0.42, "7")
 	chrome := blendedTerminalColor(fgColor, bgColor, 0.68, "8")
 	softFill := blendedTerminalColor(fgColor, bgColor, 0.82, "8")
+	// Panes and cards that only show what is there sit between the muted
+	// chrome and the body text, so they read clearly without taking the accent.
+	presence := blendedTerminalColor(fgColor, bgColor, 0.5, "7")
 	canvasAxis := blendedTerminalColor(fgColor, bgColor, 0.55, "7")
 
 	return palette{
@@ -160,11 +164,9 @@ func newPalette() palette {
 		groupTitle:         "3",
 		paneBorder:         chrome,
 		paneActiveBorder:   "2",
-		tabBorder:          chrome,
-		tabActiveBorder:    "2",
+		paneStaticBorder:   presence,
 		tabInactiveFg:      supportText,
-		tabActiveFg:        defaultBG,
-		tabActiveBg:        defaultFG,
+		tabActiveFg:        "2",
 		statusOK:           "2",
 		statusError:        "1",
 		help:               supportText,
@@ -189,6 +191,7 @@ func newPalette() palette {
 		canvasGrid:         chrome,
 		canvasAxis:         canvasAxis,
 		cardBorder:         chrome,
+		cardStaticBorder:   presence,
 		cardBg:             "",
 		cardFg:             "",
 		cardMuted:          supportText,

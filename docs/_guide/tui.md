@@ -15,6 +15,8 @@ Drag monitors on the canvas to reposition them. The information and controls upd
 
 While the TUI is open, it also refreshes live monitor state in the background. Plugging or unplugging a monitor, docking, undocking, or changing lid state reloads the editor so the canvas matches the current hardware.
 
+The canvas only draws displays that are on and not mirroring another one. Anything it leaves out is named along the top edge, so a monitor you turned off or set to mirror never disappears without a trace.
+
 ![Layout editor]({{ '/assets/images/screenshots/layout-dark.png' | relative_url }})
 {: .screenshot }
 
@@ -62,6 +64,28 @@ Press `s` from the layout tab. You'll see a text input and the list of existing 
 ![Save profile dialog]({{ '/assets/images/screenshots/save-profile-dark.png' | relative_url }})
 {: .screenshot }
 
+## Profiles
+
+The second tab lists every saved profile and how well it fits the displays that are plugged in right now.
+
+- **Match** is the profile's score against the connected hardware, the same score the daemon uses to pick a profile automatically. A dash means the profile has no display in common with what is connected
+- **active** marks the profile your screens are already showing
+- **best** marks the highest scoring profile -- the one the daemon would apply on the next hotplug
+
+Selecting a profile fills the right side: its details on top, its monitor arrangement below. The details spell out the score as the arithmetic that produced it, so a surprising number is never a mystery, and they list what the canvas cannot draw -- displays the profile keeps off and displays that mirror another one. On the canvas, a display the profile expects but cannot find is outlined and labelled `not connected`.
+
+![Profiles tab]({{ '/assets/images/screenshots/profiles-dark.png' | relative_url }})
+{: .screenshot }
+
+| Key | Action |
+|-----|--------|
+| `↑` `↓` | Select a profile |
+| `Enter` | Load the profile into the layout editor |
+| `a` | Apply the profile |
+| `e` | Edit the profile's exec command |
+| `d` | Delete the profile |
+| `s` | Save the current draft |
+
 ## Workspace planner
 
 The third tab lets you distribute workspaces across monitors. Pick one of three strategies:
@@ -78,6 +102,8 @@ You can also configure:
 - **Max workspaces** -- how many workspaces to generate rules for
 - **Group size** (sequential only) -- how many consecutive workspaces to assign to each monitor before moving to the next. With 2 monitors and a group size of 3, monitor A gets 1-3, monitor B gets 4-6, and so on
 - **Monitor order** -- which monitor gets the first batch of workspaces. Drag to reorder
+
+The right side previews the result twice: **Workspace Plan** lists which workspaces each monitor owns, and **Monitor Layout** paints those same workspaces onto the monitors themselves. Both update as you change the strategy, so you can see where workspace 1 lands before you save.
 
 The workspace plan is stored inside each profile. When the daemon applies a profile, it applies workspace rules too -- layout and workspace assignment in one shot.
 

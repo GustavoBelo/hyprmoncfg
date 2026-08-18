@@ -1368,8 +1368,9 @@ func (m Model) updateProfilesMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	row := msg.Y - listRect.inner(m.styles.activePane).y
-	if row < 0 || row >= len(m.profiles) {
+	inner := listRect.inner(m.styles.activePane)
+	row := msg.Y - inner.y - profileListHeaderRows + m.profileListScroll(inner.h)
+	if row < 0 || row >= len(m.profiles) || msg.Y < inner.y+profileListHeaderRows {
 		return m, nil
 	}
 	m.selectedProfile = row
@@ -1463,7 +1464,7 @@ func (m Model) layoutInspectorRect() (hitRect, bool) {
 func (m Model) profilesListRect() hitRect {
 	body := m.bodyRect()
 	if m.terminalWidth() < 96 {
-		listHeight := clampInt(len(m.profiles)+2, 4, body.h/3)
+		listHeight := clampInt(len(m.profiles)+profileListHeaderRows+2, profileListHeaderRows+4, body.h/3)
 		return hitRect{x: body.x, y: body.y, w: body.w, h: listHeight}
 	}
 
@@ -1661,14 +1662,21 @@ func (m Model) inspectorFieldAt(y int, inspectorRect hitRect, compact bool, wasF
 }
 
 func (m Model) canvasLayout(width, height int) canvasGeometry {
+	return canvasLayoutFor(m.editOutputs, width, height)
+}
+
+// canvasLayoutFor scales a set of outputs into a terminal-cell rectangle. The
+// layout tab passes its editor outputs; the profile and workspace previews
+// pass the outputs they want to show, so every canvas keeps the same geometry.
+func canvasLayoutFor(outputs []editableOutput, width, height int) canvasGeometry {
 	layout := canvasGeometry{
 		width:  max(20, width-2),
 		height: max(3, height),
 		cellW:  2.2,
 	}
 
-	enabled := make([]editableOutput, 0, len(m.editOutputs))
-	for _, output := range m.editOutputs {
+	enabled := make([]editableOutput, 0, len(outputs))
+	for _, output := range outputs {
 		if output.Enabled && output.MirrorOf == "" {
 			enabled = append(enabled, output)
 		}
@@ -1702,7 +1710,7 @@ func (m Model) canvasLayout(width, height int) canvasGeometry {
 	layout.offsetY = max(1, 1+(layout.height-2-contentH)/2)
 	layout.ok = true
 
-	for idx, output := range m.editOutputs {
+	for idx, output := range outputs {
 		if !output.Enabled || output.MirrorOf != "" {
 			continue
 		}

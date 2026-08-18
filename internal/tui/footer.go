@@ -95,8 +95,23 @@ func (m Model) unsavedLabel() string {
 	return "Current setup"
 }
 
+// activeProfileLabel answers "which saved profile am I looking at right now?"
+// on every tab, including when the answer is none of them.
+func (m Model) activeProfileLabel() string {
+	if m.dirty || len(m.profiles) == 0 {
+		return ""
+	}
+	if m.activeProfileName == "" {
+		return m.styles.subtle.Render("no match")
+	}
+	return m.styles.statusOK.Render(m.activeProfileName)
+}
+
 func (m Model) renderTopStatus() string {
 	parts := []string{m.unsavedBadge()}
+	if label := m.activeProfileLabel(); label != "" {
+		parts[0] += m.styles.subtle.Render(" · ") + label
+	}
 	if !m.daemonOK {
 		daemon := m.styles.statusError.Underline(true).Render("Daemon not running")
 		parts = append(parts, osc8Link(daemonURL, daemon))

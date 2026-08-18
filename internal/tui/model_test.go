@@ -415,7 +415,7 @@ func TestProfilesMouseIgnoresDetailsPaneInCompactLayout(t *testing.T) {
 		selectedProfile: 5,
 	}
 
-	x, y := findVisiblePosition(t, m.renderMain(), "Updated:")
+	x, y := findVisiblePosition(t, m.renderMain(), "Updated")
 	updated, _ := m.updateMouse(mousePressAt(x, y))
 	got := updated.(Model)
 	if got.selectedProfile != 5 {
@@ -473,7 +473,7 @@ func TestWorkspaceMouseIgnoresPreviewPaneInCompactLayout(t *testing.T) {
 		},
 	}
 
-	x, y := findVisiblePosition(t, m.renderMain(), "HDMI-A-1: 4, 5, 6")
+	x, y := findVisiblePosition(t, m.renderMain(), "HDMI-A-1  4, 5, 6")
 	updated, _ := m.updateMouse(mousePressAt(x, y))
 	got := updated.(Model)
 	if got.workspaceEdit.SelectedField != 1 {
@@ -2454,8 +2454,8 @@ func TestRenderWorkspaceViewShowsPreviewWhenDisabled(t *testing.T) {
 	view := m.renderWorkspaceView(16)
 	for _, want := range []string{
 		"(workspace rules disabled; preview only)",
-		"DP-1: 1, 2, 3",
-		"HDMI-A-1: 4, 5, 6",
+		"DP-1      1, 2, 3",
+		"HDMI-A-1  4, 5, 6",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected workspace view to include %q, got:\n%s", want, view)
@@ -2491,7 +2491,7 @@ func TestAdjustWorkspaceFieldRestoresSequentialPreviewAfterInterleave(t *testing
 	}
 
 	view := m.renderWorkspaceView(16)
-	for _, want := range []string{"DP-1: 1, 2, 3", "HDMI-A-1: 4, 5, 6"} {
+	for _, want := range []string{"DP-1      1, 2, 3", "HDMI-A-1  4, 5, 6"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected sequential preview to include %q after strategy switch, got:\n%s", want, view)
 		}
