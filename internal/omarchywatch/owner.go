@@ -90,7 +90,13 @@ func (o *Owner) Start(ctx context.Context) {
 			case <-watchCtx.Done():
 				return
 			case <-ticker.C:
-				o.recordSuppressResult(o.suppress(watchCtx))
+				stopped, err := o.suppress(watchCtx)
+				if watchCtx.Err() != nil {
+					// Shutdown kills the systemctl child mid-flight; that is
+					// not a suppression failure worth logging.
+					continue
+				}
+				o.recordSuppressResult(stopped, err)
 			}
 		}
 	}()
