@@ -133,7 +133,10 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			return err
 		}
 		if response.ID != id {
-			return fmt.Errorf("unexpected IPC response id %q (wanted %q)", response.ID, id)
+			// A late reply to a call that already hit its deadline. Drop it and
+			// keep reading: failing here would leave the connection one reply
+			// out of step and break every later call on it.
+			continue
 		}
 		if response.ProtocolVersion != ProtocolVersion {
 			return fmt.Errorf("unsupported IPC protocol version %d", response.ProtocolVersion)
