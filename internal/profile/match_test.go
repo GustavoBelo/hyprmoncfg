@@ -319,3 +319,67 @@ func TestExactStateMatchDetectsBitdepthAndCMDifference(t *testing.T) {
 		t.Fatal("expected ExactStateMatch to fail when Bitdepth and CM differ from live state")
 	}
 }
+
+func TestEvaluateMatchPenalizesDisplaysThatAreNotConnected(t *testing.T) {
+	desk := hypr.Monitor{Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "M1"}
+	tv := hypr.Monitor{Name: "HDMI-A-1", Make: "LG", Model: "TV", Serial: "T1"}
+	connected := []hypr.Monitor{desk}
+
+	solo := New("solo", []OutputConfig{
+		{Key: desk.HardwareKey(), Enabled: true, Scale: 1},
+	})
+	withTVOff := New("tv-off", []OutputConfig{
+		{Key: desk.HardwareKey(), Enabled: true, Scale: 1},
+		{Key: tv.HardwareKey(), Enabled: false},
+	})
+	withTVOn := New("tv-on", []OutputConfig{
+		{Key: desk.HardwareKey(), Enabled: true, Scale: 1},
+		{Key: tv.HardwareKey(), Enabled: true, Scale: 1},
+	})
+
+	soloResult := EvaluateMatch(solo, connected)
+	offResult := EvaluateMatch(withTVOff, connected)
+	onResult := EvaluateMatch(withTVOn, connected)
+
+	if soloResult.Score <= offResult.Score {
+		t.Fatalf("profile describing only the connected display should win: solo=%d tv-off=%d",
+			soloResult.Score, offResult.Score)
+	}
+	if offResult.Score <= onResult.Score {
+		t.Fatalf("an absent display kept off should cost less than one left on: tv-off=%d tv-on=%d",
+			offResult.Score, onResult.Score)
+	}
+	if offResult.MissingOffOutputs != 1 || offResult.MissingOutputs != 0 {
+		t.Fatalf("tv-off breakdown = %+v, want one display missing while kept off", offResult)
+	}
+	if onResult.MissingOutputs != 1 || onResult.MissingOffOutputs != 0 {
+		t.Fatalf("tv-on breakdown = %+v, want one display missing while enabled", onResult)
+	}
+
+	picked, _, ok := BestMatch([]Profile{withTVOff, withTVOn, solo}, connected)
+	if !ok || picked.Name != "solo" {
+		t.Fatalf("BestMatch = %q (ok=%v), want solo", picked.Name, ok)
+	}
+}
+
+func TestEvaluateMatchStillRewardsDisplaysItKeepsOff(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Make: "BOE", Model: "Panel", Serial: "C3"}
+	desk := hypr.Monitor{Name: "DP-1", Make: "Dell", Model: "P3421W", Serial: "DW1"}
+	connected := []hypr.Monitor{laptop, desk}
+
+	clamshell := New("clamshell", []OutputConfig{
+		{Key: desk.HardwareKey(), Enabled: true, Scale: 1},
+		{Key: laptop.HardwareKey(), Enabled: false},
+	})
+	deskOnly := New("desk-only", []OutputConfig{
+		{Key: desk.HardwareKey(), Enabled: true, Scale: 1},
+	})
+
+	if got, want := EvaluateMatch(clamshell, connected).Score, 150; got != want {
+		t.Fatalf("clamshell score = %d, want %d", got, want)
+	}
+	picked, _, ok := BestMatch([]Profile{deskOnly, clamshell}, connected)
+	if !ok || picked.Name != "clamshell" {
+		t.Fatalf("BestMatch = %q (ok=%v), want clamshell", picked.Name, ok)
+	}
+}

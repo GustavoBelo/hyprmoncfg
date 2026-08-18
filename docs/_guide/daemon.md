@@ -73,8 +73,9 @@ Profiles are matched by hardware identity (make, model, serial) -- not connector
 | Monitor disabled in profile but connected | +50 |
 | Connected monitor not in the profile | −20 |
 | Monitor enabled in profile but not connected | −30 |
+| Monitor disabled in profile and not connected | −10 |
 
-Highest score wins. Ties break alphabetically by profile name.
+Highest score wins. Ties break alphabetically by profile name. A profile that mentions a monitor which is not plugged in pays for it either way, so the profile that describes exactly the connected displays beats a larger profile that happens to include them. The profiles tab shows every score, along with this breakdown for the selected profile.
 
 On laptops, the daemon also reads lid state. UPower is optional, but recommended: with UPower available, lid changes arrive as D-Bus events and the daemon can react immediately. Without UPower, the daemon falls back to polling `/proc/acpi/button/lid/*/state` at `--lid-poll-interval`, which defaults to `1s` and is not available on every system. If neither source exists, lid-aware switching is disabled and monitor hotplug still works.
 

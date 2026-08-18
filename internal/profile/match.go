@@ -14,7 +14,27 @@ import (
 type MatchResult struct {
 	Score                   int
 	ConnectedEnabledOutputs int
+
+	// Score breakdown, so callers can explain the number they show.
+	// Every field counts outputs, not points.
+	EnabledMatched    int // profile outputs enabled here and currently connected
+	DisabledMatched   int // profile outputs kept off here and currently connected
+	MissingOutputs    int // profile outputs enabled here but not connected
+	MissingOffOutputs int // profile outputs kept off here and not connected either
+	UnknownOutputs    int // connected outputs this profile says nothing about
 }
+
+// Score weights, exported so the breakdown can be rendered as arithmetic.
+// Every output a profile names but cannot find costs something, so the profile
+// that describes exactly the connected displays wins over one that also
+// carries rules for displays that are not here.
+const (
+	ScoreEnabledMatch     = 100
+	ScoreDisabledMatch    = 50
+	ScoreMissingOutput    = -30
+	ScoreMissingOffOutput = -10
+	ScoreUnknownOutput    = -20
+)
 
 func EvaluateMatch(p Profile, monitors []hypr.Monitor) MatchResult {
 	p.Normalize()
@@ -51,25 +71,47 @@ func EvaluateMatch(p Profile, monitors []hypr.Monitor) MatchResult {
 			disabledMatch += min(connectedCount-enabledForKey, disabledKnown)
 		}
 	}
-	if enabledMatch == 0 {
-		return MatchResult{}
-	}
 
 	missingFromCurrent := 0
 	for key, wanted := range profileEnabled {
 		missingFromCurrent += max(0, wanted-connected[key])
+	}
+	missingOffFromCurrent := 0
+	for key, known := range profileKnown {
+		wantedOff := known - profileEnabled[key]
+		if wantedOff <= 0 {
+			continue
+		}
+		// Connected outputs are claimed by the profile's enabled entries
+		// first, so only what is left over can cover the disabled ones.
+		spare := max(0, connected[key]-min(connected[key], profileEnabled[key]))
+		missingOffFromCurrent += max(0, wantedOff-spare)
 	}
 	unknownCurrent := 0
 	for key, connectedCount := range connected {
 		unknownCurrent += max(0, connectedCount-profileKnown[key])
 	}
 
+	result := MatchResult{
+		EnabledMatched:    enabledMatch,
+		DisabledMatched:   disabledMatch,
+		MissingOutputs:    missingFromCurrent,
+		MissingOffOutputs: missingOffFromCurrent,
+		UnknownOutputs:    unknownCurrent,
+	}
+	// A profile that would leave every connected output off is not a
+	// candidate at all, so it keeps a zero score and no partial credit.
+	if enabledMatch == 0 {
+		return result
+	}
+
 	// High reward for enabled match, moderate reward for disabled match,
 	// moderate penalty for mismatch.
-	return MatchResult{
-		Score:                   enabledMatch*100 + disabledMatch*50 - missingFromCurrent*30 - unknownCurrent*20,
-		ConnectedEnabledOutputs: enabledMatch,
-	}
+	result.Score = enabledMatch*ScoreEnabledMatch + disabledMatch*ScoreDisabledMatch +
+		missingFromCurrent*ScoreMissingOutput + missingOffFromCurrent*ScoreMissingOffOutput +
+		unknownCurrent*ScoreUnknownOutput
+	result.ConnectedEnabledOutputs = enabledMatch
+	return result
 }
 
 func MatchScore(p Profile, monitors []hypr.Monitor) int {
