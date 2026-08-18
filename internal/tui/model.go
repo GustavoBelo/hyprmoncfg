@@ -36,6 +36,7 @@ const (
 	modeModePicker
 	modeNumericInput
 	modeProfileExecInput
+	modeKeybindings
 )
 
 type mainTab int
@@ -575,6 +576,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNumericInputKeys(msg)
 		case modeProfileExecInput:
 			return m.updateProfileExecInputKeys(msg)
+		case modeKeybindings:
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			m.mode = modeMain
+			return m, nil
 		default:
 			return m.updateMainKeys(msg)
 		}
@@ -630,6 +637,9 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3":
 		m.tab = tabWorkspaces
 		return m, nil
+	case "?":
+		m.mode = modeKeybindings
+		return m, nil
 	case "r":
 		m.resetRequested = true
 		m.draftProfileName = ""
@@ -683,36 +693,18 @@ func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "tab":
-		if m.layoutFocus == layoutFocusCanvas {
-			m.layoutFocus = layoutFocusInspector
-			m.normalizeInspectorField()
-		} else {
-			m.layoutFocus = layoutFocusCanvas
-		}
+		m.cycleLayoutPane(1)
 		return m, nil
 	case "shift+tab":
-		if m.layoutFocus == layoutFocusCanvas {
-			m.layoutFocus = layoutFocusInspector
-			m.normalizeInspectorField()
-		} else {
-			m.layoutFocus = layoutFocusCanvas
-		}
+		m.cycleLayoutPane(-1)
 		return m, nil
 	case "0":
 		return m, m.moveSelectedOutputToOrigin()
 	case "[":
-		if m.layoutFocus == layoutFocusCanvas {
-			m.selectedOutput = clampIndex(m.selectedOutput-1, len(m.editOutputs))
-		} else {
-			m.cycleInspectorTab(-1)
-		}
+		m.selectedOutput = clampIndex(m.selectedOutput-1, len(m.editOutputs))
 		return m, nil
 	case "]":
-		if m.layoutFocus == layoutFocusCanvas {
-			m.selectedOutput = clampIndex(m.selectedOutput+1, len(m.editOutputs))
-		} else {
-			m.cycleInspectorTab(1)
-		}
+		m.selectedOutput = clampIndex(m.selectedOutput+1, len(m.editOutputs))
 		return m, nil
 	}
 
@@ -897,6 +889,8 @@ func (m Model) View() string {
 		return m.renderModalScreen(m.renderNumericInput())
 	case modeProfileExecInput:
 		return m.renderModalScreen(m.renderProfileExecInput())
+	case modeKeybindings:
+		return m.renderModalScreen(m.renderKeybindings())
 	default:
 		return m.renderMain()
 	}
@@ -1154,6 +1148,25 @@ func (m *Model) moveInspectorField(delta int) {
 		}
 	}
 	m.inspectorField = fields[clampIndex(position+delta, len(fields))]
+}
+
+// cycleLayoutPane walks the layout tab's three panes in the order they appear:
+// the canvas, then Display, then Color. Tab moving between panes and the
+// bracket keys always cycling monitors keeps each key to one meaning.
+func (m *Model) cycleLayoutPane(delta int) {
+	position := 0
+	if m.layoutFocus == layoutFocusInspector {
+		position = 1 + int(m.inspectorTab)
+	}
+
+	position = wrapIndex(position+delta, 3)
+	if position == 0 {
+		m.layoutFocus = layoutFocusCanvas
+		return
+	}
+	m.layoutFocus = layoutFocusInspector
+	m.inspectorTab = inspectorTab(position - 1)
+	m.normalizeInspectorField()
 }
 
 func (m *Model) cycleInspectorTab(delta int) {

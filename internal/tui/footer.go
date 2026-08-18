@@ -36,13 +36,14 @@ type footerLayout struct {
 }
 
 func (m Model) footerHelpText() string {
+	// One key, one meaning. Everything else lives behind `?`.
 	switch m.tab {
 	case tabLayout:
-		return "`drag/arrows` move | `Alt+arrows` snap | `0` origin | `[ ]` cycle | `Enter/Tab` edit/pane | `a/s` apply/save | `r` reset"
+		return "`drag/arrows` move | `[ ]` monitors | `Tab` pane | `Enter` edit | `a` apply | `s` save | `?` keys"
 	case tabProfiles:
-		return "`Enter` load | `a` apply | `e` edit exec | `d` delete | `s` save"
+		return "`Enter` load | `a` apply | `e` exec | `d` delete | `s` save | `?` keys"
 	case tabWorkspaces:
-		return "`↑↓` select | `←→` adjust or reorder | `a` apply | `s` save"
+		return "`↑↓` select | `←→` adjust | `a` apply | `s` save | `?` keys"
 	default:
 		return ""
 	}

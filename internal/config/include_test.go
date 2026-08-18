@@ -27,6 +27,16 @@ func readConfig(t *testing.T, path string) string {
 	return string(content)
 }
 
+func TestIncludeLineStaysShortWhenTheConfigHomeIsTheUsualOne(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", "/home/someone")
+
+	lua := IncludeLine(HyprConfigLua, "/home/someone/.config/hypr/hyprmoncfg-monitors.lua")
+	if lua != `dofile(os.getenv("HOME") .. "/.config/hypr/hyprmoncfg-monitors.lua")` {
+		t.Fatalf("expected the short form, got %q", lua)
+	}
+}
+
 func TestIncludeLineResolvesTheHomeAtLoadTime(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/home/someone/.config")
 

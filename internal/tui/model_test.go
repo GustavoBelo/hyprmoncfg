@@ -2904,9 +2904,10 @@ func TestInspectorTabsSwitchByKeyboardAndMouse(t *testing.T) {
 		editOutputs: []editableOutput{{Name: "DP-1", Enabled: true, Scale: 1}},
 	}
 
-	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	// Tab walks the panes in the order they appear, so from Display it opens Color.
+	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyTab})
 	if m.inspectorTab != inspectorTabColor || m.inspectorField != inspectorFieldsForTab(inspectorTabColor)[0] {
-		t.Fatalf("expected ] to open Color and select its first field, got tab=%d field=%d", m.inspectorTab, m.inspectorField)
+		t.Fatalf("expected Tab to open Color and select its first field, got tab=%d field=%d", m.inspectorTab, m.inspectorField)
 	}
 
 	rect, _ := m.layoutInspectorRect()

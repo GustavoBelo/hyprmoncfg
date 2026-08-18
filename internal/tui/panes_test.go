@@ -340,3 +340,65 @@ func TestOriginShortcutMovesTheSelectedMonitorToZeroZero(t *testing.T) {
 		t.Fatalf("expected a dirty layout and a confirmation, dirty=%v cmd=%v", got.dirty, cmd != nil)
 	}
 }
+
+func TestTabWalksThePanesAndBracketsAlwaysCycleMonitors(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		tab:         tabLayout,
+		layoutFocus: layoutFocusCanvas,
+		editOutputs: []editableOutput{
+			{Key: "a", Name: "DP-1", Enabled: true, Scale: 1},
+			{Key: "b", Name: "DP-2", Enabled: true, Scale: 1},
+		},
+	}
+
+	for _, want := range []struct {
+		focus layoutFocus
+		tab   inspectorTab
+	}{
+		{layoutFocusInspector, inspectorTabDisplay},
+		{layoutFocusInspector, inspectorTabColor},
+		{layoutFocusCanvas, inspectorTabColor},
+		{layoutFocusInspector, inspectorTabDisplay},
+	} {
+		m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyTab})
+		if m.layoutFocus != want.focus || (want.focus == layoutFocusInspector && m.inspectorTab != want.tab) {
+			t.Fatalf("Tab landed on focus=%v tab=%v, want focus=%v tab=%v", m.layoutFocus, m.inspectorTab, want.focus, want.tab)
+		}
+	}
+
+	// Whatever pane has focus, the brackets mean monitors and nothing else.
+	before := m.inspectorTab
+	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}})
+	if m.selectedOutput != 1 {
+		t.Fatalf("expected ] to select the next monitor, got %d", m.selectedOutput)
+	}
+	if m.inspectorTab != before {
+		t.Fatal("expected ] to leave the Display/Color pane alone")
+	}
+	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}})
+	if m.selectedOutput != 0 {
+		t.Fatalf("expected [ to select the previous monitor, got %d", m.selectedOutput)
+	}
+}
+
+func TestQuestionMarkShowsTheKeysForTheCurrentTab(t *testing.T) {
+	m := Model{styles: newStyles(), width: 100, height: 34, tab: tabWorkspaces}
+
+	updated, _ := m.updateMainKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'?'}})
+	got := mustModel(t, updated)
+	if got.mode != modeKeybindings {
+		t.Fatalf("expected ? to open the keys dialog, got mode %v", got.mode)
+	}
+
+	view := ansi.Strip(got.View())
+	requireContains(t, view, "Keys", "Workspaces", "Adjust the setting", "Anywhere", "Switch tabs")
+	if strings.Contains(view, "Snap beside") {
+		t.Fatalf("expected only the current tab's keys, got:\n%s", view)
+	}
+
+	closed, _ := got.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if mustModel(t, closed).mode != modeMain {
+		t.Fatal("expected any key to close the dialog")
+	}
+}

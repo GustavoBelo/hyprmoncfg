@@ -115,13 +115,20 @@ func IncludeLine(format HyprConfigFormat, targetPath string) string {
 		return "source = " + targetPath
 	}
 
-	if relative, ok := configHomeRelative(targetPath); ok {
-		return fmt.Sprintf(
-			`dofile((os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config")) .. %s)`,
-			luaQuote("/"+relative),
-		)
+	relative, ok := configHomeRelative(targetPath)
+	if !ok {
+		return fmt.Sprintf("dofile(%s)", luaQuote(targetPath))
 	}
-	return fmt.Sprintf("dofile(%s)", luaQuote(targetPath))
+	// Spelling out XDG_CONFIG_HOME only earns its noise when it is actually
+	// set. Everywhere else the config home is ~/.config, and the short form
+	// says the same thing.
+	if os.Getenv("XDG_CONFIG_HOME") == "" {
+		return fmt.Sprintf(`dofile(os.getenv("HOME") .. %s)`, luaQuote("/.config/"+relative))
+	}
+	return fmt.Sprintf(
+		`dofile((os.getenv("XDG_CONFIG_HOME") or os.getenv("HOME") .. "/.config") .. %s)`,
+		luaQuote("/"+relative),
+	)
 }
 
 // configHomeRelative reports a target's path below the XDG config home, so the

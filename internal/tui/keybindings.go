@@ -1,0 +1,102 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+type keyBinding struct {
+	keys   string
+	action string
+}
+
+type keyGroup struct {
+	title    string
+	bindings []keyBinding
+}
+
+// keyGroupsFor lists what the keys do, starting with the tab in front of you.
+// The footer only has room for the handful you reach for constantly, so this is
+// where the rest lives.
+func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
+	groups := make([]keyGroup, 0, 3)
+
+	switch tab {
+	case tabLayout:
+		groups = append(groups, keyGroup{
+			title: "Layout",
+			bindings: []keyBinding{
+				{"drag, arrows", "Move the selected monitor by 100px"},
+				{"Shift+arrows", "Move by 10px"},
+				{"Ctrl+arrows", "Move by 1px"},
+				{"Alt+arrows", "Snap beside the nearest monitor"},
+				{"0", "Move to 0,0, where Hyprland starts placing"},
+				{"[ ]", "Select the previous or next monitor"},
+				{"Tab, Shift+Tab", "Move between the canvas, Display, and Color"},
+				{"Enter", "Edit the selected field"},
+			},
+		})
+	case tabProfiles:
+		groups = append(groups, keyGroup{
+			title: "Profiles",
+			bindings: []keyBinding{
+				{"↑ ↓", "Select a profile"},
+				{"Enter", "Load the profile into the layout editor"},
+				{"a", "Apply the profile"},
+				{"e", "Edit the profile's exec command"},
+				{"d", "Delete the profile"},
+			},
+		})
+	case tabWorkspaces:
+		groups = append(groups, keyGroup{
+			title: "Workspaces",
+			bindings: []keyBinding{
+				{"↑ ↓", "Select a setting or monitor"},
+				{"← →", "Adjust the setting, or reorder monitors"},
+			},
+		})
+	}
+
+	return append(groups, keyGroup{
+		title: "Anywhere",
+		bindings: []keyBinding{
+			{"1 2 3", "Switch tabs"},
+			{"a", "Apply the current draft or selected profile"},
+			{"s", "Save the current draft as a profile"},
+			{"r", "Reset from live Hyprland state"},
+			{"?", "Show these keys"},
+			{"q", "Quit"},
+		},
+	})
+}
+
+func (m Model) renderKeybindings() string {
+	groups := m.keyGroupsFor(m.tab)
+
+	width := 0
+	for _, group := range groups {
+		for _, binding := range group.bindings {
+			width = max(width, lipgloss.Width(binding.keys))
+		}
+	}
+
+	body := make([]string, 0, 16)
+	keyStyle := withFG(lipgloss.NewStyle().Bold(true), "2")
+	for idx, group := range groups {
+		if idx > 0 {
+			body = append(body, "")
+		}
+		body = append(body, m.styles.label.Render(group.title))
+		for _, binding := range group.bindings {
+			body = append(body, fmt.Sprintf("  %s  %s",
+				keyStyle.Render(fmt.Sprintf("%-*s", width, binding.keys)),
+				m.styles.value.Render(binding.action),
+			))
+		}
+	}
+	body = append(body, "", m.styles.help.Render("Any key closes this."))
+
+	return m.renderModalFrame("Keys", []string{strings.Join(body, "\n")})
+}

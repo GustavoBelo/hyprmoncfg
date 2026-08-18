@@ -28,6 +28,7 @@ The canvas only draws displays that are on and not mirroring another one. Anythi
 | `a` | Apply current draft or selected profile |
 | `s` | Save current draft as a named profile |
 | `r` | Reset from live Hyprland state |
+| `?` | Show every key for the tab you are on |
 | `q` | Quit |
 
 ### Canvas controls
@@ -40,8 +41,8 @@ The canvas only draws displays that are on and not mirroring another one. Anythi
 | `Ctrl` + arrows | Move by 1px |
 | `Alt` + arrows | Snap beside the nearest enabled monitor |
 | `0` | Move the selected monitor to 0,0, where Hyprland's own `position = auto` starts |
-| `[` `]` | Cycle selected monitor |
-| `Tab` | Switch focus between the canvas and monitor controls |
+| `[` `]` | Select the previous or next monitor |
+| `Tab` `Shift+Tab` | Move between the canvas, **Display**, and **Color** |
 
 Dragging snaps to nearby edges on release. `Alt` + arrows place the selected monitor flush left, right, above, or below the nearest enabled monitor and center it on the other axis. Regular keyboard movement remains freeform.
 
