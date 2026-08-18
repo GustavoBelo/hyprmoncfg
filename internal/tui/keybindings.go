@@ -25,28 +25,37 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 
 	switch tab {
 	case tabLayout:
-		groups = append(groups, keyGroup{
-			title: "Layout",
-			bindings: []keyBinding{
-				{"drag, arrows", "Move the selected monitor by 100px"},
-				{"Shift+arrows", "Move by 10px"},
-				{"Ctrl+arrows", "Move by 1px"},
-				{"Alt+arrows", "Snap beside the nearest monitor"},
-				{"0", "Move to 0,0, where Hyprland starts placing"},
-				{"[ ]", "Select the previous or next monitor"},
-				{"Tab, Shift+Tab", "Move between the canvas, Display, and Color"},
-				{"Enter", "Edit the selected field"},
+		// The heading names what these act on, so each line can stay parallel
+		// instead of the first one carrying the subject for all of them.
+		groups = append(groups,
+			keyGroup{
+				title: "Selected monitor",
+				bindings: []keyBinding{
+					{"drag, arrows", "Move by 100px"},
+					{"Shift+arrows", "Move by 10px"},
+					{"Ctrl+arrows", "Move by 1px"},
+					{"Alt+arrows", "Snap beside the nearest monitor"},
+					{"0", "Move to 0,0"},
+					{"[ ]", "Select the previous or next monitor"},
+				},
 			},
-		})
+			keyGroup{
+				title: "Layout",
+				bindings: []keyBinding{
+					{"Tab, Shift+Tab", "Move between the canvas, Display, and Color"},
+					{"Enter", "Edit the selected field"},
+				},
+			},
+		)
 	case tabProfiles:
 		groups = append(groups, keyGroup{
-			title: "Profiles",
+			title: "Selected profile",
 			bindings: []keyBinding{
 				{"↑ ↓", "Select a profile"},
-				{"Enter", "Load the profile into the layout editor"},
-				{"a", "Apply the profile"},
-				{"e", "Edit the profile's exec command"},
-				{"d", "Delete the profile"},
+				{"Enter", "Load it into the layout editor"},
+				{"a", "Apply it"},
+				{"e", "Edit its exec command"},
+				{"d", "Delete it"},
 			},
 		})
 	case tabWorkspaces:
@@ -54,7 +63,7 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 			title: "Workspaces",
 			bindings: []keyBinding{
 				{"↑ ↓", "Select a setting or monitor"},
-				{"← →", "Adjust the setting, or reorder monitors"},
+				{"← →", "Adjust it, or reorder monitors"},
 			},
 		})
 	}
