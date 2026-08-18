@@ -214,6 +214,16 @@ func (c *Client) Dispatch(ctx context.Context, dispatcher string, args ...string
 	return nil
 }
 
+// WakeDisplays turns DPMS on for every output. Hyprland running a Lua config
+// only accepts the Lua dispatcher form, and a legacy config only the classic
+// one, so the caller has to say which config is loaded.
+func (c *Client) WakeDisplays(ctx context.Context, luaDispatch bool) error {
+	if luaDispatch {
+		return c.Dispatch(ctx, `hl.dsp.dpms({ action = "enable" })`)
+	}
+	return c.Dispatch(ctx, "dpms", "on")
+}
+
 func (c *Client) BatchKeywordMonitor(ctx context.Context, values []string) error {
 	if len(values) == 0 {
 		return nil

@@ -9,11 +9,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -413,6 +415,282 @@ exit 1
 	waitFor(t, time.Second, func() bool { return reloadCount(logPath) == 2 }, "post-wake profile reconciliation")
 }
 
+type runTestEnv struct {
+	svc              *Service
+	logPath          string
+	monitorStatePath string
+	monitorsConfPath string
+	logs             *logRecorder
+	setLid           func(lid.State)
+	lidStates        chan lid.State
+	suspendEvents    chan bool
+	stop             func()
+}
+
+type logRecorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *logRecorder) logf(format string, args ...any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, fmt.Sprintf(format, args...))
+}
+
+func (r *logRecorder) contains(substring string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, line := range r.lines {
+		if strings.Contains(line, substring) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *logRecorder) all() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Join(r.lines, "\n")
+}
+
+// newRunTestEnv starts a daemon whose lid and suspend sources are test
+// channels, against a fake hyprctl serving monitor state from a file.
+func newRunTestEnv(t *testing.T, monitors []hypr.Monitor) runTestEnv {
+	t.Helper()
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "hyprctl.log")
+	monitorStatePath := filepath.Join(dir, "monitors.json")
+	monitorsConfPath := filepath.Join(dir, "monitors.conf")
+	hyprlandConfigPath := filepath.Join(dir, "hyprland.conf")
+	hyprctlPath := filepath.Join(dir, "hyprctl")
+	fakeHyprctlScript := `#!/bin/bash
+set -eu
+
+if [[ "${1-}" == "--instance" ]]; then
+  shift 2
+fi
+
+printf '%s\n' "$*" >> "$HYPRCTL_LOG"
+
+if [[ "${1-}" == "-j" && "${2-}" == "version" ]]; then
+  printf '{"version":"0.54.0"}'
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "monitors" && "${3-}" == "all" ]]; then
+  cat "$HYPRCTL_MONITORS"
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "workspacerules" ]]; then
+  printf '[]'
+  exit 0
+fi
+if [[ "${1-}" == "-j" && "${2-}" == "workspaces" ]]; then
+  printf '[]'
+  exit 0
+fi
+if [[ "${1-}" == "reload" ]]; then
+  if [[ -f "$HYPRCTL_MONITORS_NEXT" ]]; then
+    mv "$HYPRCTL_MONITORS_NEXT" "$HYPRCTL_MONITORS"
+  fi
+  exit 0
+fi
+if [[ "${1-}" == "dispatch" ]]; then
+  exit 0
+fi
+
+echo "unexpected args: $*" >&2
+exit 1
+`
+
+	if err := os.WriteFile(monitorsConfPath, []byte(config.GeneratedLegacyHeader+"\n# initial\n"), 0o644); err != nil {
+		t.Fatalf("write monitors.conf: %v", err)
+	}
+	if err := os.WriteFile(hyprlandConfigPath, []byte("source = "+monitorsConfPath+"\n"), 0o644); err != nil {
+		t.Fatalf("write hyprland.conf: %v", err)
+	}
+	if err := os.WriteFile(hyprctlPath, []byte(fakeHyprctlScript), 0o755); err != nil {
+		t.Fatalf("write fake hyprctl: %v", err)
+	}
+	if err := writeMonitorState(monitorStatePath, monitors); err != nil {
+		t.Fatalf("write initial monitor state: %v", err)
+	}
+
+	t.Setenv("HYPRCTL_LOG", logPath)
+	t.Setenv("HYPRCTL_MONITORS", monitorStatePath)
+	t.Setenv("HYPRCTL_MONITORS_NEXT", monitorStatePath+".next")
+	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "sig-test")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	store := profile.NewStore(dir)
+	if err := store.Save(profile.FromMonitors("Home", monitors)); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+	client, err := hypr.NewClient()
+	if err != nil {
+		t.Fatalf("new hypr client: %v", err)
+	}
+
+	logs := &logRecorder{}
+	svc := New(client, store, Config{
+		Debounce:        50 * time.Millisecond,
+		WakeSettle:      80 * time.Millisecond,
+		PollInterval:    time.Hour,
+		LidPollInterval: time.Hour,
+		EventRetry:      time.Hour,
+		MonitorsConf:    monitorsConfPath,
+		HyprConfig:      hyprlandConfigPath,
+		Logf:            logs.logf,
+	})
+
+	var lidMu sync.Mutex
+	lidNow := lid.Open
+	lidStates := make(chan lid.State, 4)
+	suspendEvents := make(chan bool, 4)
+	svc.readLid = func(context.Context) (lid.State, error) {
+		lidMu.Lock()
+		defer lidMu.Unlock()
+		return lidNow, nil
+	}
+	svc.watchLid = func(context.Context, time.Duration) (<-chan lid.State, <-chan error) {
+		return lidStates, nil
+	}
+	svc.watchSuspend = func(context.Context) <-chan bool {
+		return suspendEvents
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.Run(ctx) }()
+	stop := func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("daemon returned error: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Error("daemon did not stop")
+		}
+	}
+
+	return runTestEnv{
+		svc:              svc,
+		logPath:          logPath,
+		monitorStatePath: monitorStatePath,
+		monitorsConfPath: monitorsConfPath,
+		logs:             logs,
+		setLid: func(state lid.State) {
+			lidMu.Lock()
+			lidNow = state
+			lidMu.Unlock()
+		},
+		lidStates:     lidStates,
+		suspendEvents: suspendEvents,
+		stop:          stop,
+	}
+}
+
+func hyprctlLogContains(path string, substring string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), substring)
+}
+
+// The user's laptop suspends when the lid closes. The pending lid:closed
+// trigger must not survive into the resume: applying it there disables the
+// internal panel right as the user opens the laptop, and nothing has told the
+// displays to light up yet.
+func TestRunDropsStaleLidCloseAcrossSuspendAndWakesDisplaysOnResume(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true},
+		{Name: "DP-1", Description: "Dell U2720Q", Make: "Dell", Model: "U2720Q", Serial: "B1", Width: 3840, Height: 2160, RefreshRate: 60, X: 2880, Scale: 2, DPMSStatus: true},
+	}
+	env := newRunTestEnv(t, monitors)
+	defer env.stop()
+	defer func() {
+		if t.Failed() {
+			t.Logf("daemon logs:\n%s", env.logs.all())
+		}
+	}()
+
+	waitFor(t, time.Second, func() bool { return reloadCount(env.logPath) == 1 }, "startup profile apply")
+
+	// The lid closes; before the debounce elapses, the machine suspends.
+	env.setLid(lid.Closed)
+	env.lidStates <- lid.Closed
+	waitFor(t, time.Second, func() bool { return env.logs.contains("triggered: lid:closed") }, "lid close trigger")
+	env.suspendEvents <- true
+	waitFor(t, time.Second, func() bool { return env.logs.contains("suspending; dropped the pending trigger") }, "suspend drop")
+
+	// The user opens the lid, which resumes the machine.
+	env.setLid(lid.Open)
+	env.suspendEvents <- false
+	waitFor(t, time.Second, func() bool { return env.logs.contains("resumed from sleep; waking displays") }, "resume handling")
+	waitFor(t, time.Second, func() bool { return hyprctlLogContains(env.logPath, "dispatch dpms on") }, "display wake dispatch")
+	waitFor(t, time.Second, func() bool { return env.logs.contains("triggered: resume") }, "resume trigger")
+
+	// Nothing changed while the machine slept, so the resume settles without a
+	// reload, and the stale close never turned the panel off.
+	time.Sleep(3 * env.svc.cfg.WakeSettle)
+	if env.logs.contains("lid closed: forced internal outputs off") {
+		t.Fatalf("stale lid close was applied after resume:\n%s", env.logs.all())
+	}
+	if got := reloadCount(env.logPath); got != 1 {
+		t.Fatalf("resume reloaded Hyprland without a change: reload count = %d, want 1\nlogs:\n%s", got, env.logs.all())
+	}
+	rendered, err := os.ReadFile(env.monitorsConfPath)
+	if err != nil {
+		t.Fatalf("read monitors.conf: %v", err)
+	}
+	if strings.Contains(string(rendered), "disable") {
+		t.Fatalf("resume left an output disabled:\n%s", rendered)
+	}
+}
+
+// A lid close that does not suspend the machine is clamshell mode: the closed
+// policy must still apply and turn the internal panel off.
+func TestRunAppliesClosedLidPolicyWhenLidCloseDoesNotSuspend(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true},
+		{Name: "DP-1", Description: "Dell U2720Q", Make: "Dell", Model: "U2720Q", Serial: "B1", Width: 3840, Height: 2160, RefreshRate: 60, X: 2880, Scale: 2, DPMSStatus: true},
+	}
+	env := newRunTestEnv(t, monitors)
+	defer env.stop()
+	defer func() {
+		if t.Failed() {
+			t.Logf("daemon logs:\n%s", env.logs.all())
+		}
+	}()
+
+	waitFor(t, time.Second, func() bool { return reloadCount(env.logPath) == 1 }, "startup profile apply")
+
+	// The panel is still on when the lid closes; the reload the daemon issues
+	// is what turns it off, so stage that state as the post-reload result.
+	clamshell := append([]hypr.Monitor(nil), monitors...)
+	clamshell[0].Disabled = true
+	if err := writeMonitorState(env.monitorStatePath+".next", clamshell); err != nil {
+		t.Fatalf("stage clamshell monitor state: %v", err)
+	}
+	env.setLid(lid.Closed)
+	env.lidStates <- lid.Closed
+
+	waitFor(t, time.Second, func() bool { return reloadCount(env.logPath) == 2 }, "closed-lid apply")
+	waitFor(t, time.Second, func() bool { return env.logs.contains("lid closed: forced internal outputs off") }, "closed-lid policy")
+
+	rendered, err := os.ReadFile(env.monitorsConfPath)
+	if err != nil {
+		t.Fatalf("read monitors.conf: %v", err)
+	}
+	if !strings.Contains(string(rendered), "disable") {
+		t.Fatalf("closed-lid apply left the internal panel enabled:\n%s", rendered)
+	}
+}
+
 func writeMonitorState(path string, monitors []hypr.Monitor) error {
 	data, err := json.Marshal(monitors)
 	if err != nil {
@@ -648,5 +926,80 @@ func TestApplyBestLeavesTheManualChoiceAloneWhenNothingMoved(t *testing.T) {
 	}
 	if strings.Contains(string(logBytes), "reload") {
 		t.Fatalf("expected no reload when the manual choice is already on screen, got:\n%s", logBytes)
+	}
+}
+
+const applyBestDualBeforeJSON = `[{"id":0,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""},{"id":1,"name":"DP-1","description":"Dell U2720Q","make":"Dell","model":"U2720Q","serial":"B1","width":3840,"height":2160,"refreshRate":60,"x":1920,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+
+func applyBestDualMonitors() []hypr.Monitor {
+	return []hypr.Monitor{
+		{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true},
+		{Name: "DP-1", Description: "Dell U2720Q", Make: "Dell", Model: "U2720Q", Serial: "B1", Width: 3840, Height: 2160, RefreshRate: 60, X: 1920, Scale: 2, DPMSStatus: true},
+	}
+}
+
+// The cached lid state says closed, but the lid is open by the time the apply
+// runs; this is exactly the resume race. The fresh read must win.
+func TestApplyBestRefreshesStaleClosedLidBeforeApplying(t *testing.T) {
+	env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, applyBestDualBeforeJSON)
+	if err := env.store.Save(profile.FromMonitors("Home", applyBestDualMonitors())); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	logs := &logRecorder{}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+		Logf:         logs.logf,
+	})
+	svc.lidSupported = true
+	svc.lidState = lid.Closed
+	svc.readLid = func(context.Context) (lid.State, error) { return lid.Open, nil }
+
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	if svc.lidState != lid.Open {
+		t.Fatalf("lid state not refreshed: %s", svc.lidState)
+	}
+	if logs.contains("lid closed: forced internal outputs off") {
+		t.Fatalf("stale closed lid state disabled the internal panel:\n%s", logs.all())
+	}
+	rendered := readMonitorsConf(t, env)
+	if strings.Contains(rendered, "disable") {
+		t.Fatalf("expected every output enabled with the lid open:\n%s", rendered)
+	}
+}
+
+// The mirror image: the cache says open but the lid has just closed. The fresh
+// read must apply the closed-lid policy without waiting for the watcher.
+func TestApplyBestRefreshesStaleOpenLidBeforeApplying(t *testing.T) {
+	closedAfterJSON := `[{"id":0,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":true,"dpmsStatus":true,"mirrorOf":""},{"id":1,"name":"DP-1","description":"Dell U2720Q","make":"Dell","model":"U2720Q","serial":"B1","width":3840,"height":2160,"refreshRate":60,"x":1920,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, applyBestDualBeforeJSON, closedAfterJSON)
+	if err := env.store.Save(profile.FromMonitors("Home", applyBestDualMonitors())); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	logs := &logRecorder{}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+		Logf:         logs.logf,
+	})
+	svc.lidSupported = true
+	svc.lidState = lid.Open
+	svc.readLid = func(context.Context) (lid.State, error) { return lid.Closed, nil }
+
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	if !logs.contains("lid closed: forced internal outputs off") {
+		t.Fatalf("closed-lid policy did not run:\n%s", logs.all())
+	}
+	rendered := readMonitorsConf(t, env)
+	if !strings.Contains(rendered, "disable") {
+		t.Fatalf("expected the internal panel disabled with the lid closed:\n%s", rendered)
 	}
 }

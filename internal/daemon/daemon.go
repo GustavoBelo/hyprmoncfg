@@ -14,6 +14,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/suspend"
 )
 
 type Config struct {
@@ -44,6 +45,11 @@ type Service struct {
 	applied       string
 	lastSeenHash  string
 	lidState      lid.State
+	lidSupported  bool
+
+	readLid      func(context.Context) (lid.State, error)
+	watchLid     func(context.Context, time.Duration) (<-chan lid.State, <-chan error)
+	watchSuspend func(context.Context) <-chan bool
 }
 
 var errDisplaysSleeping = errors.New("displays are sleeping")
@@ -137,8 +143,11 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 			HyprlandConfigPath: cfg.HyprConfig,
 			Logf:               cfg.Logf,
 		},
-		cfg:      cfg,
-		lidState: lid.Unknown,
+		cfg:          cfg,
+		lidState:     lid.Unknown,
+		readLid:      lid.ReadState,
+		watchLid:     lid.Watch,
+		watchSuspend: suspend.Watch,
 	}
 }
 
@@ -167,13 +176,16 @@ func (s *Service) Run(ctx context.Context) error {
 
 	var lidStates <-chan lid.State
 	var lidErrs <-chan error
-	if state, err := lid.ReadState(ctx); err != nil {
+	if state, err := s.readLid(ctx); err != nil {
 		s.cfg.Logf("lid events disabled: %v", err)
 	} else {
+		s.lidSupported = true
 		s.lidState = state
 		s.cfg.Logf("lid state: %s", state)
-		lidStates, lidErrs = lid.Watch(ctx, s.cfg.LidPollInterval)
+		lidStates, lidErrs = s.watchLid(ctx, s.cfg.LidPollInterval)
 	}
+
+	suspendEvents := s.watchSuspend(ctx)
 
 	events, eventErrs := s.client.SubscribeMonitorEvents(ctx)
 	var eventRetry <-chan time.Time
@@ -271,6 +283,29 @@ func (s *Service) Run(ctx context.Context) error {
 			if events == nil && eventErrs == nil {
 				events, eventErrs = s.client.SubscribeMonitorEvents(ctx)
 			}
+		case sleeping, ok := <-suspendEvents:
+			if !ok {
+				suspendEvents = nil
+				continue
+			}
+			if sleeping {
+				// A lid close that suspends the machine must not be applied on
+				// resume: by then the lid is usually open again, and honoring
+				// the stale close would turn the panel off in the user's face.
+				if pending {
+					s.cfg.Logf("suspending; dropped the pending trigger")
+				}
+				pending = false
+				settlingAfterWake = false
+				stopDebounce()
+				continue
+			}
+			s.cfg.Logf("resumed from sleep; waking displays")
+			s.refreshLidState(ctx)
+			s.wakeDisplays(ctx)
+			displayGuard.sleeping = false
+			settlingAfterWake = true
+			pushTrigger("resume", s.cfg.WakeSettle)
 		case state, ok := <-lidStates:
 			if !ok {
 				lidStates = nil
@@ -280,6 +315,15 @@ func (s *Service) Run(ctx context.Context) error {
 				s.lidState = state
 				s.clearManualOverride()
 				reason := "lid:" + string(state)
+				if state == lid.Open {
+					// Opening the lid is an explicit ask for light. Wake the
+					// displays instead of waiting for a keypress to do it.
+					s.wakeDisplays(ctx)
+					if displayGuard.sleeping {
+						displayGuard.sleeping = false
+						settlingAfterWake = true
+					}
+				}
 				if displayGuard.sleeping {
 					deferForDisplaySleep(reason)
 				} else {
@@ -388,6 +432,46 @@ func (s *Service) ensureConfigInclude(ctx context.Context) {
 		s.cfg.Logf("%s %s: %s", action, result.RootPath, result.Line)
 	}
 }
+
+// refreshLidState re-reads the lid switch so decisions made now use the lid as
+// it is, not as it was when the triggering event fired. The two diverge across
+// a suspend: the close that suspended the machine is still the cached state
+// when the resume releases the deferred apply, and honoring it would disable
+// the internal panel right as the user opens the laptop.
+func (s *Service) refreshLidState(ctx context.Context) {
+	if !s.lidSupported {
+		return
+	}
+	state, err := s.readLid(ctx)
+	if err != nil || !state.Known() || state == s.lidState {
+		return
+	}
+	s.cfg.Logf("lid state: %s", state)
+	s.lidState = state
+	s.clearManualOverride()
+}
+
+// wakeDisplays turns every output's DPMS on. Opening the lid or resuming from
+// sleep is the user asking for light; without this the screens stay dark until
+// a keypress, and an external monitor left undriven can take half a minute to
+// come back on its own.
+func (s *Service) wakeDisplays(ctx context.Context) {
+	wakeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	version := ""
+	if info, err := s.client.Version(wakeCtx); err == nil {
+		version = info.Version
+	}
+	luaDispatch := false
+	if resolved, err := config.ResolveHyprlandConfig(version, s.cfg.MonitorsConf, s.cfg.HyprConfig); err == nil {
+		luaDispatch = resolved.Format == config.HyprConfigLua
+	}
+	if err := s.client.WakeDisplays(wakeCtx, luaDispatch); err != nil {
+		s.cfg.Logf("could not wake displays: %v", err)
+	}
+}
+
 func (s *Service) applyBest(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
@@ -399,6 +483,8 @@ func (s *Service) applyBest(ctx context.Context) error {
 		s.cfg.Logf("automatic switching paused during interactive preview")
 		return nil
 	}
+
+	s.refreshLidState(ctx)
 
 	monitors, err := s.client.Monitors(ctx)
 	if err != nil {
