@@ -34,6 +34,20 @@ If it is missing, open the panel and choose **Install hyprmoncfg**. The panel us
 
 The panel is a desktop surface for the same daemon and IPC protocol used by the TUI and CLI. It does not maintain another copy of monitor state or write Hyprland configuration on its own.
 
+## When Omarchy still moves your displays
+
+Omarchy manages monitors too, and two managers can disagree. The daemon stops Omarchy's monitor watcher while it owns your displays, but Omarchy also writes a clamshell rule and reloads Hyprland from lid and wake events.
+
+Whether that rule wins comes down to load order. Omarchy's `hyprland.lua` loads its dynamic toggles last, so a config that reads hyprmoncfg's monitors earlier hands Omarchy the final word on every reload:
+
+```bash
+hyprmoncfg doctor
+```
+
+If it reports a problem, `hyprmoncfg doctor --fix` moves the `require("hypr.monitors")` line below `require("default.hypr.toggles")` and saves your previous config next to it. Run `hyprctl reload` afterwards. Adding a second require later in the file does not work: Lua caches modules, so the repeat call does nothing.
+
+The daemon also puts a profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand.
+
 ## Remove it
 
 ```bash

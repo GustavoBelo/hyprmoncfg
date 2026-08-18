@@ -24,6 +24,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
+	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
 	"github.com/crmne/hyprmoncfg/internal/tui"
@@ -61,6 +62,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newSaveCmd(&configDir))
 	root.AddCommand(newApplyCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newDeleteCmd(&configDir))
+	root.AddCommand(newDoctorCmd(&monitorsConf, &hyprConfig))
 	root.AddCommand(newVersionCmd("hyprmoncfg"))
 
 	return root
@@ -401,6 +403,82 @@ func newDeleteCmd(configDir *string) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func newDoctorCmd(monitorsConf *string, hyprConfig *string) *cobra.Command {
+	var fix bool
+
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Check that Hyprland reads hyprmoncfg's monitor config last",
+		Long: "Report setups where another tool's monitor rules load after hyprmoncfg's " +
+			"and override the applied layout on every Hyprland reload.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDoctor(cmd, *monitorsConf, *hyprConfig, fix)
+		},
+	}
+	cmd.Flags().BoolVar(&fix, "fix", false, "Rewrite the Hyprland config to load hyprmoncfg's monitors last")
+	return cmd
+}
+
+func runDoctor(cmd *cobra.Command, monitorsConf string, hyprConfig string, fix bool) error {
+	out := cmd.OutOrStdout()
+
+	version := ""
+	if client, err := hypr.NewClient(); err == nil {
+		ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
+		defer cancel()
+		if info, err := client.Version(ctx); err == nil {
+			version = info.Version
+		}
+	}
+
+	resolved, err := config.ResolveHyprlandConfig(version, monitorsConf, hyprConfig)
+	if err != nil {
+		return err
+	}
+
+	order, err := omarchywatch.InspectConfigOrder(resolved.RootPath)
+	if err != nil {
+		return err
+	}
+	if !order.Applicable {
+		fmt.Fprintf(out, "OK  %s does not load Omarchy's monitor toggles\n", resolved.RootPath)
+		return nil
+	}
+	if !order.NeedsReorder() {
+		fmt.Fprintf(out, "OK  %s reads hyprmoncfg's monitors after Omarchy's toggles\n", resolved.RootPath)
+		return nil
+	}
+
+	fmt.Fprintf(out, "PROBLEM  %s loads Omarchy's monitor toggles after hyprmoncfg's monitors.\n", resolved.RootPath)
+	fmt.Fprintln(out, "         Omarchy writes a clamshell rule into those toggles and reloads Hyprland,")
+	fmt.Fprintln(out, "         so on every lid or wake event its rule overrides the layout you applied.")
+	if !fix {
+		fmt.Fprintln(out, "         Run `hyprmoncfg doctor --fix` to move the monitors require below the toggles.")
+		return nil
+	}
+
+	content, err := os.ReadFile(resolved.RootPath)
+	if err != nil {
+		return err
+	}
+	reordered, changed := omarchywatch.ReorderConfig(string(content))
+	if !changed {
+		return fmt.Errorf("could not move the monitors require in %s; reorder it by hand", resolved.RootPath)
+	}
+
+	backup := resolved.RootPath + ".hyprmoncfg-backup"
+	if err := config.WriteFileAtomic(backup, content, 0o644); err != nil {
+		return fmt.Errorf("back up %s: %w", resolved.RootPath, err)
+	}
+	if err := config.WriteFileAtomic(resolved.RootPath, []byte(reordered), 0o644); err != nil {
+		return fmt.Errorf("rewrite %s: %w", resolved.RootPath, err)
+	}
+
+	fmt.Fprintf(out, "FIXED    hyprmoncfg's monitors now load last. Previous config saved to %s\n", backup)
+	fmt.Fprintln(out, "         Run `hyprctl reload` or restart Hyprland to pick up the new order.")
+	return nil
 }
 
 func newVersionCmd(name string) *cobra.Command {
