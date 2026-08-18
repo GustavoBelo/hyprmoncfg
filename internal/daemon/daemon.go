@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -364,6 +365,13 @@ func (s *Service) ensureConfigInclude(ctx context.Context) {
 	resolved, err := config.ResolveHyprlandConfig(version, s.cfg.MonitorsConf, s.cfg.HyprConfig)
 	if err != nil {
 		s.cfg.Logf("could not resolve the Hyprland config: %v", err)
+		return
+	}
+
+	// Before the first apply the generated file does not exist yet, and an
+	// include naming a missing file is a config error on the next reload. The
+	// apply that creates it adds the include in the same breath.
+	if _, err := os.Stat(resolved.MonitorsPath); err != nil {
 		return
 	}
 

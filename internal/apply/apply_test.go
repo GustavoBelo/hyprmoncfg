@@ -1645,3 +1645,57 @@ func TestInternalOutputScaleFindsTheLaptopPanelEvenWhenTurnedOff(t *testing.T) {
 		t.Fatalf("expected no internal panel scale, got %v", scale)
 	}
 }
+
+func TestApplyNeverLeavesTheConfigWithoutMonitorRules(t *testing.T) {
+	// The upgrade path: the old generated file still holds the live rules, and
+	// the new one does not exist yet. Nothing in between may leave the config
+	// naming a file that is not there, or with no monitor rules at all.
+	engine, generatedPath, _ := initLuaProbeTestEngine(t, "ok", nil)
+	hyprDir := filepath.Dir(generatedPath)
+	legacyPath := filepath.Join(hyprDir, "monitors.lua")
+
+	legacy := config.GeneratedLuaHeader + "\nhl.monitor({ output = \"desc:Old\", scale = 1 })\n"
+	if err := os.WriteFile(legacyPath, []byte(legacy), 0o644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	rootPath := filepath.Join(hyprDir, "hyprland.lua")
+	root, err := os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatalf("read root config: %v", err)
+	}
+	if strings.Contains(string(root), "hyprmoncfg-monitors") {
+		t.Fatal("expected no include before the first apply")
+	}
+	// An include added before the file exists breaks the next reload, which is
+	// what makes a daemon restart flash the wrong layout.
+	if _, err := os.Stat(generatedPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected the generated file to be absent, stat error: %v", err)
+	}
+
+	if _, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	root, err = os.ReadFile(rootPath)
+	if err != nil {
+		t.Fatalf("read root config: %v", err)
+	}
+	if !strings.Contains(string(root), "hyprmoncfg-monitors") {
+		t.Fatalf("expected the include after the apply, got:\n%s", root)
+	}
+	if _, err := os.Stat(generatedPath); err != nil {
+		t.Fatalf("expected the generated file to exist: %v", err)
+	}
+
+	retired, err := os.ReadFile(legacyPath)
+	if err != nil {
+		t.Fatalf("read retired config: %v", err)
+	}
+	if strings.Contains(string(retired), "desc:Old") {
+		t.Fatalf("expected the old rules to be retired once the new file works, got:\n%s", retired)
+	}
+	if !strings.Contains(string(retired), "no longer writes this file") {
+		t.Fatalf("expected a note pointing at the new file, got:\n%s", retired)
+	}
+}

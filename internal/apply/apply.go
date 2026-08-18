@@ -187,10 +187,6 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return RevertState{}, err
 	}
-	// The reload below is the moment load order decides whose rules win, so make
-	// sure the file about to be written is the last one Hyprland reads.
-	e.ensureConfigInclude(resolvedConfig)
-
 	backup, err := config.SnapshotFile(resolvedConfig.MonitorsPath)
 	if err != nil {
 		return RevertState{}, err
@@ -213,6 +209,12 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	if err != nil {
 		return RevertState{}, err
 	}
+
+	// The reload below is the moment load order decides whose rules win, so the
+	// include has to be in place for it. The file it names is written just
+	// after this, and never before: an include pointing at a file that does not
+	// exist yet is a config error on any reload that lands in between.
+	e.ensureConfigInclude(resolvedConfig)
 	renderedForReload := rendered
 	luaProbe := ""
 	if resolvedConfig.Format == config.HyprConfigLua {
@@ -259,6 +261,10 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		return RevertState{}, err
 	}
 
+	// Only once the new file is proven to load do the old file's rules stop
+	// being the safety net.
+	e.retireLegacyMonitorsFile(resolvedConfig)
+
 	if err := e.applyLiveCommands(ctx, workspaceCommandsForProfile(p, applied, luaDispatch)); err != nil {
 		_ = backup.Restore()
 		_ = e.Client.Reload(ctx)
@@ -280,8 +286,7 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 }
 
 // ensureConfigInclude keeps the generated monitor config loaded last by the
-// root Hyprland config, and retires a monitors file an older hyprmoncfg used to
-// own. A file hyprmoncfg did not write is never touched.
+// root Hyprland config.
 func (e Engine) ensureConfigInclude(resolved config.ResolvedHyprConfig) {
 	result, err := config.EnsureIncluded(resolved.RootPath, resolved.Format, resolved.MonitorsPath)
 	if err != nil {
@@ -298,11 +303,19 @@ func (e Engine) ensureConfigInclude(resolved config.ResolvedHyprConfig) {
 		e.Logf("%s %s: %s", action, result.RootPath, result.Line)
 	}
 
-	if retired, err := config.RetireLegacyMonitorsFile(resolved.Format, resolved.MonitorsPath); err != nil {
+}
+
+// retireLegacyMonitorsFile empties the monitors file an older hyprmoncfg owned,
+// once its rules are safely being served from the new one.
+func (e Engine) retireLegacyMonitorsFile(resolved config.ResolvedHyprConfig) {
+	retired, err := config.RetireLegacyMonitorsFile(resolved.Format, resolved.MonitorsPath)
+	if err != nil {
 		if e.Logf != nil {
 			e.Logf("could not retire the previous generated monitor config: %v", err)
 		}
-	} else if retired != "" && e.Logf != nil {
+		return
+	}
+	if retired != "" && e.Logf != nil {
 		e.Logf("hyprmoncfg no longer writes %s; its rules now live in %s", retired, resolved.MonitorsPath)
 	}
 }
