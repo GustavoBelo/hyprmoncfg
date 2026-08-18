@@ -323,3 +323,27 @@ func TestConfirmationDialogsAcceptAShiftedYes(t *testing.T) {
 		t.Fatal("expected an uppercase N to decline and close the dialog")
 	}
 }
+
+func TestOriginShortcutMovesTheSelectedMonitorToZeroZero(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		tab:         tabLayout,
+		layoutFocus: layoutFocusCanvas,
+		editOutputs: []editableOutput{
+			{Key: "a", Name: "DP-1", Enabled: true, Scale: 1, Width: 3840, Height: 2160, X: 3820, Y: 927},
+			{Key: "b", Name: "DP-2", Enabled: true, Scale: 1, Width: 2560, Height: 1440, X: 0, Y: 0},
+		},
+	}
+
+	updated, cmd := m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}})
+	got := mustModel(t, updated)
+	if got.editOutputs[0].X != 0 || got.editOutputs[0].Y != 0 {
+		t.Fatalf("expected the selected monitor at 0,0, got %d,%d", got.editOutputs[0].X, got.editOutputs[0].Y)
+	}
+	if got.editOutputs[1].X != 0 || got.editOutputs[1].Y != 0 {
+		t.Fatal("expected the other monitor to be left where it was")
+	}
+	if !got.dirty || cmd == nil {
+		t.Fatalf("expected a dirty layout and a confirmation, dirty=%v cmd=%v", got.dirty, cmd != nil)
+	}
+}

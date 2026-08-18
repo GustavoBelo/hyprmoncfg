@@ -38,7 +38,7 @@ type footerLayout struct {
 func (m Model) footerHelpText() string {
 	switch m.tab {
 	case tabLayout:
-		return "`drag/arrows` move | `Alt+arrows` snap | `[ ]` cycle | `Enter/Tab` edit/pane | `a/s` apply/save | `r` reset"
+		return "`drag/arrows` move | `Alt+arrows` snap | `0` origin | `[ ]` cycle | `Enter/Tab` edit/pane | `a/s` apply/save | `r` reset"
 	case tabProfiles:
 		return "`Enter` load | `a` apply | `e` edit exec | `d` delete | `s` save"
 	case tabWorkspaces:

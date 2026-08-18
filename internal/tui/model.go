@@ -720,6 +720,8 @@ func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.layoutFocus = layoutFocusCanvas
 		}
 		return m, nil
+	case "0":
+		return m, m.moveSelectedOutputToOrigin()
 	case "[":
 		if m.layoutFocus == layoutFocusCanvas {
 			m.selectedOutput = clampIndex(m.selectedOutput-1, len(m.editOutputs))
@@ -2016,6 +2018,24 @@ func outputNameForKeyIn(outputs []editableOutput, key string) string {
 		}
 	}
 	return key
+}
+
+// moveSelectedOutputToOrigin puts the selected monitor where Hyprland's own
+// `position = auto` would put a first monitor, so the layout can be compared
+// against what Hyprland does on its own.
+func (m *Model) moveSelectedOutputToOrigin() tea.Cmd {
+	if len(m.editOutputs) == 0 {
+		return nil
+	}
+	output := m.editOutputs[m.selectedOutput]
+	if output.X == 0 && output.Y == 0 {
+		return m.notifyUser(fmt.Sprintf("%s is already at 0,0", output.Name), false)
+	}
+
+	m.editOutputs[m.selectedOutput].X = 0
+	m.editOutputs[m.selectedOutput].Y = 0
+	m.layoutChanged()
+	return m.notifyUser(fmt.Sprintf("Moved %s to 0,0", output.Name), false)
 }
 
 func (m *Model) moveSelectedOutput(dx, dy int) {

@@ -39,6 +39,7 @@ The canvas only draws displays that are on and not mirroring another one. Anythi
 | `Shift` + arrows | Move by 10px |
 | `Ctrl` + arrows | Move by 1px |
 | `Alt` + arrows | Snap beside the nearest enabled monitor |
+| `0` | Move the selected monitor to 0,0, where Hyprland's own `position = auto` starts |
 | `[` `]` | Cycle selected monitor |
 | `Tab` | Switch focus between the canvas and monitor controls |
 
