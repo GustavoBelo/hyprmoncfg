@@ -3452,8 +3452,7 @@ func (o editableOutput) displayModelLabel() string {
 }
 
 func isInternalOutputName(name string) bool {
-	name = strings.ToLower(strings.TrimSpace(name))
-	return strings.HasPrefix(name, "edp") || strings.HasPrefix(name, "lvds") || strings.HasPrefix(name, "dsi")
+	return hypr.IsInternalConnector(name)
 }
 
 type cardLine struct {

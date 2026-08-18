@@ -46,7 +46,10 @@ hyprmoncfg doctor
 
 The daemon fixes this for you at startup, the same way it stops Omarchy's monitor watcher: it moves the `require("hypr.monitors")` line below `require("default.hypr.toggles")` and saves your previous config next to it as `hyprland.lua.hyprmoncfg-backup`. `hyprmoncfg doctor --fix` does the same thing on demand. Adding a second require later in the file does not work: Lua caches modules, so the repeat call does nothing.
 
-The daemon also puts a profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand.
+Load order settles what happens on reload, but Omarchy's clamshell script also drives Hyprland directly with `hyprctl`, which no config ordering can outrank. Two things cover that:
+
+- Every apply records the internal panel's scale where that script looks for it, so a lid or wake event brings the panel back at your scale rather than Omarchy's default of `2`
+- The daemon puts the whole profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand. That is what covers the mode and position the same script forces
 
 ## Remove it
 

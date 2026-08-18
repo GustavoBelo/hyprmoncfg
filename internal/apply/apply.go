@@ -16,6 +16,7 @@ import (
 	"github.com/buildkite/shellwords"
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/render"
 	"github.com/crmne/hyprmoncfg/internal/scaling"
@@ -286,6 +287,8 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 		return RevertState{}, err
 	}
 
+	e.recordInternalScaleForOmarchy(p, monitors)
+
 	if mode == ApplyModeNonInteractive {
 		if err = e.PostApply(ctx, p); err != nil {
 			if e.Logf != nil {
@@ -295,6 +298,42 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	}
 
 	return revertState, nil
+}
+
+// recordInternalScaleForOmarchy keeps Omarchy's remembered internal-panel scale
+// in step with what we just applied, so its clamshell script restores the panel
+// at our scale instead of its own default. Best effort: on any other system,
+// and for any profile without an internal panel, it does nothing.
+func (e Engine) recordInternalScaleForOmarchy(p profile.Profile, monitors []hypr.Monitor) {
+	scale, ok := internalOutputScale(p, monitors)
+	if !ok {
+		return
+	}
+	if err := omarchywatch.StoreInternalScale(scale); err != nil && e.Logf != nil {
+		e.Logf("could not record the internal panel scale for Omarchy: %v", err)
+	}
+}
+
+// internalOutputScale returns the scale a profile wants on the laptop panel,
+// including when the profile turns that panel off: that is exactly the value
+// Omarchy needs when it turns the panel back on.
+func internalOutputScale(p profile.Profile, monitors []hypr.Monitor) (float64, bool) {
+	resolver := profile.NewMonitorResolver(monitors)
+	for _, output := range p.Outputs {
+		if output.Scale <= 0 {
+			continue
+		}
+		if monitor, ok := resolver.ResolveOutput(output); ok {
+			if monitor.IsInternal() {
+				return output.Scale, true
+			}
+			continue
+		}
+		if hypr.IsInternalConnector(output.Name) {
+			return output.Scale, true
+		}
+	}
+	return 0, false
 }
 
 func addLuaExecutionProbe(rendered string) (string, string, error) {

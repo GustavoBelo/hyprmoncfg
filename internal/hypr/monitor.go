@@ -95,8 +95,14 @@ func (m Monitor) Bitdepth() int {
 }
 
 func (m Monitor) IsInternal() bool {
-	n := strings.ToLower(m.Name)
-	return strings.HasPrefix(n, "edp") || strings.HasPrefix(n, "lvds") || strings.HasPrefix(n, "dsi")
+	return IsInternalConnector(m.Name)
+}
+
+// IsInternalConnector reports whether a connector name belongs to a laptop's
+// built-in panel, for callers that hold a name rather than a live monitor.
+func IsInternalConnector(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(name, "edp") || strings.HasPrefix(name, "lvds") || strings.HasPrefix(name, "dsi")
 }
 
 func (m Monitor) HardwareKey() string {
