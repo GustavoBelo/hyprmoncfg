@@ -128,7 +128,14 @@ func (s *Service) Confirm(owner string, params ipc.TransactionParams) error {
 	if err := s.engine.PostApply(ctx, pending.profile); err != nil {
 		s.cfg.Logf("post apply for %q failed: %v", pending.profile.Name, err)
 	}
-	s.setManualOverride(pending.monitorSet)
+	s.setManualOverride(pending.monitorSet, pending.profile)
+	// Record what the confirmed profile left on screen, so the next automatic
+	// pass recognizes the current state instead of applying it a second time.
+	if monitors, err := s.client.Monitors(ctx); err != nil {
+		s.cfg.Logf("refresh monitors after confirm failed: %v", err)
+	} else {
+		s.applied = pending.profile.Name + "|" + profile.MonitorStateHash(monitors) + "|lid=" + string(s.lidState)
+	}
 	s.signalChange()
 	return nil
 }

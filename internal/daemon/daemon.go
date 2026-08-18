@@ -27,20 +27,21 @@ type Config struct {
 }
 
 type Service struct {
-	client       *hypr.Client
-	store        *profile.Store
-	engine       apply.Engine
-	cfg          Config
-	writeMu      sync.Mutex
-	pendingMu    sync.Mutex
-	pending      *pendingTransaction
-	manualMu     sync.Mutex
-	manualSet    string
-	notifyMu     sync.RWMutex
-	notify       func()
-	applied      string
-	lastSeenHash string
-	lidState     lid.State
+	client        *hypr.Client
+	store         *profile.Store
+	engine        apply.Engine
+	cfg           Config
+	writeMu       sync.Mutex
+	pendingMu     sync.Mutex
+	pending       *pendingTransaction
+	manualMu      sync.Mutex
+	manualSet     string
+	manualProfile profile.Profile
+	notifyMu      sync.RWMutex
+	notify        func()
+	applied       string
+	lastSeenHash  string
+	lidState      lid.State
 }
 
 var errDisplaysSleeping = errors.New("displays are sleeping")
@@ -372,17 +373,20 @@ func (s *Service) applyBest(ctx context.Context) error {
 
 	hash := profile.MonitorStateHash(monitors)
 	monitorSet := profile.MonitorSetHash(monitors)
-	if s.cfg.ForcedProfile == "" && s.manualOverrideActive(monitorSet) {
-		s.cfg.Logf("keeping manually selected profile until monitor hotplug or lid change")
-		return nil
-	}
 
 	var target profile.Profile
+	manualHold := false
 	if s.cfg.ForcedProfile != "" {
 		target, err = s.store.Load(s.cfg.ForcedProfile)
 		if err != nil {
 			return fmt.Errorf("forced profile %q not found: %w", s.cfg.ForcedProfile, err)
 		}
+	} else if manual, ok := s.manualOverride(monitorSet); ok {
+		// A profile chosen by hand outranks matching until the hardware
+		// changes. Standing down here instead would hand the displays to
+		// whatever moved them, so re-assert the choice rather than abandon it.
+		target = manual
+		manualHold = true
 	} else {
 		profiles, err := s.store.List()
 		if err != nil {
@@ -434,6 +438,9 @@ func (s *Service) applyBest(ctx context.Context) error {
 	if applyKey == s.applied {
 		return nil
 	}
+	if manualHold {
+		s.cfg.Logf("restoring manually selected profile %q after an external change", target.Name)
+	}
 
 	if _, err := s.engine.Apply(ctx, effective, monitors); err != nil {
 		return err
@@ -469,29 +476,35 @@ func (s *Service) signalChange() {
 	}
 }
 
-func (s *Service) setManualOverride(monitorSet string) {
+func (s *Service) setManualOverride(monitorSet string, chosen profile.Profile) {
 	s.manualMu.Lock()
 	s.manualSet = monitorSet
+	s.manualProfile = chosen
 	s.manualMu.Unlock()
 }
 
 func (s *Service) clearManualOverride() {
 	s.manualMu.Lock()
 	s.manualSet = ""
+	s.manualProfile = profile.Profile{}
 	s.manualMu.Unlock()
 }
 
-func (s *Service) manualOverrideActive(monitorSet string) bool {
+// manualOverride returns the profile a person chose by hand. The choice holds
+// until the monitor set changes, and it is a profile rather than a flag so the
+// daemon can put it back when something else moves the displays.
+func (s *Service) manualOverride(monitorSet string) (profile.Profile, bool) {
 	s.manualMu.Lock()
 	defer s.manualMu.Unlock()
 	if s.manualSet == "" {
-		return false
+		return profile.Profile{}, false
 	}
 	if s.manualSet != monitorSet {
 		s.manualSet = ""
-		return false
+		s.manualProfile = profile.Profile{}
+		return profile.Profile{}, false
 	}
-	return true
+	return s.manualProfile, true
 }
 
 func internalOnlyFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool) {

@@ -128,25 +128,26 @@ func TestInternalOnlyFallbackProfileRequiresInternalOutput(t *testing.T) {
 
 func TestManualOverrideLastsUntilMonitorSetChanges(t *testing.T) {
 	svc := &Service{}
-	svc.setManualOverride("desk-set")
+	svc.setManualOverride("desk-set", profile.Profile{Name: "desk"})
 
-	if !svc.manualOverrideActive("desk-set") {
-		t.Fatal("expected manual profile to remain active for the same monitor set")
+	chosen, ok := svc.manualOverride("desk-set")
+	if !ok || chosen.Name != "desk" {
+		t.Fatalf("expected the chosen profile to remain in force, got %+v (ok=%v)", chosen, ok)
 	}
-	if svc.manualOverrideActive("projector-set") {
+	if _, ok := svc.manualOverride("projector-set"); ok {
 		t.Fatal("expected monitor hotplug to clear the manual profile override")
 	}
-	if svc.manualOverrideActive("desk-set") {
+	if _, ok := svc.manualOverride("desk-set"); ok {
 		t.Fatal("expected cleared manual profile override to stay cleared")
 	}
 }
 
 func TestClearManualOverride(t *testing.T) {
 	svc := &Service{}
-	svc.setManualOverride("desk-set")
+	svc.setManualOverride("desk-set", profile.Profile{Name: "desk"})
 	svc.clearManualOverride()
 
-	if svc.manualOverrideActive("desk-set") {
+	if _, ok := svc.manualOverride("desk-set"); ok {
 		t.Fatal("expected explicit clear to remove manual profile override")
 	}
 }
@@ -573,4 +574,104 @@ func readMonitorsConf(t *testing.T, env applyBestTestEnv) string {
 		t.Fatalf("read monitors.conf: %v", err)
 	}
 	return string(rendered)
+}
+
+func TestApplyBestRestoresTheManuallyChosenProfileAfterAnExternalChange(t *testing.T) {
+	// Something outside hyprmoncfg moved the panel: the monitor set is the same
+	// hardware, but its scale and position are no longer what was applied.
+	drifted := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	restored := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":100,"y":200,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, drifted, restored)
+	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
+
+	chosen := profile.New("hand-picked", []profile.OutputConfig{{
+		Key:     mon.HardwareKey(),
+		Name:    mon.Name,
+		Enabled: true,
+		Width:   2880,
+		Height:  1800,
+		Refresh: 120,
+		X:       100,
+		Y:       200,
+		Scale:   1.5,
+	}})
+	decoy := profile.New("aaa-auto-match", []profile.OutputConfig{{
+		Key:     mon.HardwareKey(),
+		Name:    mon.Name,
+		Enabled: true,
+		Width:   2880,
+		Height:  1800,
+		Refresh: 120,
+		X:       0,
+		Y:       0,
+		Scale:   3,
+	}})
+	for _, saved := range []profile.Profile{chosen, decoy} {
+		if err := env.store.Save(saved); err != nil {
+			t.Fatalf("save profile %q: %v", saved.Name, err)
+		}
+	}
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	svc.setManualOverride(profile.MonitorSetHash([]hypr.Monitor{mon}), chosen)
+
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	rendered := readMonitorsConf(t, env)
+	for _, want := range []string{"position = 100x200", "scale = 1.5"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected the hand-picked profile to be restored, missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "scale = 3") {
+		t.Fatalf("expected the manual choice to outrank automatic matching:\n%s", rendered)
+	}
+}
+
+func TestApplyBestLeavesTheManualChoiceAloneWhenNothingMoved(t *testing.T) {
+	monitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":100,"y":200,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, monitorsJSON, monitorsJSON)
+	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
+
+	chosen := profile.New("hand-picked", []profile.OutputConfig{{
+		Key:     mon.HardwareKey(),
+		Name:    mon.Name,
+		Enabled: true,
+		Width:   2880,
+		Height:  1800,
+		Refresh: 120,
+		X:       100,
+		Y:       200,
+		Scale:   1.5,
+	}})
+	if err := env.store.Save(chosen); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	svc.setManualOverride(profile.MonitorSetHash([]hypr.Monitor{mon}), chosen)
+	svc.applied = chosen.Name + "|" + profile.MonitorStateHash([]hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, X: 100, Y: 200, Scale: 1.5,
+	}}) + "|lid=" + string(svc.lidState)
+
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	logBytes, err := os.ReadFile(env.logPath)
+	if err != nil {
+		t.Fatalf("read hyprctl log: %v", err)
+	}
+	if strings.Contains(string(logBytes), "reload") {
+		t.Fatalf("expected no reload when the manual choice is already on screen, got:\n%s", logBytes)
+	}
 }
