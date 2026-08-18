@@ -351,10 +351,9 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
-// ensureConfigOrder takes the last word in the Hyprland config, the same way
-// the daemon takes the monitor watcher: Omarchy loads its dynamic toggles after
-// the personal overrides, so a config that reads our monitors earlier lets its
-// clamshell rule override every layout we apply.
+// ensureConfigOrder takes the last word in the Hyprland config before any
+// profile is applied, the same way the daemon takes the monitor watcher.
+// Applying does this too, so this only covers the window before the first one.
 func (s *Service) ensureConfigOrder(ctx context.Context) {
 	version := ""
 	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)

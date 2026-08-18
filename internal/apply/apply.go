@@ -206,6 +206,10 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 			return RevertState{}, err
 		}
 	}
+	// The reload below is the moment load order decides who wins, so take the
+	// last word here rather than only when a daemon happens to be running.
+	e.ensureConfigOrder(resolvedConfig.RootPath)
+
 	backup, err := config.SnapshotFile(resolvedConfig.MonitorsPath)
 	if err != nil {
 		return RevertState{}, err
@@ -298,6 +302,25 @@ func (e Engine) Apply(ctx context.Context, p profile.Profile, monitors []hypr.Mo
 	}
 
 	return revertState, nil
+}
+
+// ensureConfigOrder makes sure the config we are about to write is the last one
+// Hyprland reads, so another manager's rules cannot override this apply.
+func (e Engine) ensureConfigOrder(rootPath string) {
+	reorder, err := omarchywatch.EnsureConfigOrder(rootPath)
+	if err != nil {
+		if e.Logf != nil {
+			e.Logf("could not give hyprmoncfg's monitors the last word in %s: %v", rootPath, err)
+		}
+		return
+	}
+	if reorder.Changed && e.Logf != nil {
+		e.Logf(
+			"moved hyprmoncfg's monitors below Omarchy's toggles in %s (previous config: %s)",
+			reorder.Path,
+			reorder.BackupPath,
+		)
+	}
 }
 
 // recordInternalScaleForOmarchy keeps Omarchy's remembered internal-panel scale
