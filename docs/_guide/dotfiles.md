@@ -16,7 +16,9 @@ The daemon on each machine looks at what's actually plugged in and picks the rig
 
 **Commit**: `~/.config/hyprmoncfg/` -- your profile library.
 
-**Don't commit**: the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua` -- hyprmoncfg rewrites the active target from the selected JSON profile and current monitor state. Committing it causes conflicts between machines with different monitors.
+**Don't commit**: the generated `~/.config/hypr/hyprmoncfg-monitors.conf` or `~/.config/hypr/hyprmoncfg-monitors.lua` -- hyprmoncfg rewrites it from the selected JSON profile and current monitor state. Committing it causes conflicts between machines with different monitors.
+
+**Do commit**: the one line hyprmoncfg adds at the end of your Hyprland config to load that file. It names no machine-specific path, so it works everywhere, and committing it stops your dotfile tool and hyprmoncfg from taking turns undoing each other.
 
 ## chezmoi
 

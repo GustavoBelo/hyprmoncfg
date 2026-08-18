@@ -39,7 +39,7 @@ hyprmoncfg is a visual multi-monitor layout editor and automatic profile switche
 - **Safe apply with revert** -- reload Hyprland, verify the result, and revert unless you confirm
 - **One-writer IPC** -- when the daemon is running, the TUI, CLI, and desktop panels send changes through it instead of racing over config files
 - **Include-chain verification** -- refuse to write generated monitor config that Hyprland is not reading
-- **Hyprland 0.55 Lua config support** -- use `monitors.lua` automatically when `hyprland.lua` is active, while preserving legacy `monitors.conf` setups
+- **Hyprland 0.55 Lua config support** -- write Lua automatically when `hyprland.lua` is active, while preserving legacy `.conf` setups
 - **One hard runtime dependency** -- Hyprland; UPower is optional for immediate lid events
 
 ## Install
@@ -97,13 +97,7 @@ Distro packagers should use [PACKAGING.md](PACKAGING.md).
 
 ## Configure Hyprland
 
-For legacy configs, make sure `~/.config/hypr/hyprland.conf` sources `monitors.conf`:
-
-```text
-source = ~/.config/hypr/monitors.conf
-```
-
-For Hyprland 0.55+ Lua configs, include `monitors.lua` from `hyprland.lua`, for example with `pcall(require, "monitors")`. hyprmoncfg verifies legacy source chains before writing; for Lua, it reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. Existing files without hyprmoncfg's first-line ownership marker are protected: interactive use asks before replacing them, and the daemon refuses.
+hyprmoncfg writes `~/.config/hypr/hyprmoncfg-monitors.lua` (or `.conf` on legacy configs), a file it creates and owns, and adds one line at the end of your root Hyprland config to load it. Loading last is what makes an applied layout final: any monitor rule read afterwards would override it. Your own `monitors.conf` or `monitors.lua` is never replaced. Run `hyprmoncfg doctor` to check the load order at any time.
 
 ## Create your first profile
 
@@ -212,7 +206,7 @@ chezmoi add ~/.config/hyprmoncfg
 
 Now your desk at home, your laptop on the road, and your Raspberry Pi in the closet all share the same profile library. The daemon picks the right one based on what's actually plugged in.
 
-You don't commit the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua`. You commit your profiles. The tool writes the active generated monitor config for you.
+You don't commit the generated `~/.config/hypr/hyprmoncfg-monitors.{conf,lua}`. You commit your profiles. The tool writes the generated monitor config for you.
 
 ## How it compares
 

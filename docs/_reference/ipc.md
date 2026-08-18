@@ -38,7 +38,7 @@ Errors replace `result` with an object containing a stable `code`, a human-reada
 |---|---|---|
 | `status` | none | Status document |
 | `subscribe` | none | Current status document, followed by `status` events |
-| `preview` | `profile_name` or a full `profile`; optional `allow_unmanaged_overwrite` and `timeout_seconds` | Transaction |
+| `preview` | `profile_name` or a full `profile`; optional `timeout_seconds` | Transaction |
 | `confirm` | `transaction_id` | none |
 | `revert` | `transaction_id` | none |
 | `save` | full `profile` | none |

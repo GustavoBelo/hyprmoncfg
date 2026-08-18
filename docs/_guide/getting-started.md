@@ -80,21 +80,17 @@ hyprmoncfg needs:
 
 For legacy hyprlang configs, most setups already have this in `~/.config/hypr/hyprland.conf`:
 
-```text
-source = ~/.config/hypr/monitors.conf
-```
-
-For Hyprland 0.55+ Lua configs, add this to `~/.config/hypr/hyprland.lua` instead:
+hyprmoncfg writes a file it creates and owns, `~/.config/hypr/hyprmoncfg-monitors.lua` (or `.conf` on legacy configs), and adds one line at the end of your root Hyprland config to load it:
 
 ```lua
-pcall(require, "monitors")
+dofile(os.getenv("HOME") .. "/.config/hypr/hyprmoncfg-monitors.lua")
 ```
 
-The protected call lets Hyprland start before the generated file exists. A direct `require("monitors")`, `dofile(...)`, or another Lua include strategy also works as long as Hyprland executes the generated file when it reloads.
+Loading last is what makes an applied layout final: any monitor rule Hyprland reads afterwards would override it. You do not need to add the line yourself, and nothing you wrote is replaced -- a `monitors.conf` or `monitors.lua` of your own is left alone. `hyprmoncfg doctor` reports the current state if you want to check.
 
-Hyprland does not read the generated monitor file automatically. On apply, hyprmoncfg reloads Hyprland and asks the active Lua state to confirm that the generated monitor file actually ran. This works through nested or computed includes and custom `package.path` values without trying to parse Lua. If the file did not run, hyprmoncfg restores the previous file and suggests an absolute `dofile(...)` line.
+If your Hyprland config is managed by a dotfile tool such as chezmoi or stow, keep that line in your source copy. Otherwise your dotfile tool and hyprmoncfg will keep undoing each other.
 
-You do not need to create `monitors.conf` or `monitors.lua` yourself. hyprmoncfg creates the active generated file when you apply your first profile, then rewrites files carrying its first-line ownership marker on each apply. An existing unmarked file is treated as user-owned: interactive use asks before replacing it, while the daemon refuses. Keep unrelated Hyprland settings in other included files, or choose a separate generated target with `--monitors-conf`.
+Hyprland does not read the generated file automatically, so on apply hyprmoncfg reloads Hyprland and asks the active Lua state to confirm that the file actually ran. If it did not, hyprmoncfg restores the previous file rather than leaving you with a layout that silently did nothing.
 
 If your config files live somewhere other than the defaults:
 
@@ -182,7 +178,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now hyprmoncfgd
 ```
 
-Now when you plug in a monitor, unplug one, dock your laptop, or close the lid, the daemon finds the profile that best matches your current hardware and applies it. No interaction needed. The packaged systemd service works with both config formats because the daemon detects the active Hyprland config and writes `monitors.conf` or `monitors.lua` through the same apply engine as the TUI.
+Now when you plug in a monitor, unplug one, dock your laptop, or close the lid, the daemon finds the profile that best matches your current hardware and applies it. No interaction needed. The packaged systemd service works with both config formats because the daemon detects the active Hyprland config and writes the matching generated file through the same apply engine as the TUI.
 
 If the daemon ever applies a layout you didn't expect, the most common cause is stale or duplicate profiles in `~/.config/hyprmoncfg/profiles/`. The daemon scores every profile it finds, not just the ones you remember saving. Delete old experiments, keep one profile per real setup, and the matching becomes predictable. See [Daemon Behavior](/daemon/) for the full scoring breakdown.
 
@@ -198,7 +194,7 @@ chezmoi add ~/.config/hyprmoncfg
 
 Your desk at home, your laptop bag setup, your conference projector layout -- all versioned, all portable. The daemon on each machine picks the right profile based on what's actually plugged in.
 
-You never commit the active `~/.config/hypr/monitors.conf` or `~/.config/hypr/monitors.lua`. You commit your profiles. hyprmoncfg writes the active generated monitor config for you.
+You never commit the generated `~/.config/hypr/hyprmoncfg-monitors.{conf,lua}`. You commit your profiles. hyprmoncfg writes it for you. Do commit the one include line it adds to your Hyprland config, so your dotfile tool and hyprmoncfg stop undoing each other.
 
 ## Next steps
 
