@@ -223,6 +223,13 @@ func outputConfigsShareEffectiveState(a, b OutputConfig) bool {
 	if !a.Enabled {
 		return true
 	}
+	// A mirroring output shows its source's image, and Hyprland places and
+	// drives it as it sees fit: the position it reports is not the one we
+	// asked for. Only the mirror target is ours to compare, which is how
+	// apply verification already treats it.
+	if a.MirrorOf != "" || b.MirrorOf != "" {
+		return a.MirrorOf == b.MirrorOf
+	}
 
 	// Only compare fields that hyprctl accurately reports. Config-only
 	// fields (VRR mode, EDID luminance/overrides, SDR EOTF, ICC) are
@@ -237,8 +244,7 @@ func outputConfigsShareEffectiveState(a, b OutputConfig) bool {
 		effectiveSDRMultiplier(a.SDRBrightness) == effectiveSDRMultiplier(b.SDRBrightness) &&
 		effectiveSDRMultiplier(a.SDRSaturation) == effectiveSDRMultiplier(b.SDRSaturation) &&
 		a.SDRMinLuminance == b.SDRMinLuminance &&
-		a.SDRMaxLuminance == b.SDRMaxLuminance &&
-		firstNonEmpty(a.MirrorOf, "") == firstNonEmpty(b.MirrorOf, "")
+		a.SDRMaxLuminance == b.SDRMaxLuminance
 }
 
 func effectiveBitdepth(value int) int {

@@ -383,3 +383,41 @@ func TestEvaluateMatchStillRewardsDisplaysItKeepsOff(t *testing.T) {
 		t.Fatalf("BestMatch = %q (ok=%v), want clamshell", picked.Name, ok)
 	}
 }
+
+func TestExactStateMatchIgnoresWhereHyprlandPutsAMirror(t *testing.T) {
+	desk := hypr.Monitor{
+		Name: "DP-1", Description: "Microstep MPG321UR-QD", Make: "Microstep", Model: "MPG321UR-QD",
+		Width: 3840, Height: 2160, RefreshRate: 143.99, X: 0, Y: 0, Scale: 1.33333,
+	}
+	// Hyprland reports the mirror wherever it decided to put it, not where the
+	// profile asked for it.
+	tv := hypr.Monitor{
+		Name: "HDMI-A-1", Description: "LG TV", Make: "LG", Model: "TV",
+		Width: 3840, Height: 2160, RefreshRate: 60, X: 3820, Y: 927, Scale: 1.5,
+		MirrorOf: "DP-1",
+	}
+	monitors := []hypr.Monitor{desk, tv}
+
+	saved := FromState("desk", monitors, nil)
+	for idx := range saved.Outputs {
+		if saved.Outputs[idx].Name == "HDMI-A-1" {
+			saved.Outputs[idx].X, saved.Outputs[idx].Y = 0, 0
+		}
+	}
+
+	matched, ok := ExactStateMatch([]Profile{saved}, monitors, nil)
+	if !ok || matched.Name != "desk" {
+		t.Fatalf("expected the profile to still be recognized as active, got %q (ok=%v)", matched.Name, ok)
+	}
+
+	// The mirror target itself still has to agree.
+	elsewhere := FromState("elsewhere", monitors, nil)
+	for idx := range elsewhere.Outputs {
+		if elsewhere.Outputs[idx].Name == "HDMI-A-1" {
+			elsewhere.Outputs[idx].MirrorOf = ""
+		}
+	}
+	if _, ok := ExactStateMatch([]Profile{elsewhere}, monitors, nil); ok {
+		t.Fatal("expected a profile that does not mirror to be a different state")
+	}
+}

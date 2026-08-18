@@ -336,8 +336,36 @@ func TestOriginShortcutMovesTheSelectedMonitorToZeroZero(t *testing.T) {
 	if got.editOutputs[1].X != 0 || got.editOutputs[1].Y != 0 {
 		t.Fatal("expected the other monitor to be left where it was")
 	}
-	if !got.dirty || cmd == nil {
-		t.Fatalf("expected a dirty layout and a confirmation, dirty=%v cmd=%v", got.dirty, cmd != nil)
+	if !got.dirty {
+		t.Fatal("expected the layout to be dirty")
+	}
+	// Moving a monitor is not an event worth a popup; the arrows do not raise
+	// one either.
+	if cmd != nil {
+		t.Fatal("expected no toast for an ordinary move")
+	}
+}
+
+func TestAMirroredDisplayCannotBeMovedOnItsOwn(t *testing.T) {
+	m := Model{
+		styles:      newStyles(),
+		tab:         tabLayout,
+		layoutFocus: layoutFocusCanvas,
+		editOutputs: []editableOutput{
+			{Key: "tv", Name: "HDMI-A-1", Enabled: true, Scale: 1, X: 3820, Y: 927, MirrorOf: "desk"},
+			{Key: "desk", Name: "DP-1", Enabled: true, Scale: 1, X: 0, Y: 0},
+		},
+	}
+
+	m.updateLayoutKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'0'}})
+	if m.editOutputs[0].X != 3820 || m.editOutputs[0].Y != 927 {
+		t.Fatalf("expected the mirror to stay where Hyprland put it, got %d,%d", m.editOutputs[0].X, m.editOutputs[0].Y)
+	}
+	if m.dirty {
+		t.Fatal("expected no unsaved change that no apply could ever produce")
+	}
+	if !m.statusErr || !strings.Contains(m.status, "DP-1") {
+		t.Fatalf("expected the status to point at the source display, got %q", m.status)
 	}
 }
 

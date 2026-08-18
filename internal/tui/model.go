@@ -699,7 +699,8 @@ func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.cycleLayoutPane(-1)
 		return m, nil
 	case "0":
-		return m, m.moveSelectedOutputToOrigin()
+		m.moveSelectedOutputToOrigin()
+		return m, nil
 	case "[":
 		m.selectedOutput = clampIndex(m.selectedOutput-1, len(m.editOutputs))
 		return m, nil
@@ -1966,23 +1967,35 @@ func outputNameForKeyIn(outputs []editableOutput, key string) string {
 // moveSelectedOutputToOrigin puts the selected monitor where Hyprland's own
 // `position = auto` would put a first monitor, so the layout can be compared
 // against what Hyprland does on its own.
-func (m *Model) moveSelectedOutputToOrigin() tea.Cmd {
-	if len(m.editOutputs) == 0 {
-		return nil
+func (m *Model) moveSelectedOutputToOrigin() {
+	if len(m.editOutputs) == 0 || !m.canMoveSelectedOutput() {
+		return
 	}
-	output := m.editOutputs[m.selectedOutput]
-	if output.X == 0 && output.Y == 0 {
-		return m.notifyUser(fmt.Sprintf("%s is already at 0,0", output.Name), false)
+	if m.editOutputs[m.selectedOutput].X == 0 && m.editOutputs[m.selectedOutput].Y == 0 {
+		return
 	}
 
 	m.editOutputs[m.selectedOutput].X = 0
 	m.editOutputs[m.selectedOutput].Y = 0
 	m.layoutChanged()
-	return m.notifyUser(fmt.Sprintf("Moved %s to 0,0", output.Name), false)
+}
+
+// canMoveSelectedOutput reports whether moving the selection means anything. A
+// mirroring display shows its source's image wherever Hyprland decides to put
+// it, so accepting a move would only leave the draft permanently different from
+// what any apply can produce.
+func (m *Model) canMoveSelectedOutput() bool {
+	output := m.editOutputs[m.selectedOutput]
+	if output.MirrorOf == "" {
+		return true
+	}
+	m.setStatusErr(fmt.Sprintf("%s mirrors %s and follows it; move %s instead",
+		output.Name, m.outputNameForKey(output.MirrorOf), m.outputNameForKey(output.MirrorOf)))
+	return false
 }
 
 func (m *Model) moveSelectedOutput(dx, dy int) {
-	if len(m.editOutputs) == 0 {
+	if len(m.editOutputs) == 0 || !m.canMoveSelectedOutput() {
 		return
 	}
 	m.editOutputs[m.selectedOutput].X += dx
