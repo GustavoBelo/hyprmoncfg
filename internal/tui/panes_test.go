@@ -300,30 +300,23 @@ func TestTopStatusNamesTheProfileOnScreen(t *testing.T) {
 	}
 }
 
-func TestConfirmationDialogsAcceptAShiftedYes(t *testing.T) {
-	// "Press y to overwrite" gets answered with Shift held, and a case
+func TestConfirmationDialogAcceptsAShiftedYes(t *testing.T) {
+	// "Keep this configuration? y/n" gets answered with Shift held, and a case
 	// sensitive match makes the dialog look broken.
 	m := Model{
-		styles:    newStyles(),
-		mode:      modeUnmanagedOverwrite,
-		unmanaged: &unmanagedOverwritePrompt{profile: profile.New("desk", nil), path: "/tmp/monitors.lua"},
+		styles:  newStyles(),
+		mode:    modeConfirm,
+		pending: &pendingApply{profile: profile.New("desk", nil)},
 	}
 
-	updated, cmd := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
-	got := mustModel(t, updated)
+	updated, cmd := m.updateConfirmKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
 	if cmd == nil {
-		t.Fatal("expected an uppercase Y to approve the overwrite")
+		t.Fatal("expected an uppercase Y to confirm")
 	}
-	if got.mode != modeMain || got.unmanaged != nil {
-		t.Fatalf("expected the dialog to close, got mode=%v unmanaged=%v", got.mode, got.unmanaged)
-	}
-
-	declined, _ := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
-	if mustModel(t, declined).mode != modeMain {
-		t.Fatal("expected an uppercase N to decline and close the dialog")
+	if mustModel(t, updated).mode != modeMain {
+		t.Fatal("expected the dialog to close on an uppercase Y")
 	}
 }
-
 func TestOriginShortcutMovesTheSelectedMonitorToZeroZero(t *testing.T) {
 	m := Model{
 		styles:      newStyles(),

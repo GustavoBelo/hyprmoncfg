@@ -81,9 +81,7 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 	if state, stateErr := lid.ReadState(ctx); stateErr == nil && state == lid.Closed {
 		effective, _ = profile.ApplyClosedLidPolicy(target, monitors)
 	}
-	engine := s.engine
-	engine.AllowUnmanagedOverwrite = params.AllowUnmanagedOverwrite
-	snapshot, err := engine.Apply(ctx, effective, monitors, apply.ApplyModeInteractive)
+	snapshot, err := s.engine.Apply(ctx, effective, monitors, apply.ApplyModeInteractive)
 	if err != nil {
 		return ipc.Transaction{}, err
 	}
@@ -91,7 +89,7 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 	id, err := transactionID()
 	if err != nil {
 		revertCtx, revertCancel := context.WithTimeout(context.Background(), 8*time.Second)
-		_ = engine.Revert(revertCtx, snapshot)
+		_ = s.engine.Revert(revertCtx, snapshot)
 		revertCancel()
 		return ipc.Transaction{}, err
 	}

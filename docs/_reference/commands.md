@@ -21,8 +21,8 @@ Running `hyprmoncfg` with no arguments opens the TUI.
 | `hyprmoncfg save <name>` | Save current monitor state as a named profile |
 | `hyprmoncfg apply <name>` | Apply a saved profile |
 | `hyprmoncfg delete <name>` | Delete a saved profile |
-| `hyprmoncfg doctor` | Check that Hyprland reads hyprmoncfg's monitor config last |
-| `hyprmoncfg doctor --fix` | Move the monitors require below Omarchy's toggles, keeping a backup |
+| `hyprmoncfg doctor` | Check that Hyprland loads hyprmoncfg's monitor config last |
+| `hyprmoncfg doctor --fix` | Add or move that include to the end of the Hyprland config |
 | `hyprmoncfg version` | Print build metadata |
 
 ### Common flags

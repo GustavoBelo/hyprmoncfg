@@ -36,20 +36,21 @@ The panel is a desktop surface for the same daemon and IPC protocol used by the 
 
 ## When Omarchy still moves your displays
 
-Omarchy manages monitors too, and two managers can disagree. The daemon stops Omarchy's monitor watcher while it owns your displays, but Omarchy also writes a clamshell rule and reloads Hyprland from lid and wake events.
+Omarchy manages monitors too, and two managers can disagree. Three things keep hyprmoncfg in charge, all of them automatic:
 
-Whether that rule wins comes down to load order. Omarchy's `hyprland.lua` loads its dynamic toggles last, so a config that reads hyprmoncfg's monitors earlier hands Omarchy the final word on every reload:
+- hyprmoncfg writes its own `~/.config/hypr/hyprmoncfg-monitors.lua` and adds one line at the end of `hyprland.lua` to load it. Loading last means nothing before it, including Omarchy's clamshell toggle, can override the layout you applied. Your `monitors.lua` is left exactly as Omarchy shipped it
+- the daemon stops Omarchy's monitor watcher while it owns your displays
+- every apply records the internal panel's scale where Omarchy's clamshell script looks for it, so a lid or wake event brings the panel back at your scale rather than its default
+
+Omarchy's clamshell script also drives Hyprland directly with `hyprctl`, which no load order can outrank. The daemon covers that by putting the whole profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand.
+
+Check the load order at any time:
 
 ```bash
 hyprmoncfg doctor
 ```
 
-The daemon fixes this for you at startup, the same way it stops Omarchy's monitor watcher: it moves the `require("hypr.monitors")` line below `require("default.hypr.toggles")` and saves your previous config next to it as `hyprland.lua.hyprmoncfg-backup`. `hyprmoncfg doctor --fix` does the same thing on demand. Adding a second require later in the file does not work: Lua caches modules, so the repeat call does nothing.
-
-Load order settles what happens on reload, but Omarchy's clamshell script also drives Hyprland directly with `hyprctl`, which no config ordering can outrank. Two things cover that:
-
-- Every apply records the internal panel's scale where that script looks for it, so a lid or wake event brings the panel back at your scale rather than Omarchy's default of `2`
-- The daemon puts the whole profile back when something outside hyprmoncfg moves the displays, including a profile you picked by hand. That is what covers the mode and position the same script forces
+If your Hyprland config is managed by a dotfile tool such as chezmoi or stow, keep the line `hyprmoncfg doctor` prints in your source copy. Otherwise your dotfile tool and hyprmoncfg will keep re-adding and removing it.
 
 ## Remove it
 

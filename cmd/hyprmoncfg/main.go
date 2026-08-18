@@ -24,7 +24,6 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
-	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
 	"github.com/crmne/hyprmoncfg/internal/tui"
@@ -309,27 +308,7 @@ func newApplyCmd(configDir *string, monitorsConf *string, hyprConfig *string) *c
 			}
 			snapshot, err := engine.Apply(ctx, applyProfile, monitors, apply.ApplyModeInteractive)
 			if err != nil {
-				var unmanaged *apply.UnmanagedMonitorConfigError
-				if !isInteractive || !errors.As(err, &unmanaged) {
-					return err
-				}
-
-				overwrite, promptErr := confirmUnmanagedOverwrite(cmd.InOrStdin(), cmd.OutOrStdout(), applySignals, unmanaged)
-				if promptErr != nil {
-					return fmt.Errorf("read overwrite confirmation: %w", promptErr)
-				}
-				if !overwrite {
-					fmt.Fprintln(cmd.OutOrStdout(), "Existing monitor config left unchanged")
-					return nil
-				}
-
-				engine.AllowUnmanagedOverwrite = true
-				retryCtx, retryCancel := context.WithTimeout(context.Background(), 8*time.Second)
-				defer retryCancel()
-				snapshot, err = engine.Apply(retryCtx, applyProfile, monitors, apply.ApplyModeInteractive)
-				if err != nil {
-					return err
-				}
+				return err
 			}
 			fmt.Printf("Applied profile %q\n", p.Name)
 
@@ -438,40 +417,32 @@ func runDoctor(cmd *cobra.Command, monitorsConf string, hyprConfig string, fix b
 		return err
 	}
 
-	order, err := omarchywatch.InspectConfigOrder(resolved.RootPath)
-	if err != nil {
-		return err
-	}
-	if !order.Applicable {
-		fmt.Fprintf(out, "OK  %s does not load Omarchy's monitor toggles\n", resolved.RootPath)
-		return nil
-	}
-	if !order.NeedsReorder() {
-		fmt.Fprintf(out, "OK  %s reads hyprmoncfg's monitors after Omarchy's toggles\n", resolved.RootPath)
+	line := config.IncludeLine(resolved.Format, resolved.MonitorsPath)
+	if err := config.VerifyLoadedLast(resolved.RootPath, resolved.Format, resolved.MonitorsPath); err == nil {
+		fmt.Fprintf(out, "OK  %s loads %s last\n", resolved.RootPath, resolved.MonitorsPath)
 		return nil
 	}
 
-	fmt.Fprintf(out, "PROBLEM  %s loads Omarchy's monitor toggles after hyprmoncfg's monitors.\n", resolved.RootPath)
-	fmt.Fprintln(out, "         Omarchy writes a clamshell rule into those toggles and reloads Hyprland,")
-	fmt.Fprintln(out, "         so on every lid or wake event its rule overrides the layout you applied.")
+	fmt.Fprintf(out, "PROBLEM  %s does not load %s last.\n", resolved.RootPath, resolved.MonitorsPath)
+	fmt.Fprintln(out, "         Anything loaded after it can override the layout hyprmoncfg applies.")
 	if !fix {
-		fmt.Fprintln(out, "         The daemon fixes this on startup. Run `hyprmoncfg doctor --fix` to do it now.")
+		fmt.Fprintf(out, "         The daemon and every apply fix this. To do it now: hyprmoncfg doctor --fix\n")
+		fmt.Fprintf(out, "         Or add this line at the end of %s yourself:\n\n           %s\n", resolved.RootPath, line)
 		return nil
 	}
 
-	reorder, err := omarchywatch.EnsureConfigOrder(resolved.RootPath)
+	result, err := config.EnsureIncluded(resolved.RootPath, resolved.Format, resolved.MonitorsPath)
 	if err != nil {
 		return err
 	}
-	if !reorder.Changed {
-		return fmt.Errorf("could not move the monitors require in %s; reorder it by hand", resolved.RootPath)
+	action := "Moved"
+	if result.Added {
+		action = "Added"
 	}
-
-	fmt.Fprintf(out, "FIXED    hyprmoncfg's monitors now load last. Previous config saved to %s\n", reorder.BackupPath)
-	fmt.Fprintln(out, "         Run `hyprctl reload` or restart Hyprland to pick up the new order.")
+	fmt.Fprintf(out, "FIXED    %s the include at the end of %s:\n\n           %s\n", action, result.RootPath, result.Line)
+	fmt.Fprintln(out, "\n         If your dotfiles are managed elsewhere, keep that line in your source copy.")
 	return nil
 }
-
 func newVersionCmd(name string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
@@ -625,7 +596,7 @@ func runRemoteApply(cmd *cobra.Command, client *ipc.Client, target profile.Profi
 		defer signal.Stop(applySignals)
 	}
 
-	preview := func(allowOverwrite bool) (ipc.Transaction, error) {
+	preview := func() (ipc.Transaction, error) {
 		timeout := confirmTimeout
 		if timeout <= 0 {
 			timeout = 10
@@ -633,30 +604,14 @@ func runRemoteApply(cmd *cobra.Command, client *ipc.Client, target profile.Profi
 		ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Second)
 		defer cancel()
 		return client.Preview(ctx, ipc.PreviewParams{
-			Profile:                 &target,
-			AllowUnmanagedOverwrite: allowOverwrite,
-			TimeoutSeconds:          timeout,
+			Profile:        &target,
+			TimeoutSeconds: timeout,
 		})
 	}
 
-	transaction, err := preview(false)
+	transaction, err := preview()
 	if err != nil {
-		var unmanaged *apply.UnmanagedMonitorConfigError
-		if !isInteractive || !errors.As(err, &unmanaged) {
-			return err
-		}
-		overwrite, promptErr := confirmUnmanagedOverwrite(cmd.InOrStdin(), cmd.OutOrStdout(), applySignals, unmanaged)
-		if promptErr != nil {
-			return fmt.Errorf("read overwrite confirmation: %w", promptErr)
-		}
-		if !overwrite {
-			fmt.Fprintln(cmd.OutOrStdout(), "Existing monitor config left unchanged")
-			return nil
-		}
-		transaction, err = preview(true)
-		if err != nil {
-			return err
-		}
+		return err
 	}
 
 	fmt.Fprintf(cmd.OutOrStdout(), "Applied profile %q\n", target.Name)
@@ -714,33 +669,6 @@ func confirmApplyWithInput(timeoutSec int, input io.Reader, output io.Writer, si
 		fmt.Fprintln(output)
 		return false, nil
 	case <-time.After(time.Duration(timeoutSec) * time.Second):
-		return false, nil
-	}
-}
-
-func confirmUnmanagedOverwrite(input io.Reader, output io.Writer, signals <-chan os.Signal, collision *apply.UnmanagedMonitorConfigError) (bool, error) {
-	fmt.Fprintf(output, "%s was not generated by hyprmoncfg and will not be replaced automatically.\n", collision.Path)
-	fmt.Fprintf(output, "To preserve it, use --monitors-conf %s and include that file instead.\n", collision.AlternativePath)
-	fmt.Fprint(output, "Overwrite the existing file once? [y/N]: ")
-
-	inputCh := make(chan string, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		line, err := bufio.NewReader(input).ReadString('\n')
-		if err != nil {
-			errCh <- err
-			return
-		}
-		inputCh <- strings.TrimSpace(strings.ToLower(line))
-	}()
-
-	select {
-	case answer := <-inputCh:
-		return answer == "y" || answer == "yes", nil
-	case err := <-errCh:
-		return false, err
-	case <-signals:
-		fmt.Fprintln(output)
 		return false, nil
 	}
 }

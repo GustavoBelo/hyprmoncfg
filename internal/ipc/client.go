@@ -10,7 +10,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 )
 
@@ -156,14 +155,6 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 func decodeResponseError(responseErr *ResponseError) error {
 	if responseErr == nil {
 		return nil
-	}
-	if responseErr.Code == "unmanaged_monitor_config" {
-		path, _ := responseErr.Data["path"].(string)
-		alternative, _ := responseErr.Data["alternative_path"].(string)
-		return &apply.UnmanagedMonitorConfigError{
-			Path:            path,
-			AlternativePath: alternative,
-		}
 	}
 	if responseErr.Code == "transaction_unavailable" {
 		return fmt.Errorf("%w: %s", ErrTransactionUnavailable, responseErr.Message)

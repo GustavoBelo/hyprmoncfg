@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"sync"
 	"sync/atomic"
-
-	"github.com/crmne/hyprmoncfg/internal/apply"
 )
 
 type Server struct {
@@ -235,17 +233,6 @@ func decodeParams(raw json.RawMessage, target any) error {
 func encodeResponseError(err error) *ResponseError {
 	if errors.Is(err, ErrTransactionUnavailable) {
 		return &ResponseError{Code: "transaction_unavailable", Message: err.Error()}
-	}
-	var unmanaged *apply.UnmanagedMonitorConfigError
-	if errors.As(err, &unmanaged) {
-		return &ResponseError{
-			Code:    "unmanaged_monitor_config",
-			Message: unmanaged.Error(),
-			Data: map[string]any{
-				"path":             unmanaged.Path,
-				"alternative_path": unmanaged.AlternativePath,
-			},
-		}
 	}
 	return &ResponseError{Code: "operation_failed", Message: err.Error()}
 }

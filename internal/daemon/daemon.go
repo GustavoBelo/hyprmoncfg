@@ -12,7 +12,6 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
-	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -149,7 +148,7 @@ func (s *Service) Run(ctx context.Context) error {
 	if err := s.store.Ensure(); err != nil {
 		return err
 	}
-	s.ensureConfigOrder(ctx)
+	s.ensureConfigInclude(ctx)
 
 	type trigger struct {
 		reason string
@@ -351,10 +350,10 @@ func (s *Service) Run(ctx context.Context) error {
 	}
 }
 
-// ensureConfigOrder takes the last word in the Hyprland config before any
-// profile is applied, the same way the daemon takes the monitor watcher.
-// Applying does this too, so this only covers the window before the first one.
-func (s *Service) ensureConfigOrder(ctx context.Context) {
+// ensureConfigInclude makes the generated monitor config the last thing the
+// root Hyprland config loads, before any profile is applied. Applying does this
+// too, so this only covers the window before the first one.
+func (s *Service) ensureConfigInclude(ctx context.Context) {
 	version := ""
 	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	if info, err := s.client.Version(versionCtx); err == nil {
@@ -364,24 +363,23 @@ func (s *Service) ensureConfigOrder(ctx context.Context) {
 
 	resolved, err := config.ResolveHyprlandConfig(version, s.cfg.MonitorsConf, s.cfg.HyprConfig)
 	if err != nil {
-		s.cfg.Logf("could not resolve the Hyprland config to check its load order: %v", err)
+		s.cfg.Logf("could not resolve the Hyprland config: %v", err)
 		return
 	}
 
-	reorder, err := omarchywatch.EnsureConfigOrder(resolved.RootPath)
+	result, err := config.EnsureIncluded(resolved.RootPath, resolved.Format, resolved.MonitorsPath)
 	if err != nil {
-		s.cfg.Logf("could not give hyprmoncfg's monitors the last word in %s: %v", resolved.RootPath, err)
+		s.cfg.Logf("could not load %s from %s: %v", resolved.MonitorsPath, resolved.RootPath, err)
 		return
 	}
-	if reorder.Changed {
-		s.cfg.Logf(
-			"moved hyprmoncfg's monitors below Omarchy's toggles in %s so its clamshell rule cannot override applied layouts (previous config: %s)",
-			reorder.Path,
-			reorder.BackupPath,
-		)
+	if result.Changed() {
+		action := "moved to the end of"
+		if result.Added {
+			action = "added to"
+		}
+		s.cfg.Logf("%s %s: %s", action, result.RootPath, result.Line)
 	}
 }
-
 func (s *Service) applyBest(ctx context.Context) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()

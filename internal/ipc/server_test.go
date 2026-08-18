@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
@@ -118,34 +117,6 @@ func TestClientStatusAndPreview(t *testing.T) {
 	}
 	if transaction.ID != "transaction-1" || transaction.Profile.Name != "desk" {
 		t.Fatalf("unexpected transaction: %+v", transaction)
-	}
-}
-
-func TestClientPreservesUnmanagedConfigError(t *testing.T) {
-	handler := &testHandler{
-		document: appstatus.Document{},
-		previewErr: &apply.UnmanagedMonitorConfigError{
-			Path:            "/tmp/monitors.conf",
-			AlternativePath: "/tmp/hyprmoncfg.conf",
-		},
-	}
-	_, path, _ := runTestServer(t, handler)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	client, err := Dial(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-
-	_, err = client.Preview(ctx, PreviewParams{ProfileName: "desk"})
-	var unmanaged *apply.UnmanagedMonitorConfigError
-	if !errors.As(err, &unmanaged) {
-		t.Fatalf("expected unmanaged config error, got %v", err)
-	}
-	if unmanaged.Path != "/tmp/monitors.conf" || unmanaged.AlternativePath != "/tmp/hyprmoncfg.conf" {
-		t.Fatalf("unexpected error details: %+v", unmanaged)
 	}
 }
 

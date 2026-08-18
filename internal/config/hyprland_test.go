@@ -109,8 +109,8 @@ func TestResolveHyprlandConfigUsesLegacyBeforeLuaRelease(t *testing.T) {
 	if filepath.Base(resolved.RootPath) != "hyprland.conf" {
 		t.Fatalf("expected hyprland.conf root, got %s", resolved.RootPath)
 	}
-	if filepath.Base(resolved.MonitorsPath) != "monitors.conf" {
-		t.Fatalf("expected monitors.conf target, got %s", resolved.MonitorsPath)
+	if filepath.Base(resolved.MonitorsPath) != "hyprmoncfg-monitors.conf" {
+		t.Fatalf("expected the generated target, got %s", resolved.MonitorsPath)
 	}
 }
 
@@ -155,8 +155,8 @@ func TestResolveHyprlandConfigUsesLuaFor055WithLuaConfig(t *testing.T) {
 	if filepath.Base(resolved.RootPath) != "hyprland.lua" {
 		t.Fatalf("expected hyprland.lua root, got %s", resolved.RootPath)
 	}
-	if filepath.Base(resolved.MonitorsPath) != "monitors.lua" {
-		t.Fatalf("expected monitors.lua target, got %s", resolved.MonitorsPath)
+	if filepath.Base(resolved.MonitorsPath) != "hyprmoncfg-monitors.lua" {
+		t.Fatalf("expected the generated target, got %s", resolved.MonitorsPath)
 	}
 }
 

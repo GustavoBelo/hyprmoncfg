@@ -1018,14 +1018,14 @@ func TestEngineApplyWritesLuaMonitorConfigWhenHyprlandLuaIsActive(t *testing.T) 
 
 	renderedBytes, err := os.ReadFile(monitorsLuaPath)
 	if err != nil {
-		t.Fatalf("read monitors.lua: %v", err)
+		t.Fatalf("read generated lua config: %v", err)
 	}
 	rendered := string(renderedBytes)
 	if !strings.Contains(rendered, "hl.monitor({") {
-		t.Fatalf("expected monitors.lua to contain lua monitor config, got:\n%s", rendered)
+		t.Fatalf("expected the generated lua config to contain monitor rules, got:\n%s", rendered)
 	}
 	if strings.Contains(rendered, luaProbePrefix) {
-		t.Fatalf("expected the temporary execution probe to be removed from monitors.lua, got:\n%s", rendered)
+		t.Fatalf("expected the temporary execution probe to be removed, got:\n%s", rendered)
 	}
 	logBytes, err := os.ReadFile(logPath)
 	if err != nil {
@@ -1065,15 +1065,15 @@ func TestEngineApplyRollsBackLuaConfigWhenProbeFails(t *testing.T) {
 
 			if tt.initial == nil {
 				if _, statErr := os.Stat(monitorsLuaPath); !errors.Is(statErr, os.ErrNotExist) {
-					t.Fatalf("expected failed first apply to remove monitors.lua, stat error: %v", statErr)
+					t.Fatalf("expected failed first apply to remove the generated config, stat error: %v", statErr)
 				}
 			} else {
 				restored, readErr := os.ReadFile(monitorsLuaPath)
 				if readErr != nil {
-					t.Fatalf("read restored monitors.lua: %v", readErr)
+					t.Fatalf("read restored config: %v", readErr)
 				}
 				if string(restored) != string(tt.initial) {
-					t.Fatalf("expected original monitors.lua to be restored, got:\n%s", restored)
+					t.Fatalf("expected the original config to be restored, got:\n%s", restored)
 				}
 			}
 
@@ -1106,7 +1106,7 @@ func initLuaProbeTestEngine(t *testing.T, evalReply string, initialTarget []byte
 		t.Fatalf("mkdir hypr dir: %v", err)
 	}
 	hyprlandLuaPath := filepath.Join(hyprDir, "hyprland.lua")
-	monitorsLuaPath := filepath.Join(hyprDir, "monitors.lua")
+	monitorsLuaPath := filepath.Join(hyprDir, "hyprmoncfg-monitors.lua")
 	rootConfig := `dofile((os.getenv("OMARCHY_PATH") or "/usr/share/omarchy") .. "/default/hypr/bootstrap.lua")
 pcall(require, "hypr.monitors")
 `
@@ -1115,7 +1115,7 @@ pcall(require, "hypr.monitors")
 	}
 	if initialTarget != nil {
 		if err := os.WriteFile(monitorsLuaPath, initialTarget, 0o644); err != nil {
-			t.Fatalf("write monitors.lua: %v", err)
+			t.Fatalf("write generated lua config: %v", err)
 		}
 	}
 
@@ -1292,81 +1292,6 @@ exit 1
 	}
 
 	return
-}
-
-func TestEngineApplyRefusesUnmanagedMonitorConfig(t *testing.T) {
-	engine, logPath, err := initTestEngine(t)
-	if err != nil {
-		t.Fatalf("init test engine: %v", err)
-	}
-
-	original := []byte("# Hand-written monitor rules\nmonitor = DP-1,preferred,auto,1\n")
-	if err := os.WriteFile(engine.MonitorsConfPath, original, 0o644); err != nil {
-		t.Fatalf("write unmanaged monitor config: %v", err)
-	}
-
-	_, err = engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeNonInteractive)
-	var collision *UnmanagedMonitorConfigError
-	if !errors.As(err, &collision) {
-		t.Fatalf("expected unmanaged monitor config error, got %v", err)
-	}
-	if collision.Path != engine.MonitorsConfPath {
-		t.Fatalf("expected collision path %s, got %s", engine.MonitorsConfPath, collision.Path)
-	}
-	if want := filepath.Join(filepath.Dir(engine.MonitorsConfPath), "hyprmoncfg-monitors.conf"); collision.AlternativePath != want {
-		t.Fatalf("expected alternative path %s, got %s", want, collision.AlternativePath)
-	}
-
-	got, err := os.ReadFile(engine.MonitorsConfPath)
-	if err != nil {
-		t.Fatalf("read unmanaged monitor config: %v", err)
-	}
-	if string(got) != string(original) {
-		t.Fatalf("unmanaged monitor config changed:\n%s", got)
-	}
-	logBytes, err := os.ReadFile(logPath)
-	if err != nil {
-		t.Fatalf("read hyprctl log: %v", err)
-	}
-	if strings.Contains(string(logBytes), "reload") {
-		t.Fatalf("expected refusal before reload, got log:\n%s", logBytes)
-	}
-}
-
-func TestEngineApplyAllowsExplicitUnmanagedOverwriteAndRevert(t *testing.T) {
-	engine, _, err := initTestEngine(t)
-	if err != nil {
-		t.Fatalf("init test engine: %v", err)
-	}
-
-	original := []byte("# Hand-written monitor rules\nmonitor = DP-1,preferred,auto,1\n")
-	if err := os.WriteFile(engine.MonitorsConfPath, original, 0o644); err != nil {
-		t.Fatalf("write unmanaged monitor config: %v", err)
-	}
-	engine.AllowUnmanagedOverwrite = true
-
-	snapshot, err := engine.Apply(context.Background(), newTestProfile(), monitors, ApplyModeInteractive)
-	if err != nil {
-		t.Fatalf("apply with explicit approval: %v", err)
-	}
-	generated, err := os.ReadFile(engine.MonitorsConfPath)
-	if err != nil {
-		t.Fatalf("read generated monitor config: %v", err)
-	}
-	if !config.IsGeneratedMonitorsConfig(generated) {
-		t.Fatalf("expected generated ownership marker, got:\n%s", generated)
-	}
-
-	if err := engine.Revert(context.Background(), snapshot); err != nil {
-		t.Fatalf("revert explicitly approved apply: %v", err)
-	}
-	restored, err := os.ReadFile(engine.MonitorsConfPath)
-	if err != nil {
-		t.Fatalf("read restored monitor config: %v", err)
-	}
-	if string(restored) != string(original) {
-		t.Fatalf("expected exact user config restoration, got:\n%s", restored)
-	}
 }
 
 func TestVRRModeUnmarshal(t *testing.T) {

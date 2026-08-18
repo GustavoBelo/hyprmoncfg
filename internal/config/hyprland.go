@@ -66,6 +66,8 @@ func HyprlandDir() (string, error) {
 	return filepath.Join(home, ".config", "hypr"), nil
 }
 
+// HyprlandMonitorsConfPath is where hyprmoncfg used to write, and where many
+// distributions ship a monitors config of their own.
 func HyprlandMonitorsConfPath() (string, error) {
 	dir, err := HyprlandDir()
 	if err != nil {
@@ -80,6 +82,29 @@ func HyprlandMonitorsLuaPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "monitors.lua"), nil
+}
+
+// HyprlandGeneratedPath is the file hyprmoncfg creates and owns, so it never
+// has to overwrite a config someone else wrote.
+func HyprlandGeneratedPath(format HyprConfigFormat) (string, error) {
+	dir, err := HyprlandDir()
+	if err != nil {
+		return "", err
+	}
+	extension := ".conf"
+	if format == HyprConfigLua {
+		extension = ".lua"
+	}
+	return filepath.Join(dir, GeneratedMonitorsBasename+extension), nil
+}
+
+// LegacyMonitorsPath is the conventional path for a format, which hyprmoncfg
+// retires once it owns a file of its own.
+func LegacyMonitorsPath(format HyprConfigFormat) (string, error) {
+	if format == HyprConfigLua {
+		return HyprlandMonitorsLuaPath()
+	}
+	return HyprlandMonitorsConfPath()
 }
 
 func HyprlandMainConfigPath() (string, error) {
@@ -177,10 +202,7 @@ func resolveHyprConfigMonitors(format HyprConfigFormat, explicit string) (string
 	if strings.TrimSpace(configured) != "" {
 		return resolvePath(configured, "")
 	}
-	if format == HyprConfigLua {
-		return HyprlandMonitorsLuaPath()
-	}
-	return HyprlandMonitorsConfPath()
+	return HyprlandGeneratedPath(format)
 }
 
 func resolvePath(value string, baseDir string) (string, error) {

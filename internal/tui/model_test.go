@@ -1710,57 +1710,6 @@ func TestQuitAfterApplyQuitsOnlyAfterConfirmation(t *testing.T) {
 	assertQuitCmd(t, cmd)
 }
 
-func TestApplyCollisionPromptsBeforeOverwritingUserConfig(t *testing.T) {
-	m := Model{styles: newStyles(), mode: modeMain, width: 100, height: 30}
-	p := profile.New("Desk", nil)
-	collision := &apply.UnmanagedMonitorConfigError{
-		Path:            "/home/test/.config/hypr/monitors.lua",
-		AlternativePath: "/home/test/.config/hypr/hyprmoncfg-monitors.lua",
-	}
-
-	updated, cmd := m.Update(applyMsg{profile: p, err: collision})
-	got := updated.(Model)
-	if cmd != nil {
-		t.Fatal("expected collision prompt before another apply command")
-	}
-	if got.mode != modeUnmanagedOverwrite || got.unmanaged == nil {
-		t.Fatalf("expected unmanaged overwrite prompt, mode=%v prompt=%+v", got.mode, got.unmanaged)
-	}
-	view := ansi.Strip(got.View())
-	for _, want := range []string{collision.Path, collision.AlternativePath, "Press y to overwrite once"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected overwrite prompt to contain %q, got:\n%s", want, view)
-		}
-	}
-
-	updated, cmd = got.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyEnter})
-	got = updated.(Model)
-	if cmd != nil || got.mode != modeMain || got.unmanaged != nil {
-		t.Fatalf("expected Enter to protect the file, mode=%v prompt=%+v cmd=%v", got.mode, got.unmanaged, cmd != nil)
-	}
-}
-
-func TestApplyCollisionRequiresExplicitYForOneTimeOverwrite(t *testing.T) {
-	m := Model{
-		styles: newStyles(),
-		mode:   modeUnmanagedOverwrite,
-		unmanaged: &unmanagedOverwritePrompt{
-			profile:         profile.New("Desk", nil),
-			path:            "/tmp/monitors.conf",
-			alternativePath: "/tmp/hyprmoncfg-monitors.conf",
-		},
-	}
-
-	updated, cmd := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
-	got := updated.(Model)
-	if cmd == nil {
-		t.Fatal("expected explicit y to retry apply")
-	}
-	if got.mode != modeMain || got.unmanaged != nil {
-		t.Fatalf("expected prompt to close before retry, mode=%v prompt=%+v", got.mode, got.unmanaged)
-	}
-}
-
 func TestQuitDuringApplyConfirmationRevertsBeforeQuitting(t *testing.T) {
 	m := Model{
 		styles: newStyles(),

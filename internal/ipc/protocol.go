@@ -55,10 +55,9 @@ type ResponseError struct {
 }
 
 type PreviewParams struct {
-	Profile                 *profile.Profile `json:"profile,omitempty"`
-	ProfileName             string           `json:"profile_name,omitempty"`
-	AllowUnmanagedOverwrite bool             `json:"allow_unmanaged_overwrite,omitempty"`
-	TimeoutSeconds          int              `json:"timeout_seconds,omitempty"`
+	Profile        *profile.Profile `json:"profile,omitempty"`
+	ProfileName    string           `json:"profile_name,omitempty"`
+	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
 }
 
 type TransactionParams struct {
