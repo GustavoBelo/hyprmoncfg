@@ -852,7 +852,7 @@ func (m Model) updateConfirmKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch msg.String() {
+	switch answerKey(msg) {
 	case "ctrl+c", "q":
 		m.quitAfterRevert = true
 		return m, m.revertCmd(*m.pending, "quit")
@@ -909,7 +909,7 @@ func (m Model) updateUnmanagedOverwriteKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd)
 		return m, nil
 	}
 
-	switch msg.String() {
+	switch answerKey(msg) {
 	case "y":
 		p := m.unmanaged.profile
 		m.unmanaged = nil
@@ -1623,6 +1623,17 @@ func (m Model) renderConfirm() string {
 		m.styles.help.MaxWidth(max(20, m.modalMaxWidth()-6)).Render(m.confirmApplyHelp()),
 	}
 	return m.renderModalFrame("Confirm Apply", body)
+}
+
+// answerKey normalizes a yes/no keypress. A prompt like "Press y" is answered
+// with Shift held often enough that a case-sensitive match reads as the dialog
+// being broken.
+func answerKey(msg tea.KeyMsg) string {
+	key := msg.String()
+	if len([]rune(key)) == 1 {
+		return strings.ToLower(key)
+	}
+	return key
 }
 
 func (m Model) renderUnmanagedOverwrite() string {

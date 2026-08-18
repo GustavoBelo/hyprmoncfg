@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
@@ -296,5 +297,29 @@ func TestTopStatusNamesTheProfileOnScreen(t *testing.T) {
 	unmatched := paneTestModel(t, tabProfiles, []hypr.Monitor{desk}, []profile.Profile{dual})
 	if got := ansi.Strip(unmatched.renderTopStatus()); !strings.Contains(got, "no match") {
 		t.Fatalf("expected an unsaved layout to say so, got %q", got)
+	}
+}
+
+func TestConfirmationDialogsAcceptAShiftedYes(t *testing.T) {
+	// "Press y to overwrite" gets answered with Shift held, and a case
+	// sensitive match makes the dialog look broken.
+	m := Model{
+		styles:    newStyles(),
+		mode:      modeUnmanagedOverwrite,
+		unmanaged: &unmanagedOverwritePrompt{profile: profile.New("desk", nil), path: "/tmp/monitors.lua"},
+	}
+
+	updated, cmd := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'Y'}})
+	got := mustModel(t, updated)
+	if cmd == nil {
+		t.Fatal("expected an uppercase Y to approve the overwrite")
+	}
+	if got.mode != modeMain || got.unmanaged != nil {
+		t.Fatalf("expected the dialog to close, got mode=%v unmanaged=%v", got.mode, got.unmanaged)
+	}
+
+	declined, _ := m.updateUnmanagedOverwriteKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'N'}})
+	if mustModel(t, declined).mode != modeMain {
+		t.Fatal("expected an uppercase N to decline and close the dialog")
 	}
 }
