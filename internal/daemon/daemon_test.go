@@ -1003,3 +1003,49 @@ func TestApplyBestRefreshesStaleOpenLidBeforeApplying(t *testing.T) {
 		t.Fatalf("expected the internal panel disabled with the lid closed:\n%s", rendered)
 	}
 }
+
+func TestApplyBestDoesNothingWhenManagementIsOff(t *testing.T) {
+	before := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	after := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":100,"y":200,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, before, after)
+	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
+
+	chosen := profile.New("desk", []profile.OutputConfig{{
+		Key: mon.HardwareKey(), Name: mon.Name, Enabled: true,
+		Width: 2880, Height: 1800, Refresh: 120, X: 100, Y: 200, Scale: 1.5,
+	}})
+	if err := env.store.Save(chosen); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	configDir := t.TempDir()
+	if err := config.SetManaged(configDir, false); err != nil {
+		t.Fatalf("SetManaged: %v", err)
+	}
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+		ConfigDir:    configDir,
+		Logf:         func(string, ...any) {},
+	})
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	// Nothing of the profile may be written: the generated file loads last, so
+	// writing it here would put hyprmoncfg back in charge behind the user's back.
+	if got := readMonitorsConf(t, env); strings.Contains(got, "position = 100x200") {
+		t.Fatalf("the profile was applied while management is off:\n%s", got)
+	}
+
+	if err := config.SetManaged(configDir, true); err != nil {
+		t.Fatalf("SetManaged back on: %v", err)
+	}
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest after re-enabling: %v", err)
+	}
+	if got := readMonitorsConf(t, env); !strings.Contains(got, "position = 100x200") {
+		t.Fatalf("turning management back on did not apply the profile:\n%s", got)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
+	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -44,7 +45,80 @@ func (s *Service) Status() (appstatus.Document, error) {
 	if err != nil {
 		return appstatus.Document{}, err
 	}
-	return appstatus.Build(buildinfo.Version, true, profiles, monitors, rules), nil
+	document := appstatus.Build(buildinfo.Version, true, profiles, monitors, rules)
+	document.Daemon.Unmanaged = !config.IsManaged(s.cfg.ConfigDir)
+	return document, nil
+}
+
+// Manage hands monitor configuration to hyprmoncfg: Omarchy's watcher steps
+// aside, automatic switching resumes, and the next apply puts the include back.
+func (s *Service) Manage() error {
+	if err := config.SetManaged(s.cfg.ConfigDir, true); err != nil {
+		return err
+	}
+	if s.cfg.ClaimWatcher != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		s.cfg.ClaimWatcher(ctx)
+		cancel()
+	}
+	s.cfg.Logf("monitor management on")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.applyBest(ctx); err != nil && !errors.Is(err, errDisplaysSleeping) {
+		s.cfg.Logf("could not apply a profile after turning management on: %v", err)
+	}
+	s.signalChange()
+	return nil
+}
+
+// Unmanage hands it back to Hyprland: automatic switching stops, the include
+// comes out so the user's own monitor config has the last word again, and
+// Omarchy's watcher resumes.
+//
+// The order matters. Recording the choice first means an apply racing this call
+// bails out; taking the write lock afterwards waits for one already running.
+// Removing the include while an apply could still land would just see it added
+// straight back.
+func (s *Service) Unmanage() error {
+	if err := config.SetManaged(s.cfg.ConfigDir, false); err != nil {
+		return err
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if resolved, err := s.resolveHyprConfig(ctx); err != nil {
+		s.cfg.Logf("could not resolve the Hyprland config: %v", err)
+	} else {
+		result, err := config.RemoveInclude(resolved.RootPath, resolved.Format)
+		switch {
+		case err != nil:
+			s.cfg.Logf("could not remove hyprmoncfg's include from %s: %v", resolved.RootPath, err)
+		case result.ReadOnly:
+			s.cfg.Logf("%s is read-only, so its hyprmoncfg include is yours to remove", resolved.RootPath)
+		case result.Removed:
+			s.cfg.Logf("removed hyprmoncfg's include from %s", resolved.RootPath)
+		}
+	}
+
+	if s.cfg.ReleaseWatcher != nil {
+		if err := s.cfg.ReleaseWatcher(ctx); err != nil {
+			s.cfg.Logf("could not restore Omarchy monitor watcher: %v", err)
+		}
+	}
+	// Hyprland is still running the layout it already loaded, so without this
+	// the hand-back does not show up until something else triggers a reload.
+	if err := s.client.Reload(ctx); err != nil {
+		s.cfg.Logf("could not reload Hyprland: %v", err)
+	}
+
+	s.cfg.Logf("monitor management off")
+	s.signalChange()
+	return nil
 }
 
 func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transaction, error) {

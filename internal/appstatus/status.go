@@ -21,6 +21,10 @@ type Document struct {
 
 type Daemon struct {
 	Running bool `json:"running"`
+	// Unmanaged reports that monitor configuration was handed back to Hyprland.
+	// The zero value means managed, so a client that never sets it, or one too
+	// old to know the field, reads as the behavior hyprmoncfg has always had.
+	Unmanaged bool `json:"unmanaged,omitempty"`
 }
 
 type ProfileReference struct {

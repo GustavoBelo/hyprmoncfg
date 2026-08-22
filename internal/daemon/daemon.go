@@ -26,7 +26,15 @@ type Config struct {
 	ForcedProfile   string
 	MonitorsConf    string
 	HyprConfig      string
-	Logf            func(format string, args ...any)
+	// ConfigDir is where the managed/unmanaged choice is recorded, so it
+	// outlives a daemon restart. Empty means always managed.
+	ConfigDir string
+	// ClaimWatcher and ReleaseWatcher move Omarchy's monitor watcher out of the
+	// way and hand it back. They live in the daemon command rather than here so
+	// this package stays free of Omarchy specifics.
+	ClaimWatcher   func(context.Context)
+	ReleaseWatcher func(context.Context) error
+	Logf           func(format string, args ...any)
 }
 
 type Service struct {
@@ -398,6 +406,18 @@ func (s *Service) Run(ctx context.Context) error {
 // ensureConfigInclude makes the generated monitor config the last thing the
 // root Hyprland config loads, before any profile is applied. Applying does this
 // too, so this only covers the window before the first one.
+// resolveHyprConfig locates the root config and the generated file, asking
+// Hyprland which config dialect it is running.
+func (s *Service) resolveHyprConfig(ctx context.Context) (config.ResolvedHyprConfig, error) {
+	version := ""
+	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	if info, err := s.client.Version(versionCtx); err == nil {
+		version = info.Version
+	}
+	cancel()
+	return config.ResolveHyprlandConfig(version, s.cfg.MonitorsConf, s.cfg.HyprConfig)
+}
+
 func (s *Service) ensureConfigInclude(ctx context.Context) {
 	version := ""
 	versionCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
@@ -481,6 +501,11 @@ func (s *Service) applyBest(ctx context.Context) error {
 	s.pendingMu.Unlock()
 	if interactive {
 		s.cfg.Logf("automatic switching paused during interactive preview")
+		return nil
+	}
+	// Monitor configuration was handed back to Hyprland. Applying anything here
+	// would also put the include back, undoing the hand-back on the next event.
+	if !config.IsManaged(s.cfg.ConfigDir) {
 		return nil
 	}
 

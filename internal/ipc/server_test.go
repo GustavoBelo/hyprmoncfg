@@ -21,6 +21,7 @@ type testHandler struct {
 	preview      Transaction
 	previewErr   error
 	revertErr    error
+	managed      bool
 	disconnected []string
 }
 
@@ -34,6 +35,20 @@ func (h *testHandler) Confirm(_ string, _ TransactionParams) error { return nil 
 func (h *testHandler) Revert(_ string, _ TransactionParams) error  { return h.revertErr }
 func (h *testHandler) Save(_ SaveParams) error                     { return nil }
 func (h *testHandler) Delete(_ DeleteParams) error                 { return nil }
+
+func (h *testHandler) Manage() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.managed = true
+	return nil
+}
+
+func (h *testHandler) Unmanage() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.managed = false
+	return nil
+}
 
 func (h *testHandler) Disconnect(owner string) {
 	h.mu.Lock()
@@ -279,5 +294,32 @@ func TestEventsGoOutInTheVersionTheClientNegotiated(t *testing.T) {
 	}
 	if !client.subscribed.Load() {
 		t.Fatal("subscribe should have marked the client subscribed")
+	}
+}
+
+func TestDispatchRoutesManageAndUnmanage(t *testing.T) {
+	handler := &testHandler{}
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close(); _ = clientConn.Close() })
+
+	server := &Server{Handler: handler}
+	client := &serverClient{conn: serverConn, encoder: json.NewEncoder(serverConn)}
+
+	for _, test := range []struct {
+		method string
+		want   bool
+	}{{MethodManage, true}, {MethodUnmanage, false}} {
+		response := server.dispatch("test", client, Request{
+			Type: "request", ProtocolVersion: ProtocolVersion, ID: "1", Method: test.method,
+		})
+		if response.Error != nil {
+			t.Fatalf("%s: %+v", test.method, response.Error)
+		}
+		handler.mu.Lock()
+		got := handler.managed
+		handler.mu.Unlock()
+		if got != test.want {
+			t.Fatalf("after %s, managed = %v, want %v", test.method, got, test.want)
+		}
 	}
 }

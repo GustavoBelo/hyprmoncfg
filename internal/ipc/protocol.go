@@ -32,6 +32,8 @@ const (
 	MethodRevert    = "revert"
 	MethodSave      = "save"
 	MethodDelete    = "delete"
+	MethodManage    = "manage"
+	MethodUnmanage  = "unmanage"
 )
 
 const EventStatus = "status"
@@ -102,5 +104,10 @@ type Handler interface {
 	Revert(owner string, params TransactionParams) error
 	Save(params SaveParams) error
 	Delete(params DeleteParams) error
+	// Manage and Unmanage move monitor configuration between hyprmoncfg and
+	// Hyprland's own config. Unmanage has to stop the daemon applying as well as
+	// take the include out, or the next monitor event puts it straight back.
+	Manage() error
+	Unmanage() error
 	Disconnect(owner string)
 }

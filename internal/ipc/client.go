@@ -79,6 +79,18 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 	return c.call(ctx, MethodDelete, DeleteParams{Name: name}, nil)
 }
 
+// Manage hands monitor configuration to hyprmoncfg: the include goes back into
+// the Hyprland config and the daemon resumes applying profiles.
+func (c *Client) Manage(ctx context.Context) error {
+	return c.call(ctx, MethodManage, nil, nil)
+}
+
+// Unmanage hands it back to Hyprland: the daemon stops applying and takes its
+// include out, so whatever the user or their distro configured wins again.
+func (c *Client) Unmanage(ctx context.Context) error {
+	return c.call(ctx, MethodUnmanage, nil, nil)
+}
+
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	if c == nil || c.conn == nil {
 		return errors.New("IPC client is not connected")

@@ -83,6 +83,69 @@ func EnsureIncluded(rootPath string, format HyprConfigFormat, targetPath string)
 	return result, nil
 }
 
+// RemoveResult reports what RemoveInclude took out of a root config.
+type RemoveResult struct {
+	RootPath string
+	Removed  bool
+	// ReadOnly reports a root config hyprmoncfg cannot edit. Nothing was
+	// written, and the include is the user's to take out.
+	ReadOnly bool
+}
+
+// RemoveInclude takes hyprmoncfg's include back out of the root Hyprland
+// config, handing the last word back to whatever the user or their distro
+// configured. Stopping the daemon on its own does not do that: the generated
+// rules keep loading last on every reload, so anything else writing monitor
+// config still loses to a hyprmoncfg that is no longer running.
+//
+// The generated monitor file stays on disk. Once nothing loads it, it changes
+// nothing, and keeping it makes turning management back on instant.
+//
+// This is the inverse of EnsureIncluded and matches lines the same way, so a
+// config it already cleaned is left untouched.
+func RemoveInclude(rootPath string, format HyprConfigFormat) (RemoveResult, error) {
+	result := RemoveResult{RootPath: rootPath}
+	if strings.TrimSpace(rootPath) == "" {
+		return result, nil
+	}
+	if !Writable(rootPath) {
+		result.ReadOnly = true
+		return result, nil
+	}
+
+	content, err := os.ReadFile(rootPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return result, nil
+		}
+		return result, fmt.Errorf("read %s: %w", rootPath, err)
+	}
+
+	lines := strings.Split(string(content), "\n")
+	kept := make([]string, 0, len(lines))
+	found := false
+	for _, line := range lines {
+		if isHyprmoncfgInclude(line, format) || isHyprmoncfgComment(line) {
+			found = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !found {
+		return result, nil
+	}
+
+	desired := strings.TrimRight(strings.Join(kept, "\n"), "\n") + "\n"
+	if desired == string(content) {
+		return result, nil
+	}
+	if err := WriteFileAtomic(rootPath, []byte(desired), 0o644); err != nil {
+		return result, fmt.Errorf("rewrite %s: %w", rootPath, err)
+	}
+	result.Removed = true
+	return result, nil
+}
+
 func isHyprmoncfgInclude(line string, format HyprConfigFormat) bool {
 	trimmed := strings.TrimSpace(line)
 	if trimmed == "" || !strings.Contains(trimmed, includeMarker) {

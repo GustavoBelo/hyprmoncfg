@@ -219,6 +219,10 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		if err = decodeParams(request.Params, &params); err == nil {
 			err = s.Handler.Delete(params)
 		}
+	case MethodManage:
+		err = s.Handler.Manage()
+	case MethodUnmanage:
+		err = s.Handler.Unmanage()
 	default:
 		err = fmt.Errorf("unknown IPC method %q", request.Method)
 	}

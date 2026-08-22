@@ -153,6 +153,91 @@ func TestEnsureIncludedHandlesLegacyConfigs(t *testing.T) {
 	}
 }
 
+func TestRemoveIncludeUndoesEnsureIncluded(t *testing.T) {
+	original := "monitor = eDP-1, preferred, auto, 1\nexec-once = waybar\n"
+	path := writeConfig(t, original)
+	target := filepath.Join(filepath.Dir(path), "hyprmoncfg-monitors.lua")
+
+	if _, err := EnsureIncluded(path, HyprConfigLua, target); err != nil {
+		t.Fatalf("EnsureIncluded: %v", err)
+	}
+	if !strings.Contains(readConfig(t, path), "hyprmoncfg") {
+		t.Fatal("expected the include to be added first")
+	}
+
+	result, err := RemoveInclude(path, HyprConfigLua)
+	if err != nil {
+		t.Fatalf("RemoveInclude: %v", err)
+	}
+	if !result.Removed {
+		t.Fatal("expected RemoveInclude to report a change")
+	}
+	if got := readConfig(t, path); got != original {
+		t.Fatalf("config not restored:\n%q\nwant\n%q", got, original)
+	}
+}
+
+func TestRemoveIncludeKeepsEverythingElse(t *testing.T) {
+	path := writeConfig(t, "")
+	target := filepath.Join(filepath.Dir(path), "hyprmoncfg-monitors.lua")
+	if err := os.WriteFile(path, []byte(
+		"-- my config\n"+
+			"dofile(os.getenv(\"HOME\") .. \"/.config/hypr/other-tool.lua\")\n"+
+			includeComment(HyprConfigLua)+"\n"+
+			IncludeLine(HyprConfigLua, target)+"\n",
+	), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	if _, err := RemoveInclude(path, HyprConfigLua); err != nil {
+		t.Fatalf("RemoveInclude: %v", err)
+	}
+
+	got := readConfig(t, path)
+	if strings.Contains(got, "hyprmoncfg") {
+		t.Fatalf("hyprmoncfg reference survived removal:\n%s", got)
+	}
+	// Another tool's dofile also matches "dofile(" and must not be collateral.
+	if !strings.Contains(got, "other-tool.lua") || !strings.Contains(got, "-- my config") {
+		t.Fatalf("removal took someone else's lines:\n%s", got)
+	}
+}
+
+func TestRemoveIncludeIsIdempotentAndQuietWhenAbsent(t *testing.T) {
+	original := "monitor = eDP-1, preferred, auto, 1\n"
+	path := writeConfig(t, original)
+
+	result, err := RemoveInclude(path, HyprConfigLua)
+	if err != nil {
+		t.Fatalf("RemoveInclude: %v", err)
+	}
+	if result.Removed {
+		t.Fatal("nothing of ours was there, so nothing should be reported removed")
+	}
+	if got := readConfig(t, path); got != original {
+		t.Fatalf("untouched config was rewritten:\n%q", got)
+	}
+}
+
+func TestRemoveIncludeHandlesLegacyConfigs(t *testing.T) {
+	path := writeConfig(t, "monitor = eDP-1, preferred, auto, 1\n")
+	target := filepath.Join(filepath.Dir(path), "hyprmoncfg-monitors.conf")
+
+	if _, err := EnsureIncluded(path, HyprConfigLegacy, target); err != nil {
+		t.Fatalf("EnsureIncluded: %v", err)
+	}
+	result, err := RemoveInclude(path, HyprConfigLegacy)
+	if err != nil {
+		t.Fatalf("RemoveInclude: %v", err)
+	}
+	if !result.Removed {
+		t.Fatal("expected the legacy source line to be removed")
+	}
+	if got := readConfig(t, path); strings.Contains(got, "hyprmoncfg") {
+		t.Fatalf("legacy include survived:\n%s", got)
+	}
+}
+
 // A dotfile manager points ~/.config/hypr/hyprland.lua at a file it owns.
 // Renaming onto the link would swap it for a plain file of ours, which is
 // issue #45.
@@ -180,6 +265,40 @@ func TestEnsureIncludedWritesThroughASymlink(t *testing.T) {
 	}
 	if !strings.Contains(readConfig(t, source), "hyprmoncfg") {
 		t.Fatal("the include did not reach the file the symlink points at")
+	}
+}
+
+func TestRemoveIncludeWritesThroughASymlink(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "dotfiles-hyprland.lua")
+	if err := os.WriteFile(source, []byte("monitor = eDP-1, preferred, auto, 1\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	link := filepath.Join(dir, "hyprland.lua")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if _, err := EnsureIncluded(link, HyprConfigLua, filepath.Join(dir, "hyprmoncfg-monitors.lua")); err != nil {
+		t.Fatalf("EnsureIncluded: %v", err)
+	}
+
+	result, err := RemoveInclude(link, HyprConfigLua)
+	if err != nil {
+		t.Fatalf("RemoveInclude: %v", err)
+	}
+	if !result.Removed {
+		t.Fatal("expected the include to be removed")
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced with a regular file")
+	}
+	if strings.Contains(readConfig(t, source), "hyprmoncfg") {
+		t.Fatal("the include survived in the file the symlink points at")
 	}
 }
 
@@ -212,5 +331,13 @@ func TestIncludeLeavesAReadOnlyConfigAlone(t *testing.T) {
 	}
 	if got := readConfig(t, source); got != original {
 		t.Fatalf("read-only config was modified:\n%q", got)
+	}
+
+	removal, err := RemoveInclude(link, HyprConfigLua)
+	if err != nil {
+		t.Fatalf("RemoveInclude should not fail on a read-only config: %v", err)
+	}
+	if !removal.ReadOnly || removal.Removed {
+		t.Fatalf("read-only removal = %+v", removal)
 	}
 }

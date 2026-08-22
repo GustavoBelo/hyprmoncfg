@@ -62,6 +62,8 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newApplyCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newDeleteCmd(&configDir))
 	root.AddCommand(newDoctorCmd(&monitorsConf, &hyprConfig))
+	root.AddCommand(newManageCmd(&configDir, &monitorsConf, &hyprConfig))
+	root.AddCommand(newUnmanageCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newVersionCmd("hyprmoncfg"))
 
 	return root
@@ -450,6 +452,130 @@ func runDoctor(cmd *cobra.Command, monitorsConf string, hyprConfig string, fix b
 	fmt.Fprintln(out, "\n         If your dotfiles are managed elsewhere, keep that line in your source copy.")
 	return nil
 }
+func newManageCmd(configDir *string, monitorsConf *string, hyprConfig *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "manage",
+		Short: "Let hyprmoncfg manage monitor configuration",
+		Long: "Put hyprmoncfg's include back in the Hyprland config and let automatic " +
+			"switching resume. Where Omarchy is installed, its monitor watcher steps aside again.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSetManaged(cmd, true, *configDir, *monitorsConf, *hyprConfig)
+		},
+	}
+}
+
+func newUnmanageCmd(configDir *string, monitorsConf *string, hyprConfig *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "unmanage",
+		Short: "Hand monitor configuration back to Hyprland",
+		Long: "Stop automatic switching and take hyprmoncfg's include out of the Hyprland " +
+			"config, so whatever you or your distro configured has the last word again. " +
+			"Where Omarchy is installed, its monitor watcher resumes.\n\n" +
+			"Stopping the daemon does not do this on its own: the generated rules keep " +
+			"loading on every reload, so anything else that writes monitor config still " +
+			"loses to a hyprmoncfg that is no longer running.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runSetManaged(cmd, false, *configDir, *monitorsConf, *hyprConfig)
+		},
+	}
+}
+
+// runSetManaged prefers the running daemon, which can also hand Omarchy's
+// watcher back and reload Hyprland. Without one it does the part that lives on
+// disk, so the choice still holds the next time the daemon starts.
+func runSetManaged(cmd *cobra.Command, managed bool, configDir string, monitorsConf string, hyprConfig string) error {
+	out := cmd.OutOrStdout()
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+	defer cancel()
+
+	if handled, err := setManagedViaDaemon(ctx, managed); err != nil {
+		return err
+	} else if handled {
+		fmt.Fprintln(out, managedSummary(managed))
+		return nil
+	}
+
+	base, err := config.EnsureBaseDir(configDir)
+	if err != nil {
+		return err
+	}
+	if err := config.SetManaged(base, managed); err != nil {
+		return err
+	}
+
+	resolved, err := resolveHyprConfigForCLI(cmd, monitorsConf, hyprConfig)
+	if err != nil {
+		return err
+	}
+
+	if managed {
+		result, err := config.EnsureIncluded(resolved.RootPath, resolved.Format, resolved.MonitorsPath)
+		if err != nil {
+			return err
+		}
+		if result.ReadOnly {
+			fmt.Fprintf(out, "%s is read-only, so add this line at its end yourself:\n\n  %s\n\n", result.RootPath, result.Line)
+		}
+	} else {
+		result, err := config.RemoveInclude(resolved.RootPath, resolved.Format)
+		if err != nil {
+			return err
+		}
+		if result.ReadOnly {
+			fmt.Fprintf(out, "%s is read-only, so remove hyprmoncfg's include from it yourself.\n\n", result.RootPath)
+		}
+	}
+
+	if client, err := hypr.NewClient(); err == nil {
+		if err := client.Reload(ctx); err != nil {
+			fmt.Fprintf(out, "Could not reload Hyprland, so this takes effect on its next reload: %v\n", err)
+		}
+	}
+
+	fmt.Fprintln(out, managedSummary(managed))
+	fmt.Fprintln(out, "\nThe daemon is not running. Start it to pick this up:")
+	fmt.Fprintln(out, "  systemctl --user start hyprmoncfgd.service")
+	return nil
+}
+
+func managedSummary(managed bool) string {
+	if managed {
+		return "hyprmoncfg manages monitor configuration."
+	}
+	return "Monitor configuration is Hyprland's again. Run `hyprmoncfg manage` to hand it back."
+}
+
+// setManagedViaDaemon reports whether a running daemon took the request.
+func setManagedViaDaemon(ctx context.Context, managed bool) (bool, error) {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return false, nil
+	}
+	client, err := ipc.Dial(ctx, path)
+	if err != nil {
+		return false, nil
+	}
+	defer client.Close()
+
+	if managed {
+		return true, client.Manage(ctx)
+	}
+	return true, client.Unmanage(ctx)
+}
+
+func resolveHyprConfigForCLI(cmd *cobra.Command, monitorsConf string, hyprConfig string) (config.ResolvedHyprConfig, error) {
+	version := ""
+	if client, err := hypr.NewClient(); err == nil {
+		ctx, cancel := context.WithTimeout(cmd.Context(), 2*time.Second)
+		defer cancel()
+		if info, err := client.Version(ctx); err == nil {
+			version = info.Version
+		}
+	}
+	return config.ResolveHyprlandConfig(version, monitorsConf, hyprConfig)
+}
+
 func newVersionCmd(name string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",

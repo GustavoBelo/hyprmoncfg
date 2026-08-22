@@ -70,6 +70,10 @@ func newRootCmd() *cobra.Command {
 				logf = logger.Printf
 			}
 
+			// Built before the service so the service can hand the watcher back
+			// when someone turns monitor management off.
+			watcherOwner := omarchywatch.New(logf)
+
 			svc := daemon.New(client, store, daemon.Config{
 				Debounce:        debounce,
 				WakeSettle:      wakeSettle,
@@ -78,6 +82,9 @@ func newRootCmd() *cobra.Command {
 				ForcedProfile:   forceProfile,
 				MonitorsConf:    monitorsConf,
 				HyprConfig:      hyprConfig,
+				ConfigDir:       base,
+				ClaimWatcher:    watcherOwner.Start,
+				ReleaseWatcher:  watcherOwner.Release,
 				Logf:            logf,
 			})
 			socketPath, err := ipc.SocketPath()
@@ -93,8 +100,13 @@ func newRootCmd() *cobra.Command {
 			svc.SetNotifier(server.Notify)
 
 			logf("starting daemon")
-			watcherOwner := omarchywatch.New(logf)
-			watcherOwner.Start(ctx)
+			// Someone who handed monitor configuration back to Hyprland does not
+			// want Omarchy's watcher stopped on their behalf either.
+			if config.IsManaged(base) {
+				watcherOwner.Start(ctx)
+			} else {
+				logf("monitor management is off; not claiming displays")
+			}
 
 			errCh := make(chan error, 2)
 			go func() { errCh <- server.Run(ctx) }()
