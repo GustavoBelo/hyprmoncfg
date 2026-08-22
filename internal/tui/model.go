@@ -2270,12 +2270,50 @@ func abs(value int) int {
 	return value
 }
 
+// reflowAfterResize keeps a layout packed when an output's logical size
+// changes. Scale, mode, and transform all move an output's right and bottom
+// edges while its top-left corner stays put, so without this the displays
+// beside it gap or overlap. Everything past the old right or bottom edge
+// moves with that edge: flush neighbors stay flush, deliberate gaps keep
+// their width, and a row of displays shifts together.
+func (m *Model) reflowAfterResize(index, oldWidth, oldHeight int) {
+	if index < 0 || index >= len(m.editOutputs) {
+		return
+	}
+	resized := m.editOutputs[index]
+	if !resized.Enabled {
+		return
+	}
+
+	newWidth, newHeight := resized.logicalSize()
+	dx := newWidth - oldWidth
+	dy := newHeight - oldHeight
+	if dx == 0 && dy == 0 {
+		return
+	}
+
+	oldRight := resized.X + oldWidth
+	oldBottom := resized.Y + oldHeight
+	for i := range m.editOutputs {
+		if i == index || !m.editOutputs[i].Enabled {
+			continue
+		}
+		if dx != 0 && m.editOutputs[i].X >= oldRight {
+			m.editOutputs[i].X += dx
+		}
+		if dy != 0 && m.editOutputs[i].Y >= oldBottom {
+			m.editOutputs[i].Y += dy
+		}
+	}
+}
+
 func (m *Model) adjustInspectorField(delta int) {
 	if len(m.editOutputs) == 0 {
 		return
 	}
 
 	output := &m.editOutputs[m.selectedOutput]
+	oldWidth, oldHeight := output.logicalSize()
 	switch m.inspectorField {
 	case 0:
 		output.Enabled = !output.Enabled
@@ -2380,6 +2418,7 @@ func (m *Model) adjustInspectorField(delta int) {
 	case 20:
 		// ICC uses text input via activateInspectorField
 	}
+	m.reflowAfterResize(m.selectedOutput, oldWidth, oldHeight)
 	m.layoutChanged()
 }
 

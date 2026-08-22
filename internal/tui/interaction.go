@@ -956,9 +956,11 @@ func (m *Model) commitModePicker() tea.Cmd {
 
 	output := &m.editOutputs[m.picker.OutputIndex]
 	value := string(selected)
+	oldWidth, oldHeight := output.logicalSize()
 
 	if m.picker.FieldIndex >= 0 {
 		m.applyFieldPickerValue(output, m.picker.FieldIndex, value)
+		m.reflowAfterResize(m.picker.OutputIndex, oldWidth, oldHeight)
 		m.layoutChanged()
 		m.setStatusOK(fmt.Sprintf("Set %s to %s for %s", layoutFields[m.picker.FieldIndex], value, output.Name))
 		m.picker = nil
@@ -974,6 +976,7 @@ func (m *Model) commitModePicker() tea.Cmd {
 		output.ModeUnsupported = false
 	}
 	output.applyMode(output.Modes[output.ModeIndex])
+	m.reflowAfterResize(m.picker.OutputIndex, oldWidth, oldHeight)
 	m.layoutChanged()
 	m.setStatusOK(fmt.Sprintf("Selected %s for %s", output.DisplayMode(), output.Name))
 	m.picker = nil
@@ -1111,6 +1114,7 @@ func (m *Model) commitNumericInput() tea.Cmd {
 	}
 
 	output := &m.editOutputs[m.input.OutputIndex]
+	oldWidth, oldHeight := output.logicalSize()
 	var status string
 	switch m.input.Kind {
 	case numericInputScale:
@@ -1172,6 +1176,7 @@ func (m *Model) commitNumericInput() tea.Cmd {
 		m.applyNumericFieldValue(output, m.input.FieldIndex, float64(value))
 		status = fmt.Sprintf("%s set for %s", m.input.Title, output.Name)
 	}
+	m.reflowAfterResize(m.input.OutputIndex, oldWidth, oldHeight)
 	m.layoutChanged()
 	m.setStatusOK(status)
 	m.input = nil

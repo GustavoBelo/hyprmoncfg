@@ -2990,3 +2990,203 @@ func TestBuildInspectorLayoutUniqueRows(t *testing.T) {
 		}
 	}
 }
+
+func TestAdjustInspectorScaleKeepsNeighborsFlush(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		inspectorField: 2,
+		editOutputs: []editableOutput{
+			{Key: "internal", Name: "eDP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 2, X: 0, Y: 0},
+			{Key: "middle", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 960, Y: 0},
+			{Key: "right", Name: "DP-2", Enabled: true, Width: 1280, Height: 720, Scale: 1, X: 2880, Y: 0},
+		},
+	}
+
+	before, _ := m.editOutputs[0].logicalSize()
+	m.adjustInspectorField(-1)
+	after, _ := m.editOutputs[0].logicalSize()
+	if after == before {
+		t.Fatalf("expected the scale change to resize the output, still %d wide", after)
+	}
+	shift := after - before
+
+	if got, want := m.editOutputs[1].X, 960+shift; got != want {
+		t.Fatalf("flush neighbor X = %d, want %d", got, want)
+	}
+	if got, want := m.editOutputs[2].X, 2880+shift; got != want {
+		t.Fatalf("downstream neighbor X = %d, want %d", got, want)
+	}
+	if got, want := m.editOutputs[1].X, m.editOutputs[0].X+after; got != want {
+		t.Fatalf("neighbor no longer flush against the resized output: X = %d, right edge = %d", got, want)
+	}
+}
+
+func TestAdjustInspectorScalePreservesGapsAndLeavesEarlierOutputsAlone(t *testing.T) {
+	m := Model{
+		selectedOutput: 1,
+		inspectorField: 2,
+		editOutputs: []editableOutput{
+			{Key: "left", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 0},
+			{Key: "selected", Name: "eDP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 2, X: 1920, Y: 0},
+			{Key: "spaced", Name: "DP-2", Enabled: true, Width: 1280, Height: 720, Scale: 1, X: 3000, Y: 0},
+		},
+	}
+
+	before, _ := m.editOutputs[1].logicalSize()
+	m.adjustInspectorField(-1)
+	after, _ := m.editOutputs[1].logicalSize()
+	shift := after - before
+	if shift == 0 {
+		t.Fatal("expected the scale change to resize the output")
+	}
+
+	if got := m.editOutputs[0].X; got != 0 {
+		t.Fatalf("output left of the resized one moved to %d", got)
+	}
+	gapBefore := 3000 - (1920 + before)
+	gapAfter := m.editOutputs[2].X - (m.editOutputs[1].X + after)
+	if gapAfter != gapBefore {
+		t.Fatalf("gap changed from %d to %d", gapBefore, gapAfter)
+	}
+}
+
+func TestAdjustInspectorScaleReflowsVertically(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		inspectorField: 2,
+		editOutputs: []editableOutput{
+			{Key: "top", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 2, X: 0, Y: 0},
+			{Key: "below", Name: "DP-2", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 540},
+		},
+	}
+
+	_, before := m.editOutputs[0].logicalSize()
+	m.adjustInspectorField(-1)
+	_, after := m.editOutputs[0].logicalSize()
+	if after == before {
+		t.Fatal("expected the scale change to resize the output")
+	}
+
+	if got, want := m.editOutputs[1].Y, m.editOutputs[0].Y+after; got != want {
+		t.Fatalf("output below is no longer flush: Y = %d, bottom edge = %d", got, want)
+	}
+}
+
+func TestAdjustInspectorModeReflowsNeighbors(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		inspectorField: 1,
+		editOutputs: []editableOutput{
+			{
+				Key: "selected", Name: "DP-1", Enabled: true,
+				Width: 1920, Height: 1080, Refresh: 60, Scale: 1, X: 0, Y: 0,
+				Modes: []string{"1920x1080@60.00", "1280x720@60.00"}, ModeIndex: 0,
+			},
+			{Key: "neighbor", Name: "DP-2", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 1920, Y: 0},
+		},
+	}
+
+	m.adjustInspectorField(1)
+
+	if got := m.editOutputs[0].Width; got != 1280 {
+		t.Fatalf("mode change did not apply, width = %d", got)
+	}
+	if got := m.editOutputs[1].X; got != 1280 {
+		t.Fatalf("neighbor X = %d, want 1280", got)
+	}
+}
+
+func TestAdjustInspectorScaleIgnoresDisabledOutputs(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		inspectorField: 2,
+		editOutputs: []editableOutput{
+			{Key: "selected", Name: "eDP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 2, X: 0, Y: 0},
+			{Key: "off", Name: "DP-1", Enabled: false, Width: 1920, Height: 1080, Scale: 1, X: 960, Y: 0},
+		},
+	}
+
+	m.adjustInspectorField(-1)
+
+	if got := m.editOutputs[1].X; got != 960 {
+		t.Fatalf("disabled output moved to %d", got)
+	}
+}
+
+func TestAdjustInspectorPositionDoesNotReflow(t *testing.T) {
+	m := Model{
+		selectedOutput: 0,
+		inspectorField: 7,
+		editOutputs: []editableOutput{
+			{Key: "selected", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 0},
+			{Key: "neighbor", Name: "DP-2", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 1920, Y: 0},
+		},
+	}
+
+	m.adjustInspectorField(1)
+
+	if got := m.editOutputs[0].X; got != 10 {
+		t.Fatalf("selected output X = %d, want 10", got)
+	}
+	if got := m.editOutputs[1].X; got != 1920 {
+		t.Fatalf("moving an output shifted its neighbor to %d", got)
+	}
+}
+
+func TestCommitNumericScaleReflowsNeighbors(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 28,
+		mode:   modeNumericInput,
+		input: &numericInputState{
+			Kind:        numericInputScale,
+			OutputIndex: 0,
+			Input:       textInputWithValue("2"),
+		},
+		editOutputs: []editableOutput{
+			{Key: "selected", Name: "eDP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 0},
+			{Key: "neighbor", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 1920, Y: 0},
+		},
+	}
+
+	if cmd := m.commitNumericInput(); cmd != nil {
+		t.Fatal("expected scale commit not to return a command")
+	}
+
+	if got := m.editOutputs[0].Scale; got != 2 {
+		t.Fatalf("typed scale = %v, want 2", got)
+	}
+	if got := m.editOutputs[1].X; got != 960 {
+		t.Fatalf("neighbor X = %d, want 960: typing a scale should reflow like the arrows do", got)
+	}
+}
+
+func TestCommitNumericPositionDoesNotReflow(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 28,
+		mode:   modeNumericInput,
+		input: &numericInputState{
+			Kind:        numericInputPositionX,
+			OutputIndex: 0,
+			Input:       textInputWithValue("500"),
+		},
+		editOutputs: []editableOutput{
+			{Key: "selected", Name: "eDP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 0, Y: 0},
+			{Key: "neighbor", Name: "DP-1", Enabled: true, Width: 1920, Height: 1080, Scale: 1, X: 1920, Y: 0},
+		},
+	}
+
+	if cmd := m.commitNumericInput(); cmd != nil {
+		t.Fatal("expected position commit not to return a command")
+	}
+
+	if got := m.editOutputs[0].X; got != 500 {
+		t.Fatalf("typed position = %d, want 500", got)
+	}
+	if got := m.editOutputs[1].X; got != 1920 {
+		t.Fatalf("neighbor moved to %d: repositioning is not a resize", got)
+	}
+}
