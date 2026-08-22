@@ -137,8 +137,11 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			// out of step and break every later call on it.
 			continue
 		}
-		if response.ProtocolVersion != ProtocolVersion {
-			return fmt.Errorf("unsupported IPC protocol version %d", response.ProtocolVersion)
+		// A daemon answers in the version we asked in, so a reply from the
+		// future means it is newer than this build and did not down-negotiate.
+		// Anything at or below what we speak is ours to read.
+		if response.ProtocolVersion > ProtocolVersion {
+			return fmt.Errorf("daemon replied in IPC protocol version %d, this build speaks %d", response.ProtocolVersion, ProtocolVersion)
 		}
 		if response.Error != nil {
 			return decodeResponseError(response.Error)

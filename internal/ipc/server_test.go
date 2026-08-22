@@ -208,3 +208,76 @@ func TestShutdownClosesClientsAndWaitsForDisconnect(t *testing.T) {
 		t.Fatalf("disconnect calls = %d, want 1", handler.disconnectCount())
 	}
 }
+
+// dispatchRaw drives the server the way a non-Go client does, one JSON request
+// at a time, so a request can carry a version this build would never send.
+func dispatchRaw(t *testing.T, request Request) Response {
+	t.Helper()
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close(); _ = clientConn.Close() })
+
+	server := &Server{Handler: &testHandler{}}
+	client := &serverClient{conn: serverConn, encoder: json.NewEncoder(serverConn)}
+	return server.dispatch("test", client, request)
+}
+
+func TestDispatchAnswersInTheVersionTheClientAsked(t *testing.T) {
+	// Every version this build still serves has to come back in that same
+	// version, because an older client compares it against the only one it
+	// knows. This grows teeth the moment ProtocolVersion moves past the min.
+	for version := MinProtocolVersion; version <= ProtocolVersion; version++ {
+		request := Request{Type: "request", ProtocolVersion: version, ID: "1", Method: MethodStatus}
+		response := dispatchRaw(t, request)
+
+		if response.Error != nil {
+			t.Fatalf("version %d was refused: %+v", version, response.Error)
+		}
+		if response.ProtocolVersion != version {
+			t.Fatalf("version %d answered in %d", version, response.ProtocolVersion)
+		}
+		if response.ServerProtocolVersion != ProtocolVersion {
+			t.Fatalf("server version = %d, want %d", response.ServerProtocolVersion, ProtocolVersion)
+		}
+	}
+}
+
+func TestDispatchRefusesVersionsOutsideTheSupportedRange(t *testing.T) {
+	for _, version := range []int{MinProtocolVersion - 1, ProtocolVersion + 1} {
+		request := Request{Type: "request", ProtocolVersion: version, ID: "1", Method: MethodStatus}
+		response := dispatchRaw(t, request)
+
+		if response.Error == nil || response.Error.Code != "unsupported_protocol" {
+			t.Fatalf("version %d was accepted: %+v", version, response.Error)
+		}
+		// The refusal is echoed in the caller's version too. Answering in ours
+		// would trip the client's own version check and hide this message.
+		if response.ProtocolVersion != version {
+			t.Fatalf("refusal for version %d came back in %d", version, response.ProtocolVersion)
+		}
+		if response.Error.Data["min"] != MinProtocolVersion || response.Error.Data["max"] != ProtocolVersion {
+			t.Fatalf("refusal should name the supported range, got %+v", response.Error.Data)
+		}
+	}
+}
+
+func TestEventsGoOutInTheVersionTheClientNegotiated(t *testing.T) {
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close(); _ = clientConn.Close() })
+
+	client := &serverClient{conn: serverConn, encoder: json.NewEncoder(serverConn)}
+	if got := client.eventProtocolVersion(); got != ProtocolVersion {
+		t.Fatalf("un-negotiated client should fall back to %d, got %d", ProtocolVersion, got)
+	}
+
+	server := &Server{Handler: &testHandler{}}
+	server.dispatch("test", client, Request{
+		Type: "request", ProtocolVersion: MinProtocolVersion, ID: "1", Method: MethodSubscribe,
+	})
+
+	if got := client.eventProtocolVersion(); got != MinProtocolVersion {
+		t.Fatalf("event version = %d, want the negotiated %d", got, MinProtocolVersion)
+	}
+	if !client.subscribed.Load() {
+		t.Fatal("subscribe should have marked the client subscribed")
+	}
+}

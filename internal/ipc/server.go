@@ -26,10 +26,21 @@ type Server struct {
 }
 
 type serverClient struct {
-	conn       net.Conn
-	encoder    *json.Encoder
-	writeMu    sync.Mutex
-	subscribed atomic.Bool
+	conn    net.Conn
+	encoder *json.Encoder
+	writeMu sync.Mutex
+	// protocolVersion is the version this connection negotiated on its first
+	// accepted request. Events go out in that version so a client that only
+	// knows an older one keeps recognizing them.
+	protocolVersion atomic.Int64
+	subscribed      atomic.Bool
+}
+
+func (c *serverClient) eventProtocolVersion() int {
+	if version := int(c.protocolVersion.Load()); version >= MinProtocolVersion {
+		return version
+	}
+	return ProtocolVersion
 }
 
 func (s *Server) Run(ctx context.Context) error {
@@ -115,13 +126,11 @@ func (s *Server) publishLoop(ctx context.Context) {
 			if err != nil {
 				continue
 			}
-			event := Event{
-				Type:            "event",
-				ProtocolVersion: ProtocolVersion,
-				Event:           EventStatus,
-				Data:            data,
-			}
-			s.broadcast(event)
+			s.broadcast(Event{
+				Type:  "event",
+				Event: EventStatus,
+				Data:  data,
+			})
 		}
 	}
 }
@@ -154,22 +163,28 @@ func (s *Server) serveClient(ctx context.Context, owner string, client *serverCl
 }
 
 func (s *Server) dispatch(owner string, client *serverClient, request Request) Response {
+	// Reply in the version the client asked in. An older client checks the
+	// version it gets back against the only one it knows, so answering in ours
+	// would read as a protocol error to a client we are perfectly able to serve.
 	response := Response{
-		Type:            "response",
-		ProtocolVersion: ProtocolVersion,
-		ID:              request.ID,
+		Type:                  "response",
+		ProtocolVersion:       request.ProtocolVersion,
+		ServerProtocolVersion: ProtocolVersion,
+		ID:                    request.ID,
 	}
 	if request.Type != "request" {
 		response.Error = &ResponseError{Code: "invalid_request", Message: "message type must be request"}
 		return response
 	}
-	if request.ProtocolVersion != ProtocolVersion {
+	if request.ProtocolVersion < MinProtocolVersion || request.ProtocolVersion > ProtocolVersion {
 		response.Error = &ResponseError{
 			Code:    "unsupported_protocol",
-			Message: fmt.Sprintf("unsupported IPC protocol version %d", request.ProtocolVersion),
+			Message: fmt.Sprintf("unsupported IPC protocol version %d, this daemon speaks %d to %d", request.ProtocolVersion, MinProtocolVersion, ProtocolVersion),
+			Data:    map[string]any{"min": MinProtocolVersion, "max": ProtocolVersion},
 		}
 		return response
 	}
+	client.protocolVersion.Store(int64(request.ProtocolVersion))
 
 	var result any
 	var err error
@@ -247,7 +262,9 @@ func (s *Server) broadcast(event Event) {
 	}
 	s.mu.Unlock()
 	for _, client := range clients {
-		if err := client.write(event); err != nil {
+		stamped := event
+		stamped.ProtocolVersion = client.eventProtocolVersion()
+		if err := client.write(stamped); err != nil {
 			_ = client.conn.Close()
 		}
 	}

@@ -9,7 +9,20 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
-const ProtocolVersion = 1
+// ProtocolVersion is the newest protocol this build speaks. Bump it when the
+// wire format gains something a client has to know about.
+//
+// MinProtocolVersion is the oldest one it still answers. Clients update on
+// their own schedule -- the Omarchy panel is a separate git checkout, and the
+// daemon keeps running its old binary until someone restarts the service -- so
+// a new daemon has to keep serving older clients. The server answers in the
+// version the client asked in, which leaves an older client seeing exactly the
+// replies it expects, and reports its own newest version separately so a client
+// that cares can adapt.
+const (
+	ProtocolVersion    = 1
+	MinProtocolVersion = 1
+)
 
 const (
 	MethodStatus    = "status"
@@ -34,11 +47,15 @@ type Request struct {
 }
 
 type Response struct {
-	Type            string          `json:"type"`
-	ProtocolVersion int             `json:"protocol_version"`
-	ID              string          `json:"id"`
-	Result          json.RawMessage `json:"result,omitempty"`
-	Error           *ResponseError  `json:"error,omitempty"`
+	Type            string `json:"type"`
+	ProtocolVersion int    `json:"protocol_version"`
+	// ServerProtocolVersion is the newest version the daemon speaks, whatever
+	// version this reply is written in. A client reads it to feature-detect
+	// instead of guessing from the daemon's release number.
+	ServerProtocolVersion int             `json:"server_protocol_version,omitempty"`
+	ID                    string          `json:"id"`
+	Result                json.RawMessage `json:"result,omitempty"`
+	Error                 *ResponseError  `json:"error,omitempty"`
 }
 
 type Event struct {
