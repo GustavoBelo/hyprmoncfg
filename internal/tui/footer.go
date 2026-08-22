@@ -40,6 +40,11 @@ func (m Model) footerHelpText() string {
 	// One key, one meaning. Everything else lives behind `?`.
 	switch m.tab {
 	case tabLayout:
+		// The inspector is where scale, mode, and position are edited, so say
+		// how to change a value rather than how to move a monitor around.
+		if m.layoutFocus == layoutFocusInspector {
+			return "`↑↓` field | `←→` adjust | `Enter` type | `[ ]` monitors | `Tab` pane | `a` apply | `s` save | `?` keys"
+		}
 		return "`drag/arrows` move | `[ ]` monitors | `Tab` pane | `Enter` edit | `a` apply | `s` save | `?` keys"
 	case tabProfiles:
 		return "`Enter` load | `a` apply | `e` exec | `d` delete | `s` save | `?` keys"

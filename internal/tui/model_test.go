@@ -3190,3 +3190,17 @@ func TestCommitNumericPositionDoesNotReflow(t *testing.T) {
 		t.Fatalf("neighbor moved to %d: repositioning is not a resize", got)
 	}
 }
+
+func TestFooterTellsTheInspectorHowToChangeAValue(t *testing.T) {
+	inspector := Model{tab: tabLayout, layoutFocus: layoutFocusInspector}.footerHelpText()
+	for _, want := range []string{"`←→` adjust", "`Enter` type", "`[ ]` monitors"} {
+		if !strings.Contains(inspector, want) {
+			t.Fatalf("inspector footer missing %q: %s", want, inspector)
+		}
+	}
+
+	canvas := Model{tab: tabLayout, layoutFocus: layoutFocusCanvas}.footerHelpText()
+	if !strings.Contains(canvas, "`drag/arrows` move") {
+		t.Fatalf("canvas footer should still describe moving monitors: %s", canvas)
+	}
+}
