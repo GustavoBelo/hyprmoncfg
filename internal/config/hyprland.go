@@ -311,7 +311,49 @@ func (s FileSnapshot) Restore() error {
 	return nil
 }
 
+// ResolveSymlink follows a path to the file it really names, so callers edit a
+// dotfile manager's source file instead of replacing the link that points at
+// it. A path that is not a link, or that cannot be resolved, comes back as it
+// went in.
+func ResolveSymlink(path string) string {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil || strings.TrimSpace(resolved) == "" {
+		return path
+	}
+	return resolved
+}
+
+// Writable reports whether hyprmoncfg can edit a config file in place, after
+// following any symlink. A read-only target, such as one in the Nix store, is
+// somebody else's to change: hyprmoncfg has to tell the user what to add rather
+// than fail on every apply.
+func Writable(path string) bool {
+	path = ResolveSymlink(path)
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return os.IsNotExist(err) && dirWritable(filepath.Dir(path))
+	}
+	_ = file.Close()
+	return true
+}
+
+func dirWritable(dir string) bool {
+	probe, err := os.CreateTemp(dir, ".hyprmoncfg-probe-*")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 func WriteFileAtomic(path string, content []byte, perm os.FileMode) error {
+	// Write through a symlink rather than over it. Dotfile managers point
+	// ~/.config/hypr at a file they own, and renaming onto the link would
+	// silently replace their link with a plain file of ours.
+	path = ResolveSymlink(path)
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

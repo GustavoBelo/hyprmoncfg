@@ -152,3 +152,65 @@ func TestEnsureIncludedHandlesLegacyConfigs(t *testing.T) {
 		t.Fatalf("expected a comment in the config's own syntax, got:\n%s", content)
 	}
 }
+
+// A dotfile manager points ~/.config/hypr/hyprland.lua at a file it owns.
+// Renaming onto the link would swap it for a plain file of ours, which is
+// issue #45.
+func TestEnsureIncludedWritesThroughASymlink(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "dotfiles-hyprland.lua")
+	if err := os.WriteFile(source, []byte("monitor = eDP-1, preferred, auto, 1\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	link := filepath.Join(dir, "hyprland.lua")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	if _, err := EnsureIncluded(link, HyprConfigLua, filepath.Join(dir, "hyprmoncfg-monitors.lua")); err != nil {
+		t.Fatalf("EnsureIncluded: %v", err)
+	}
+
+	info, err := os.Lstat(link)
+	if err != nil {
+		t.Fatalf("lstat: %v", err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("the symlink was replaced with a regular file")
+	}
+	if !strings.Contains(readConfig(t, source), "hyprmoncfg") {
+		t.Fatal("the include did not reach the file the symlink points at")
+	}
+}
+
+// A Nix store target never becomes writable, so every apply would otherwise
+// fail on a file that is not hyprmoncfg's to change.
+func TestIncludeLeavesAReadOnlyConfigAlone(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "nix-store-hyprland.lua")
+	original := "monitor = eDP-1, preferred, auto, 1\n"
+	if err := os.WriteFile(source, []byte(original), 0o444); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	link := filepath.Join(dir, "hyprland.lua")
+	if err := os.Symlink(source, link); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+
+	result, err := EnsureIncluded(link, HyprConfigLua, filepath.Join(dir, "hyprmoncfg-monitors.lua"))
+	if err != nil {
+		t.Fatalf("EnsureIncluded should not fail on a read-only config: %v", err)
+	}
+	if !result.ReadOnly {
+		t.Fatal("expected the read-only config to be reported")
+	}
+	if result.Added || result.MovedLast {
+		t.Fatal("nothing should have been written")
+	}
+	if result.Line == "" {
+		t.Fatal("the user needs to be told which line to add")
+	}
+	if got := readConfig(t, source); got != original {
+		t.Fatalf("read-only config was modified:\n%q", got)
+	}
+}

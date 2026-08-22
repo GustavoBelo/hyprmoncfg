@@ -23,6 +23,9 @@ type IncludeResult struct {
 	Line      string
 	Added     bool
 	MovedLast bool
+	// ReadOnly reports a root config hyprmoncfg cannot edit, such as a symlink
+	// into the Nix store. Nothing was written and Line is what to add by hand.
+	ReadOnly bool
 }
 
 func (r IncludeResult) Changed() bool {
@@ -39,6 +42,12 @@ func (r IncludeResult) Changed() bool {
 func EnsureIncluded(rootPath string, format HyprConfigFormat, targetPath string) (IncludeResult, error) {
 	result := IncludeResult{RootPath: rootPath, Line: IncludeLine(format, targetPath)}
 	if strings.TrimSpace(rootPath) == "" || strings.TrimSpace(targetPath) == "" {
+		return result, nil
+	}
+	if !Writable(rootPath) {
+		// A read-only config belongs to whoever generates it. Say what it needs
+		// rather than failing every apply over a file that will never budge.
+		result.ReadOnly = true
 		return result, nil
 	}
 
