@@ -63,7 +63,7 @@ func TestInternalOnlyFallbackProfileEnablesInternalWhenAllOutputsDisabled(t *tes
 		{Name: "eDP-1", Make: "Framework", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, X: 3840, Scale: 1.5, Disabled: true},
 	}
 
-	got, ok := internalOnlyFallbackProfile(monitors)
+	got, ok := allDisabledFallbackProfile(monitors)
 	if !ok {
 		t.Fatal("expected fallback profile")
 	}
@@ -92,7 +92,7 @@ func TestInternalOnlyFallbackProfileLeavesExternalOutputsDisabled(t *testing.T) 
 		{Name: "eDP-1", Make: "Framework", Model: "Panel", Serial: "A1", Disabled: true},
 	}
 
-	got, ok := internalOnlyFallbackProfile(monitors)
+	got, ok := allDisabledFallbackProfile(monitors)
 	if !ok {
 		t.Fatal("expected fallback profile")
 	}
@@ -113,18 +113,44 @@ func TestInternalOnlyFallbackProfileDoesNotOverrideEnabledOutput(t *testing.T) {
 		{Name: "eDP-1", Make: "Framework", Model: "Panel", Serial: "A1", Disabled: true},
 	}
 
-	if _, ok := internalOnlyFallbackProfile(monitors); ok {
+	if _, ok := allDisabledFallbackProfile(monitors); ok {
 		t.Fatal("did not expect fallback while an output is enabled")
 	}
 }
 
-func TestInternalOnlyFallbackProfileRequiresInternalOutput(t *testing.T) {
+// A desktop has no built-in panel to fall back to, and is just as stuck as a
+// laptop when its only display is switched off.
+func TestAllDisabledFallbackProfileRescuesAMachineWithNoInternalPanel(t *testing.T) {
 	monitors := []hypr.Monitor{
 		{Name: "DP-1", Make: "Dell", Model: "U2720Q", Serial: "B1", Disabled: true},
 	}
 
-	if _, ok := internalOnlyFallbackProfile(monitors); ok {
-		t.Fatal("did not expect fallback without an internal output")
+	got, ok := allDisabledFallbackProfile(monitors)
+	if !ok {
+		t.Fatal("expected the only connected display to be switched back on")
+	}
+	if len(got.Outputs) != 1 || !got.Outputs[0].Enabled {
+		t.Fatalf("fallback profile = %+v", got.Outputs)
+	}
+}
+
+// The built-in panel is the display a laptop always has, so it wins even when
+// it is not the first one Hyprland lists.
+func TestAllDisabledFallbackProfilePrefersTheInternalPanel(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-1", Make: "Dell", Model: "U2720Q", Serial: "B1", Disabled: true},
+		{Name: "eDP-1", Make: "Framework", Model: "Panel", Serial: "A1", Disabled: true},
+	}
+
+	got, ok := allDisabledFallbackProfile(monitors)
+	if !ok {
+		t.Fatal("expected a fallback when everything is disabled")
+	}
+	for _, output := range got.Outputs {
+		want := output.Name == "eDP-1"
+		if output.Enabled != want {
+			t.Fatalf("%s enabled = %v, want %v", output.Name, output.Enabled, want)
+		}
 	}
 }
 
@@ -1047,5 +1073,40 @@ func TestApplyBestDoesNothingWhenManagementIsOff(t *testing.T) {
 	}
 	if got := readMonitorsConf(t, env); !strings.Contains(got, "position = 100x200") {
 		t.Fatalf("turning management back on did not apply the profile:\n%s", got)
+	}
+}
+
+// Issue #47. A clamshell layout was saved docked, so its generated config
+// disables the built-in panel unconditionally while only conditionally enabling
+// an external that is now absent. Booting undocked leaves every real display off
+// and Hyprland invents its FALLBACK head, reporting itself as enabled. Counting
+// that head made "is everything disabled?" answer no, the guard stood down, and
+// the laptop sat at a black screen with no way back except a TTY.
+func TestApplyBestRecoversFromABlackScreenBesideHyprlandsFallbackHead(t *testing.T) {
+	blacked := `[` +
+		`{"id":0,"name":"eDP-1","description":"BOE 0x0CFD","make":"BOE","model":"0x0CFD","serial":"","width":1920,"height":1080,"refreshRate":144,"x":0,"y":0,"scale":1,"transform":0,"disabled":true,"mirrorOf":""},` +
+		`{"id":1,"name":"FALLBACK","description":"","make":"","model":"","serial":"","width":1920,"height":1080,"refreshRate":60,"x":0,"y":0,"scale":1,"transform":0,"disabled":false,"focused":true,"mirrorOf":""}` +
+		`]`
+	recovered := `[{"id":0,"name":"eDP-1","description":"BOE 0x0CFD","make":"BOE","model":"0x0CFD","serial":"","width":1920,"height":1080,"refreshRate":144,"x":0,"y":0,"scale":1,"transform":0,"disabled":false,"mirrorOf":""}]`
+
+	env := newApplyBestTestEnvWithMonitors(t, blacked, recovered)
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	rendered := readMonitorsConf(t, env)
+	if !strings.Contains(rendered, "output = desc:BOE 0x0CFD") {
+		t.Fatalf("the built-in panel was not switched back on:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "disabled") {
+		t.Fatalf("the recovery config still disables something:\n%s", rendered)
+	}
+	// Hyprland's invented head must never reach the generated config.
+	if strings.Contains(rendered, "FALLBACK") {
+		t.Fatalf("the synthetic head was written into the config:\n%s", rendered)
 	}
 }

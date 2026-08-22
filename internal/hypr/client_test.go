@@ -279,3 +279,31 @@ func TestNormalizeMirrorTargetsResolvesMonitorIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestDropSyntheticMonitorsRemovesHyprlandsFallbackHead(t *testing.T) {
+	monitors := []Monitor{
+		{Name: "eDP-1", Make: "BOE", Model: "0x0CFD", Disabled: true},
+		{Name: "FALLBACK"},
+		{Name: "DP-1", Make: "Dell", Model: "U2720Q"},
+	}
+
+	got := dropSyntheticMonitors(monitors)
+	if len(got) != 2 {
+		t.Fatalf("got %d monitors, want 2: %+v", len(got), got)
+	}
+	for _, monitor := range got {
+		if monitor.Name == "FALLBACK" {
+			t.Fatal("the synthetic head survived filtering")
+		}
+	}
+}
+
+func TestDropSyntheticMonitorsKeepsRealConnectors(t *testing.T) {
+	monitors := []Monitor{
+		{Name: "eDP-1"}, {Name: "DP-1"}, {Name: "HDMI-A-1"}, {Name: "DP-2"},
+	}
+
+	if got := dropSyntheticMonitors(monitors); len(got) != len(monitors) {
+		t.Fatalf("filtering dropped a real connector: %+v", got)
+	}
+}

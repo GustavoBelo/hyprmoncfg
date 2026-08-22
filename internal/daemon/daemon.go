@@ -545,7 +545,7 @@ func (s *Service) applyBest(ctx context.Context) error {
 		}
 		best, score, ok := profile.BestMatch(profiles, monitors)
 		if !ok {
-			fallback, fallbackOK := internalOnlyFallbackProfile(monitors)
+			fallback, fallbackOK := allDisabledFallbackProfile(monitors)
 			if fallbackOK {
 				s.cfg.Logf("no matching profile for monitor set %s; enabling internal output", hash)
 				target = fallback
@@ -658,26 +658,36 @@ func (s *Service) manualOverride(monitorSet string) (profile.Profile, bool) {
 	return s.manualProfile, true
 }
 
-func internalOnlyFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool) {
+// allDisabledFallbackProfile is the last line of defense against a machine with
+// nowhere to draw. A saved layout writes "enable this external" and "disable the
+// built-in panel" into the same generated config, but only the first half is
+// conditional: a rule for an absent output does nothing, while the disable
+// applies regardless. Boot that layout without its external attached and every
+// display is off, before anything gets a chance to match a better profile.
+//
+// It prefers the built-in panel, which is the one display a laptop always has,
+// and otherwise switches on whatever is still connected. Giving up when there is
+// no built-in panel would leave a desktop just as stuck.
+func allDisabledFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool) {
 	if len(monitors) == 0 {
 		return profile.Profile{}, false
 	}
 
-	internalIndex := -1
+	rescueIndex := -1
 	for idx, monitor := range monitors {
 		if !monitor.Disabled {
 			return profile.Profile{}, false
 		}
-		if internalIndex < 0 && monitor.IsInternal() {
-			internalIndex = idx
+		if rescueIndex < 0 || (!monitors[rescueIndex].IsInternal() && monitor.IsInternal()) {
+			rescueIndex = idx
 		}
 	}
-	if internalIndex < 0 {
+	if rescueIndex < 0 {
 		return profile.Profile{}, false
 	}
 
 	fallback := profile.FromMonitors("internal-fallback", monitors)
-	internalKey := hypr.MonitorOutputKey(monitors[internalIndex], hypr.MonitorMatchCounts(monitors))
+	internalKey := hypr.MonitorOutputKey(monitors[rescueIndex], hypr.MonitorMatchCounts(monitors))
 	for idx := range fallback.Outputs {
 		fallback.Outputs[idx].Enabled = fallback.Outputs[idx].Key == internalKey
 		fallback.Outputs[idx].MirrorOf = ""

@@ -63,9 +63,36 @@ func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
 	if err := json.Unmarshal(out, &monitors); err != nil {
 		return nil, fmt.Errorf("failed to decode hyprctl monitors JSON: %w", err)
 	}
+	monitors = dropSyntheticMonitors(monitors)
 	normalizeMirrorTargets(monitors)
 	enrichMonitorConnectorPaths(monitors)
 	return monitors, nil
+}
+
+// fallbackConnectorName is what Hyprland calls the placeholder head it invents
+// when no real output is driving anything, so the compositor has somewhere to
+// draw rather than falling over.
+const fallbackConnectorName = "FALLBACK"
+
+// dropSyntheticMonitors removes heads that exist only inside Hyprland. The
+// placeholder appears exactly when every real output is off and reports itself
+// as enabled, which is the one moment it does the most damage: it makes "is
+// everything disabled?" answer no, so the guard that would switch a display
+// back on stands down and leaves a black screen with no way back.
+//
+// Filtering here rather than at that guard keeps the rest of the program honest
+// too. A head with no connector and no hardware behind it would otherwise be
+// hashed into the monitor set, matched against saved profiles, drawn by the
+// panel, and captured into a profile saved from live state.
+func dropSyntheticMonitors(monitors []Monitor) []Monitor {
+	filtered := monitors[:0]
+	for _, monitor := range monitors {
+		if strings.EqualFold(strings.TrimSpace(monitor.Name), fallbackConnectorName) {
+			continue
+		}
+		filtered = append(filtered, monitor)
+	}
+	return filtered
 }
 
 // normalizeMirrorTargets rewrites what hyprctl reports for a mirroring monitor
