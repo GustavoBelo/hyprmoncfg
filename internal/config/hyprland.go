@@ -329,9 +329,21 @@ func ResolveSymlink(path string) string {
 // than fail on every apply.
 func Writable(path string) bool {
 	path = ResolveSymlink(path)
-	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	info, err := os.Stat(path)
 	if err != nil {
 		return os.IsNotExist(err) && dirWritable(filepath.Dir(path))
+	}
+	// Treat an explicitly read-only file as belonging to its generator even
+	// when the current process is root and could bypass the mode bits. Besides
+	// keeping root-run builds honest, this prevents a privileged invocation
+	// from rewriting immutable-style configuration such as a Nix store target.
+	if info.Mode().Perm()&0o222 == 0 {
+		return false
+	}
+
+	file, err := os.OpenFile(path, os.O_WRONLY, 0)
+	if err != nil {
+		return false
 	}
 	_ = file.Close()
 	return true
