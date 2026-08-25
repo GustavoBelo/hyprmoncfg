@@ -111,7 +111,7 @@ Current status as of 2026-08-25:
 | Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void. Its independently maintained [1.12.0 update](https://github.com/Event-Horizon-VL/blackhole-vl/pull/261) is merged, and the maintainer has been notified about 1.15.1; later versions follow that maintainer's own cadence. |
 | Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) targets 1.15.1 and its pipeline passes; no package is in the Alpine package index yet. |
 | Debian and Ubuntu | Sponsor-ready | The [`debian/sid` branch and upstream tags are published on Salsa](https://salsa.debian.org/crmne/hyprmoncfg), and a Debian sid root-container build of 1.15.1 passes the full test suite. Its source package is hardware-OpenPGP-signed and checksum-verified; official inclusion still needs Debian policy review and the sponsor/upload flow. |
-| openSUSE OBS | Publish pending | [`home:paolino/hyprmoncfg`](https://build.opensuse.org/package/show/home:paolino/hyprmoncfg) still builds 1.14.2 for openSUSE Tumbleweed on `x86_64`; the tested 1.15.1 payload is staged locally and awaits `osc` authentication. |
+| openSUSE OBS | Published | [`home:paolino/hyprmoncfg`](https://build.opensuse.org/package/show/home:paolino/hyprmoncfg) revision 3 successfully builds and publishes 1.15.1 for openSUSE Tumbleweed on `x86_64`. |
 | SlackBuilds.org | Staged | The 1.15.1 SlackBuild payload is ready for manual submission after validation on a fully patched Slackware 15.0 system. |
 
 Distro-specific recipes should remain in the distro package repository or the
