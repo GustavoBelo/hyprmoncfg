@@ -171,7 +171,7 @@ func (p Profile) Validate() error {
 		if out.VRR < 0 || out.VRR > 2 {
 			return fmt.Errorf("output %d has invalid VRR mode", i)
 		}
-		if out.Bitdepth != 0 && out.Bitdepth != 8 && out.Bitdepth != 10 && out.Bitdepth != 16 {
+		if out.Bitdepth != 0 && out.Bitdepth != 8 && out.Bitdepth != 10 {
 			return fmt.Errorf("output %d has invalid bitdepth %d", i, out.Bitdepth)
 		}
 	}

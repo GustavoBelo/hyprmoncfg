@@ -286,7 +286,7 @@ func (m *Model) activateInspectorField() tea.Cmd {
 		}
 		return m.openNumericInput(kind, m.selectedOutput, title, hint, value)
 	case 3:
-		m.openFieldPicker("Bit Depth", m.inspectorField, []string{"8", "10", "16"})
+		m.openFieldPicker("Bit Depth", m.inspectorField, []string{"8", "10"})
 		return nil
 	case 4:
 		m.openFieldPicker("Color Management", m.inspectorField, []string{"srgb", "auto", "wide", "hdr", "hdredid", "dcip3", "dp3", "adobe", "edid"})

@@ -1555,7 +1555,7 @@ func TestFromStateCopiesExtraFields(t *testing.T) {
 }
 
 func TestProfileValidateBitdepth(t *testing.T) {
-	valid := []int{0, 8, 10, 16}
+	valid := []int{0, 8, 10}
 	for _, bd := range valid {
 		p := profile.New("test", []profile.OutputConfig{{
 			Key: "test", Enabled: true, Scale: 1, Bitdepth: bd,
@@ -1565,7 +1565,9 @@ func TestProfileValidateBitdepth(t *testing.T) {
 		}
 	}
 
-	invalid := []int{4, 12, 24, -1}
+	// 16 is rejected on purpose. Hyprland's parser only asks whether the value
+	// is "10", so a 16 there means 10-bit off and the display quietly runs at 8.
+	invalid := []int{4, 12, 16, 24, -1}
 	for _, bd := range invalid {
 		p := profile.New("test", []profile.OutputConfig{{
 			Key: "test", Enabled: true, Scale: 1, Bitdepth: bd,

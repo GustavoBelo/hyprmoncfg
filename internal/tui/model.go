@@ -2329,7 +2329,10 @@ func (m *Model) adjustInspectorField(delta int) {
 	case 2:
 		output.Scale = scaling.Round(clampFloat(output.Scale+float64(delta)*0.05, scaling.MinScale, scaling.MaxScale))
 	case 3:
-		depths := []int{8, 10, 16}
+		// Hyprland's bitdepth is a boolean in disguise: its parser only asks
+		// whether the value is "10", so anything else means 10-bit off. There is
+		// no 16-bit path to offer, and offering one would silently hand back 8.
+		depths := []int{8, 10}
 		current := 0
 		for i, d := range depths {
 			if d == output.Bitdepth {
@@ -3086,7 +3089,7 @@ func (m Model) layoutFieldIssue(output editableOutput, field int) (string, bool)
 			return "fractional px", true
 		}
 	case 3:
-		if output.Bitdepth != 0 && output.Bitdepth != 8 && output.Bitdepth != 10 && output.Bitdepth != 16 {
+		if output.Bitdepth != 0 && output.Bitdepth != 8 && output.Bitdepth != 10 {
 			return "invalid", true
 		}
 	case 4:
