@@ -104,7 +104,7 @@ Current status as of 2026-08-25:
 | Channel | Status | Notes |
 |---|---|---|
 | Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) is published at 1.15.1. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
-| Fedora COPR | Building | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10900776](https://copr.fedorainfracloud.org/coprs/build/10900776) is building 1.15.1 for Fedora 44, 45, and rawhide on `x86_64` and `aarch64`. |
+| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10900776](https://copr.fedorainfracloud.org/coprs/build/10900776) publishes 1.15.1 for Fedora 44, 45, and rawhide on `x86_64` and `aarch64`. |
 | Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The all-green [1.15.1 update](https://github.com/NixOS/nixpkgs/pull/552223) is under review. |
 | Gentoo GURU | Signing pending | [`gui-apps/hyprmoncfg` 1.15.0](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg) is submitted on the required GURU `dev` branch. The tested 1.15.1 ebuild is staged locally and awaits the hardware OpenPGP token for its required signed commit and DCO trailer. |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
