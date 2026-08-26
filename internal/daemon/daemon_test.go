@@ -280,6 +280,96 @@ func TestManualProfilePreviewIsNotReplacedAndKeepPinsTheNewProfile(t *testing.T)
 	}
 }
 
+func TestSavingLayoutPreviewPreservesAutomaticProfileSelection(t *testing.T) {
+	beforeJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	afterJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, beforeJSON, afterJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	current := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+
+	edited := current
+	edited.Outputs[0].Scale = 2
+	transaction, err := svc.Preview("test-panel", ipc.PreviewParams{
+		Profile: &edited, TimeoutSeconds: 10, SaveOnCommit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Commit("test-panel", ipc.CommitParams{TransactionID: transaction.ID, Save: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "" {
+		t.Fatalf("saving an automatic layout created a profile override: %q", document.Daemon.ProfileOverride)
+	}
+	saved, err := env.store.Load("Laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Outputs[0].Scale != 2 {
+		t.Fatalf("saved scale = %v, want 2", saved.Outputs[0].Scale)
+	}
+}
+
+func TestSavingLayoutPreviewPreservesManualProfileSelection(t *testing.T) {
+	beforeJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	afterJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, beforeJSON, afterJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	current := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	if err := svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	edited := current
+	edited.Outputs[0].Scale = 2
+	transaction, err := svc.Preview("test-panel", ipc.PreviewParams{
+		Profile: &edited, TimeoutSeconds: 10, SaveOnCommit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Commit("test-panel", ipc.CommitParams{TransactionID: transaction.ID, Save: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "Laptop" {
+		t.Fatalf("saving a manual layout lost its profile override: %q", document.Daemon.ProfileOverride)
+	}
+	manual, ok := svc.manualOverride(profile.MonitorSetHash(monitors))
+	if !ok || manual.Outputs[0].Scale != 2 {
+		t.Fatalf("manual override was not updated to the saved layout: %+v (ok=%v)", manual, ok)
+	}
+}
+
 func TestApplyBestUsesInternalFallbackWhenNoProfilesAndAllOutputsDisabled(t *testing.T) {
 	env := newApplyBestTestEnv(t, `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"mirrorOf":""}]`)
 

@@ -28,6 +28,7 @@ type pendingTransaction struct {
 	deadline     time.Time
 	monitorSet   string
 	saveOnCommit bool
+	wasManual    bool
 	timer        *time.Timer
 }
 
@@ -265,6 +266,8 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 		revertCancel()
 		return ipc.Transaction{}, err
 	}
+	monitorSet := profile.MonitorSetHash(monitors)
+	_, wasManual := s.manualOverride(monitorSet)
 	deadline := time.Now().Add(timeout)
 	pending := &pendingTransaction{
 		id:           id,
@@ -273,8 +276,9 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 		profile:      effective,
 		snapshot:     snapshot,
 		deadline:     deadline,
-		monitorSet:   profile.MonitorSetHash(monitors),
+		monitorSet:   monitorSet,
 		saveOnCommit: params.SaveOnCommit,
+		wasManual:    wasManual,
 	}
 	s.pendingMu.Lock()
 	s.pending = pending
@@ -314,7 +318,16 @@ func (s *Service) commitPreview(owner string, transactionID string, save bool) e
 	if err := s.engine.PostApply(ctx, pending.profile); err != nil {
 		s.cfg.Logf("post apply for %q failed: %v", pending.profile.Name, err)
 	}
-	s.setManualOverride(pending.monitorSet, pending.profile)
+	// Activating a saved profile is an explicit manual choice. Saving an edit,
+	// however, must preserve the selection mode from before the preview: an
+	// automatic setup stays automatic, while an already pinned profile keeps
+	// its pin updated to the newly saved layout. Doing this here keeps save and
+	// selection-mode changes atomic even if the panel is rebuilt mid-preview.
+	if !pending.saveOnCommit || pending.wasManual {
+		s.setManualOverride(pending.monitorSet, pending.profile)
+	} else {
+		s.clearManualOverride()
+	}
 	// Record what the confirmed profile left on screen, so the next automatic
 	// pass recognizes the current state instead of applying it a second time.
 	if monitors, err := s.client.Monitors(ctx); err != nil {
