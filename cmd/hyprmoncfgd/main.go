@@ -114,7 +114,7 @@ func newRootCmd() *cobra.Command {
 			firstErr := <-errCh
 			cancel()
 			secondErr := <-errCh
-			err = errors.Join(firstErr, secondErr)
+			err = errors.Join(firstErr, secondErr, svc.Shutdown())
 
 			restoreCtx, restoreCancel := context.WithTimeout(context.Background(), 5*time.Second)
 			restoreErr := watcherOwner.Release(restoreCtx)

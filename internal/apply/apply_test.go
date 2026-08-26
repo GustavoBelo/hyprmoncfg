@@ -71,6 +71,23 @@ func TestCommandsForProfileDisable(t *testing.T) {
 	}
 }
 
+func TestCommandsForProfileDisablesConnectedMonitorMissingFromProfile(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Make: "Samsung", Model: "Panel", Serial: "A1"}
+	external := hypr.Monitor{Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "B2"}
+	p := profile.New("laptop", []profile.OutputConfig{{
+		Key: laptop.HardwareKey(), Name: laptop.Name, Enabled: true,
+		Width: 2880, Height: 1800, Refresh: 120, Scale: 1.5,
+	}})
+
+	commands, err := CommandsForProfile(p, []hypr.Monitor{laptop, external})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 2 || commands[1] != "DP-1,disable" {
+		t.Fatalf("expected omitted external monitor to be explicitly disabled, got %+v", commands)
+	}
+}
+
 func TestKeywordifyMonitorCommandsLeavesWorkspaceAndDispatchCommandsUntouched(t *testing.T) {
 	commands := []string{
 		"DP-1,2560x1440@144,0x0,1",
@@ -325,6 +342,42 @@ func TestRenderLuaConfigUsesMonitorV2WithWorkspaceRules(t *testing.T) {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered lua config missing %q:\n%s", want, rendered)
 		}
+	}
+}
+
+func TestRenderLuaConfigDisablesConnectedMonitorMissingFromProfile(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Description: "Samsung Panel", Make: "Samsung", Model: "Panel", Serial: "A1"}
+	external := hypr.Monitor{Name: "DP-1", Description: "Microstep MPG321UR-QD", Make: "Microstep", Model: "MPG321UR-QD", Serial: "B2"}
+	p := profile.New("laptop", []profile.OutputConfig{{
+		Key: laptop.HardwareKey(), Name: laptop.Name, Enabled: true,
+		Width: 2880, Height: 1800, Refresh: 120, Scale: 1.5,
+	}})
+
+	rendered, err := RenderConfig(p, []hypr.Monitor{laptop, external}, RenderOptions{Format: config.HyprConfigLua, UseMonitorV2: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`output = "desc:Microstep MPG321UR-QD",`, "disabled = true,"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected generated config to override wildcard monitor defaults with %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestValidateAppliedProfileRejectsEnabledMonitorMissingFromProfile(t *testing.T) {
+	laptop := hypr.Monitor{Name: "eDP-1", Make: "Samsung", Model: "Panel", Serial: "A1", Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5}
+	external := hypr.Monitor{Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "B2", Width: 3840, Height: 2160, RefreshRate: 144, Scale: 1}
+	p := profile.New("laptop", []profile.OutputConfig{{
+		Key: laptop.HardwareKey(), Name: laptop.Name, Enabled: true,
+		Width: 2880, Height: 1800, Refresh: 120, Scale: 1.5,
+	}})
+
+	if err := ValidateAppliedProfile(p, []hypr.Monitor{laptop, external}, []hypr.Monitor{laptop, external}); err == nil {
+		t.Fatal("expected an omitted external monitor left enabled to fail validation")
+	}
+	external.Disabled = true
+	if err := ValidateAppliedProfile(p, []hypr.Monitor{laptop, external}, []hypr.Monitor{laptop, external}); err != nil {
+		t.Fatalf("expected the explicitly disabled external monitor to pass validation: %v", err)
 	}
 }
 

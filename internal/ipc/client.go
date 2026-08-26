@@ -57,6 +57,18 @@ func (c *Client) Subscribe(ctx context.Context) (appstatus.Document, error) {
 	return result, err
 }
 
+func (c *Client) EditorState(ctx context.Context) (appstatus.EditorDocument, error) {
+	var result appstatus.EditorDocument
+	err := c.call(ctx, MethodEditor, nil, &result)
+	return result, err
+}
+
+func (c *Client) EditProfile(ctx context.Context, params EditParams) (appstatus.EditorDraft, error) {
+	var result appstatus.EditorDraft
+	err := c.call(ctx, MethodEdit, params, &result)
+	return result, err
+}
+
 func (c *Client) Preview(ctx context.Context, params PreviewParams) (Transaction, error) {
 	var result Transaction
 	err := c.call(ctx, MethodPreview, params, &result)
@@ -65,6 +77,10 @@ func (c *Client) Preview(ctx context.Context, params PreviewParams) (Transaction
 
 func (c *Client) Confirm(ctx context.Context, transactionID string) error {
 	return c.call(ctx, MethodConfirm, TransactionParams{TransactionID: transactionID}, nil)
+}
+
+func (c *Client) Commit(ctx context.Context, transactionID string, save bool) error {
+	return c.call(ctx, MethodCommit, CommitParams{TransactionID: transactionID, Save: save}, nil)
 }
 
 func (c *Client) Revert(ctx context.Context, transactionID string) error {
@@ -89,6 +105,10 @@ func (c *Client) Manage(ctx context.Context) error {
 // include out, so whatever the user or their distro configured wins again.
 func (c *Client) Unmanage(ctx context.Context) error {
 	return c.call(ctx, MethodUnmanage, nil, nil)
+}
+
+func (c *Client) SetProfileAuto(ctx context.Context, enabled bool) error {
+	return c.call(ctx, MethodProfileAuto, ProfileAutoParams{Enabled: enabled}, nil)
 }
 
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {

@@ -22,16 +22,24 @@ type testHandler struct {
 	previewErr   error
 	revertErr    error
 	managed      bool
+	profileAuto  bool
 	disconnected []string
+	editor       appstatus.EditorDocument
+	edited       appstatus.EditorDraft
 }
 
-func (h *testHandler) Status() (appstatus.Document, error) { return h.document, nil }
+func (h *testHandler) Status() (appstatus.Document, error)            { return h.document, nil }
+func (h *testHandler) EditorState() (appstatus.EditorDocument, error) { return h.editor, nil }
+func (h *testHandler) EditProfile(_ EditParams) (appstatus.EditorDraft, error) {
+	return h.edited, nil
+}
 
 func (h *testHandler) Preview(_ string, _ PreviewParams) (Transaction, error) {
 	return h.preview, h.previewErr
 }
 
 func (h *testHandler) Confirm(_ string, _ TransactionParams) error { return nil }
+func (h *testHandler) Commit(_ string, _ CommitParams) error       { return nil }
 func (h *testHandler) Revert(_ string, _ TransactionParams) error  { return h.revertErr }
 func (h *testHandler) Save(_ SaveParams) error                     { return nil }
 func (h *testHandler) Delete(_ DeleteParams) error                 { return nil }
@@ -47,6 +55,13 @@ func (h *testHandler) Unmanage() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.managed = false
+	return nil
+}
+
+func (h *testHandler) SetProfileAuto(params ProfileAutoParams) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.profileAuto = params.Enabled
 	return nil
 }
 
@@ -108,6 +123,8 @@ func TestClientStatusAndPreview(t *testing.T) {
 			Profile:  profile.New("desk", nil),
 			Deadline: time.Now().Add(10 * time.Second).UTC(),
 		},
+		editor: appstatus.EditorDocument{Profile: profile.Profile{Name: "desk"}},
+		edited: appstatus.EditorDraft{Profile: profile.Profile{Name: "edited"}},
 	}
 	_, path, _ := runTestServer(t, handler)
 
@@ -125,6 +142,20 @@ func TestClientStatusAndPreview(t *testing.T) {
 	}
 	if document.Version != "test" || !document.Daemon.Running {
 		t.Fatalf("unexpected status: %+v", document)
+	}
+	editor, err := client.EditorState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if editor.Profile.Name != "desk" {
+		t.Fatalf("unexpected editor state: %+v", editor)
+	}
+	edited, err := client.EditProfile(ctx, EditParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Profile.Name != "edited" {
+		t.Fatalf("unexpected edited profile: %+v", edited)
 	}
 	transaction, err := client.Preview(ctx, PreviewParams{ProfileName: "desk", TimeoutSeconds: 10})
 	if err != nil {
@@ -321,5 +352,30 @@ func TestDispatchRoutesManageAndUnmanage(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("after %s, managed = %v, want %v", test.method, got, test.want)
 		}
+	}
+}
+
+func TestDispatchRoutesProfileAutomaticMode(t *testing.T) {
+	handler := &testHandler{}
+	serverConn, clientConn := net.Pipe()
+	t.Cleanup(func() { _ = serverConn.Close(); _ = clientConn.Close() })
+	server := &Server{Handler: handler}
+	client := &serverClient{conn: serverConn, encoder: json.NewEncoder(serverConn)}
+	params, err := json.Marshal(ProfileAutoParams{Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response := server.dispatch("test", client, Request{
+		Type: "request", ProtocolVersion: ProtocolVersion, ID: "1", Method: MethodProfileAuto, Params: params,
+	})
+	if response.Error != nil {
+		t.Fatalf("%s: %+v", MethodProfileAuto, response.Error)
+	}
+	handler.mu.Lock()
+	got := handler.profileAuto
+	handler.mu.Unlock()
+	if !got {
+		t.Fatal("profile automatic mode was not routed to the handler")
 	}
 }

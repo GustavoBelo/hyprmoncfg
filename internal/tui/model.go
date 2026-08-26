@@ -63,17 +63,18 @@ const (
 )
 
 type refreshMsg struct {
-	monitors       []hypr.Monitor
-	profiles       []profile.Profile
-	workspaceRules []hypr.WorkspaceRule
-	workspaces     []hypr.WorkspaceState
-	lidState       lid.State
-	daemonOK       bool
-	daemonUnknown  bool
-	daemonVersion  string
-	daemonClient   *ipc.Client
-	background     bool
-	err            error
+	monitors        []hypr.Monitor
+	profiles        []profile.Profile
+	workspaceRules  []hypr.WorkspaceRule
+	workspaces      []hypr.WorkspaceState
+	lidState        lid.State
+	daemonOK        bool
+	daemonUnknown   bool
+	daemonVersion   string
+	profileOverride string
+	daemonClient    *ipc.Client
+	background      bool
+	err             error
 }
 
 type saveMsg struct {
@@ -98,6 +99,11 @@ type applyMsg struct {
 
 type daemonRestartMsg struct {
 	err error
+}
+
+type profileAutoMsg struct {
+	enabled bool
+	err     error
 }
 
 type revertMsg struct {
@@ -309,6 +315,8 @@ type Model struct {
 	draftExec          string
 	daemonOK           bool
 	daemonVersion      string
+	profileOverride    string
+	profileModePending bool
 	refreshInFlight    bool
 	applying           bool
 	quitAfterApply     bool
@@ -393,6 +401,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.daemonUnknown {
 			m.daemonOK = msg.daemonOK
 			m.daemonVersion = msg.daemonVersion
+			m.profileOverride = msg.profileOverride
 		}
 		if msg.err != nil {
 			m.setStatusErr(msg.err.Error())
@@ -474,6 +483,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusOK("Daemon restarted")
 		return m, m.refreshCmd(true)
+
+	case profileAutoMsg:
+		m.profileModePending = false
+		if msg.err != nil {
+			m.setStatusErr(msg.err.Error())
+			return m, nil
+		}
+		if msg.enabled {
+			m.profileOverride = ""
+			m.setStatusOK("Automatic profile selection on")
+		} else {
+			m.profileOverride = m.activeProfileName
+			m.setStatusOK("Automatic profile selection off")
+		}
+		return m, m.refreshCmd(false)
 
 	case clearSnapMsg:
 		if m.snap != nil && msg.token == m.snap.Token {
@@ -691,6 +715,10 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusErr("No profiles available")
 				return m, nil
 			}
+			if m.profileSelectionLocked() {
+				m.setStatusErr("Turn off automatic profile selection before choosing a profile")
+				return m, nil
+			}
 			m.applying = true
 			target := m.profiles[m.selectedProfile]
 			return m, m.applyCmd(target)
@@ -774,6 +802,8 @@ func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) updateProfileKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
+	case " ":
+		return m.toggleProfileAutomatic()
 	case "up", "k":
 		m.selectedProfile = clampIndex(m.selectedProfile-1, len(m.profiles))
 	case "down", "j":
@@ -790,7 +820,22 @@ func (m Model) updateProfileKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.deleteCmd(m.profiles[m.selectedProfile].Name)
-	case "enter", "l":
+	case "enter":
+		if len(m.profiles) == 0 {
+			m.setStatusErr("No profiles available")
+			return m, nil
+		}
+		if m.profileSelectionLocked() {
+			m.setStatusErr("Turn off automatic profile selection before choosing a profile")
+			return m, nil
+		}
+		if m.applying {
+			m.setStatusErr("A configuration is already being applied")
+			return m, nil
+		}
+		m.applying = true
+		return m, m.applyCmd(m.profiles[m.selectedProfile])
+	case "l":
 		if len(m.profiles) == 0 {
 			m.setStatusErr("No profiles to load")
 			return m, nil
@@ -802,6 +847,38 @@ func (m Model) updateProfileKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) profileAutomatic() bool {
+	return m.daemonOK && strings.TrimSpace(m.profileOverride) == ""
+}
+
+func (m Model) profileSelectionLocked() bool {
+	return m.profileAutomatic()
+}
+
+func (m Model) toggleProfileAutomatic() (tea.Model, tea.Cmd) {
+	if m.ipc == nil || !m.daemonOK {
+		m.setStatusErr("Automatic profile selection requires the daemon")
+		return m, nil
+	}
+	if m.profileModePending {
+		m.setStatusErr("Profile selection mode is already being updated")
+		return m, nil
+	}
+	if m.applying || m.pending != nil {
+		m.setStatusErr("Finish the active profile change first")
+		return m, nil
+	}
+
+	enabled := !m.profileAutomatic()
+	m.profileModePending = true
+	if enabled {
+		m.setStatusOK("Enabling automatic profile selection...")
+	} else {
+		m.setStatusOK("Turning off automatic profile selection...")
+	}
+	return m, m.setProfileAutomaticCmd(enabled)
 }
 
 func (m Model) updateWorkspaceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1062,6 +1139,7 @@ func (m Model) renderCanvas(width, height int) string {
 	canvasH := layout.height
 
 	grid := m.newCanvasCells(canvasW, canvasH)
+	workspaces := workspacePlanByConnector(profile.ResolveWorkspaceRules(m.currentProfile("draft"), nil))
 
 	rects := append([]canvasRect(nil), layout.rects...)
 	sort.SliceStable(rects, func(i, j int) bool {
@@ -1078,7 +1156,11 @@ func (m Model) renderCanvas(width, height int) string {
 		output := m.editOutputs[rect.index]
 		selected := rect.index == m.selectedOutput
 		issue, _ := m.canvasOutputIssue(output)
-		paintMonitorCard(grid, rect, output, selected, m.canvasCardStyle(output, selected), issue, m.styles.palette.warning)
+		colors := m.canvasCardStyle(output, selected)
+		paintCard(grid, rect, selected, colors, func(maxLines, maxWidth int) []cardLine {
+			return m.monitorCardLines(output, workspaces[output.Name], monitorCardLayout,
+				maxLines, maxWidth, colors, issue, m.styles.palette.warning)
+		})
 	}
 	if m.snap != nil {
 		for _, mark := range m.snap.Marks {
@@ -1396,7 +1478,7 @@ func (m Model) renderProfileListPane(summaries []profileMatchSummary, width, hei
 	innerHeight := max(1, height-style.GetVerticalFrameSize())
 	cols := m.profileListColumns(innerWidth)
 	rows := m.profileListRows(summaries, cols)
-	lines := append([]string{m.profileListHeader(cols), ""}, rows[min(m.profileListScroll(innerHeight), len(rows)-1):]...)
+	lines := append([]string{m.profileAutomaticRow(innerWidth), "", m.profileListHeader(cols), ""}, rows[min(m.profileListScroll(innerHeight), len(rows)-1):]...)
 	body := fitBlock(strings.Join(lines, "\n"), innerWidth, innerHeight)
 	return m.renderTitledPane(paneToneFocused, "Saved Profiles", body, width)
 }
@@ -1750,84 +1832,33 @@ func (m *Model) loadLiveState() {
 	if m.selectedOutput >= 0 && m.selectedOutput < len(prevOutputs) {
 		selectedKey = prevOutputs[m.selectedOutput].Key
 	}
-	m.editOutputs = make([]editableOutput, 0, len(m.monitors))
-	matchCounts := hypr.MonitorMatchCounts(m.monitors)
-	nameToKey := make(map[string]string, len(m.monitors))
-	for _, monitor := range m.monitors {
-		nameToKey[monitor.Name] = hypr.MonitorOutputKey(monitor, matchCounts)
-	}
-	for _, monitor := range m.monitors {
-		output := editableOutputFromMonitor(monitor, matchCounts)
-		if output.MirrorOf != "" {
-			if key, ok := nameToKey[output.MirrorOf]; ok {
-				output.MirrorOf = key
-			}
+	draft, sourceName, suggestedName := profile.EditorProfileFromState(m.profiles, m.monitors, m.workspaceRules)
+	if len(prevOutputs) > 0 && !m.resetRequested {
+		previous := profile.Profile{Outputs: make([]profile.OutputConfig, 0, len(prevOutputs))}
+		for _, output := range prevOutputs {
+			previous.Outputs = append(previous.Outputs, output.profileOutput())
 		}
-		m.editOutputs = append(m.editOutputs, output)
+		profile.PreserveUnreportedSettings(&draft, previous)
+	}
+
+	m.editOutputs = make([]editableOutput, 0, len(draft.Outputs))
+	for _, saved := range draft.Outputs {
+		live, ok := m.findLiveMonitor(saved)
+		m.editOutputs = append(m.editOutputs, editableOutputFromProfile(saved, live, ok))
 	}
 	m.recoverMirroredIdentity()
-
-	settings := profile.WorkspaceSettingsFromHypr(m.monitors, m.workspaceRules)
-	m.workspaceEdit = workspaceEditorFromSettings(settings, m.editOutputs)
-	best, _, bestOK := profile.BestMatch(m.profiles, m.monitors)
+	m.workspaceEdit = workspaceEditorFromSettings(draft.Workspaces, m.editOutputs)
 	m.matchedProfileName = ""
 	m.activeProfileName = ""
-	var matchedProfile *profile.Profile
-	if matched, ok := profile.ExactStateMatch(m.profiles, m.monitors, m.workspaceRules); ok {
-		m.draftProfileName = matched.Name
-		m.matchedProfileName = matched.Name
-		m.activeProfileName = matched.Name
-		m.draftExec = matched.Exec
-		matchedProfile = &matched
+	if sourceName != "" {
+		m.draftProfileName = sourceName
+		m.matchedProfileName = sourceName
+		m.activeProfileName = sourceName
+		m.draftExec = draft.Exec
 	} else {
 		m.draftProfileName = ""
 		m.draftExec = ""
-		if bestOK {
-			m.matchedProfileName = best.Name
-		}
-	}
-	if matchedProfile != nil {
-		m.recoverRoundedScaleReadback(*matchedProfile)
-	}
-
-	// Preserve fields that hyprctl cannot accurately report, unless the
-	// user explicitly requested a reset.
-	if !m.resetRequested {
-		for i := range m.editOutputs {
-			for _, prev := range prevOutputs {
-				if prev.Key == m.editOutputs[i].Key {
-					m.editOutputs[i].VRR = prev.VRR
-					m.editOutputs[i].Bitdepth = prev.Bitdepth
-					m.editOutputs[i].CM = prev.CM
-					m.editOutputs[i].MinLuminance = prev.MinLuminance
-					m.editOutputs[i].MaxLuminance = prev.MaxLuminance
-					m.editOutputs[i].SupportsWideColor = prev.SupportsWideColor
-					m.editOutputs[i].SupportsHDR = prev.SupportsHDR
-					m.editOutputs[i].MaxAvgLuminance = prev.MaxAvgLuminance
-					m.editOutputs[i].SDREOTF = prev.SDREOTF
-					m.editOutputs[i].ICC = prev.ICC
-					break
-				}
-			}
-		}
-	}
-	if len(prevOutputs) == 0 || m.resetRequested {
-		if bestOK {
-			for i := range m.editOutputs {
-				if saved, ok := best.OutputByKey(m.editOutputs[i].Key); ok {
-					m.editOutputs[i].VRR = saved.VRR
-					m.editOutputs[i].Bitdepth = saved.Bitdepth
-					m.editOutputs[i].CM = saved.CM
-					m.editOutputs[i].MinLuminance = saved.MinLuminance
-					m.editOutputs[i].MaxLuminance = saved.MaxLuminance
-					m.editOutputs[i].SupportsWideColor = saved.SupportsWideColor
-					m.editOutputs[i].SupportsHDR = saved.SupportsHDR
-					m.editOutputs[i].MaxAvgLuminance = saved.MaxAvgLuminance
-					m.editOutputs[i].SDREOTF = saved.SDREOTF
-					m.editOutputs[i].ICC = saved.ICC
-				}
-			}
-		}
+		m.matchedProfileName = suggestedName
 	}
 	m.resetRequested = false
 	if idx := focusedOutputIndex(m.editOutputs); idx >= 0 {
@@ -1894,23 +1925,6 @@ func (m *Model) recoverMirroredIdentity() {
 			if strings.TrimSpace(m.editOutputs[i].Make+" "+m.editOutputs[i].Model) != "" {
 				break
 			}
-		}
-	}
-}
-
-func (m *Model) recoverRoundedScaleReadback(p profile.Profile) {
-	p.Normalize()
-	for i := range m.editOutputs {
-		output := &m.editOutputs[i]
-		if !output.Enabled {
-			continue
-		}
-		saved, ok := p.OutputByKey(output.Key)
-		if !ok || !saved.Enabled {
-			continue
-		}
-		if profile.ScaleMatchesRoundedReadback(output.Width, output.Height, saved.Scale, output.Scale) {
-			output.Scale = scaling.Round(saved.Scale)
 		}
 	}
 }
@@ -2037,83 +2051,18 @@ func (m *Model) toggleSelectedOutput() {
 }
 
 func (m Model) analyzeSelectedSnap(threshold int) snapAnalysis {
-	analysis := snapAnalysis{
-		x: snapAxisCandidate{dist: threshold + 1},
-		y: snapAxisCandidate{dist: threshold + 1},
-	}
-	if len(m.editOutputs) == 0 || m.selectedOutput < 0 || m.selectedOutput >= len(m.editOutputs) {
-		return analysis
-	}
-
-	selected := m.editOutputs[m.selectedOutput]
-	if !selected.Enabled {
-		return analysis
-	}
-
-	width, height := selected.logicalSize()
-	analysis.x.pos = selected.X
-	analysis.y.pos = selected.Y
-
-	considerX := func(pos int, marks ...snapMark) {
-		dist := abs(selected.X - pos)
-		if dist < analysis.x.dist {
-			analysis.x = snapAxisCandidate{pos: pos, dist: dist, marks: append([]snapMark(nil), marks...)}
+	shared := profile.AnalyzeSnap(m.currentProfileOutputs(), m.selectedOutput, threshold)
+	convertMarks := func(marks []profile.SnapMark) []snapMark {
+		converted := make([]snapMark, 0, len(marks))
+		for _, mark := range marks {
+			converted = append(converted, snapMark{OutputIndex: mark.OutputIndex, Edge: snapEdge(mark.Edge)})
 		}
+		return converted
 	}
-	considerY := func(pos int, marks ...snapMark) {
-		dist := abs(selected.Y - pos)
-		if dist < analysis.y.dist {
-			analysis.y = snapAxisCandidate{pos: pos, dist: dist, marks: append([]snapMark(nil), marks...)}
-		}
+	return snapAnalysis{
+		x: snapAxisCandidate{pos: shared.X.Pos, dist: shared.X.Dist, marks: convertMarks(shared.X.Marks)},
+		y: snapAxisCandidate{pos: shared.Y.Pos, dist: shared.Y.Dist, marks: convertMarks(shared.Y.Marks)},
 	}
-
-	for idx, other := range m.editOutputs {
-		if idx == m.selectedOutput || !other.Enabled {
-			continue
-		}
-
-		otherW, otherH := other.logicalSize()
-		if spansOverlap(selected.Y, selected.Y+height, other.Y, other.Y+otherH) {
-			considerX(other.X-width,
-				snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeRight},
-				snapMark{OutputIndex: idx, Edge: snapEdgeLeft},
-			)
-			considerX(other.X+otherW,
-				snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeLeft},
-				snapMark{OutputIndex: idx, Edge: snapEdgeRight},
-			)
-		}
-		considerX(other.X,
-			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeLeft},
-			snapMark{OutputIndex: idx, Edge: snapEdgeLeft},
-		)
-		considerX(other.X+otherW-width,
-			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeRight},
-			snapMark{OutputIndex: idx, Edge: snapEdgeRight},
-		)
-		if spansOverlap(selected.X, selected.X+width, other.X, other.X+otherW) {
-			considerY(other.Y-height,
-				snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeBottom},
-				snapMark{OutputIndex: idx, Edge: snapEdgeTop},
-			)
-			considerY(other.Y+otherH,
-				snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeTop},
-				snapMark{OutputIndex: idx, Edge: snapEdgeBottom},
-			)
-		}
-		considerY(other.Y,
-			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeTop},
-			snapMark{OutputIndex: idx, Edge: snapEdgeTop},
-		)
-		considerY(other.Y+otherH-height,
-			snapMark{OutputIndex: m.selectedOutput, Edge: snapEdgeBottom},
-			snapMark{OutputIndex: idx, Edge: snapEdgeBottom},
-		)
-	}
-
-	considerX(0)
-	considerY(0)
-	return analysis
 }
 
 func (m Model) previewSelectedSnap(threshold int) *snapHintState {
@@ -2259,17 +2208,6 @@ func (d snapDirection) relation() string {
 	}
 }
 
-func spansOverlap(a1, a2, b1, b2 int) bool {
-	return a1 < b2 && a2 > b1
-}
-
-func abs(value int) int {
-	if value < 0 {
-		return -value
-	}
-	return value
-}
-
 // reflowAfterResize keeps a layout packed when an output's logical size
 // changes. Scale, mode, and transform all move an output's right and bottom
 // edges while its top-left corner stays put, so without this the displays
@@ -2277,33 +2215,11 @@ func abs(value int) int {
 // moves with that edge: flush neighbors stay flush, deliberate gaps keep
 // their width, and a row of displays shifts together.
 func (m *Model) reflowAfterResize(index, oldWidth, oldHeight int) {
-	if index < 0 || index >= len(m.editOutputs) {
-		return
-	}
-	resized := m.editOutputs[index]
-	if !resized.Enabled {
-		return
-	}
-
-	newWidth, newHeight := resized.logicalSize()
-	dx := newWidth - oldWidth
-	dy := newHeight - oldHeight
-	if dx == 0 && dy == 0 {
-		return
-	}
-
-	oldRight := resized.X + oldWidth
-	oldBottom := resized.Y + oldHeight
-	for i := range m.editOutputs {
-		if i == index || !m.editOutputs[i].Enabled {
-			continue
-		}
-		if dx != 0 && m.editOutputs[i].X >= oldRight {
-			m.editOutputs[i].X += dx
-		}
-		if dy != 0 && m.editOutputs[i].Y >= oldBottom {
-			m.editOutputs[i].Y += dy
-		}
+	outputs := m.currentProfileOutputs()
+	profile.ReflowAfterResize(outputs, index, oldWidth, oldHeight)
+	for idx := range outputs {
+		m.editOutputs[idx].X = outputs[idx].X
+		m.editOutputs[idx].Y = outputs[idx].Y
 	}
 }
 
@@ -2554,31 +2470,31 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		daemonOK, daemonUnknown, daemonVersion := daemonReachable(ctx, ipcClient)
+		daemonOK, daemonUnknown, daemonVersion, profileOverride := daemonReachable(ctx, ipcClient)
 		// A failure that is not a timeout means the connection is gone, not
 		// that the daemon is: reconnect before calling it stopped.
 		var replacement *ipc.Client
 		if ipcClient != nil && !daemonOK && !daemonUnknown {
 			if replacement = redialDaemon(ctx); replacement != nil {
-				daemonOK, daemonUnknown, daemonVersion = daemonReachable(ctx, replacement)
+				daemonOK, daemonUnknown, daemonVersion, profileOverride = daemonReachable(ctx, replacement)
 			}
 		}
 
 		monitors, err := client.Monitors(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, profileOverride: profileOverride, daemonClient: replacement, background: background, err: err}
 		}
 		profiles, err := store.List()
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, profileOverride: profileOverride, daemonClient: replacement, background: background, err: err}
 		}
 		workspaceRules, err := client.WorkspaceRules(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, profileOverride: profileOverride, daemonClient: replacement, background: background, err: err}
 		}
 		workspaces, err := client.Workspaces(ctx)
 		if err != nil {
-			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
+			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, profileOverride: profileOverride, daemonClient: replacement, background: background, err: err}
 		}
 		lidState, err := lid.ReadState(ctx)
 		if err != nil {
@@ -2586,16 +2502,17 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 		}
 
 		return refreshMsg{
-			monitors:       monitors,
-			profiles:       profiles,
-			workspaceRules: workspaceRules,
-			workspaces:     workspaces,
-			lidState:       lidState,
-			daemonOK:       daemonOK,
-			daemonUnknown:  daemonUnknown,
-			daemonVersion:  daemonVersion,
-			daemonClient:   replacement,
-			background:     background,
+			monitors:        monitors,
+			profiles:        profiles,
+			workspaceRules:  workspaceRules,
+			workspaces:      workspaces,
+			lidState:        lidState,
+			daemonOK:        daemonOK,
+			daemonUnknown:   daemonUnknown,
+			daemonVersion:   daemonVersion,
+			profileOverride: profileOverride,
+			daemonClient:    replacement,
+			background:      background,
 		}
 	}
 }
@@ -2604,18 +2521,18 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 // applying a profile can miss the deadline while being perfectly alive, so a
 // timeout reports "unknown" and leaves the last answer standing; only a broken
 // connection counts as "not running".
-func daemonReachable(ctx context.Context, client *ipc.Client) (ok bool, unknown bool, version string) {
+func daemonReachable(ctx context.Context, client *ipc.Client) (ok bool, unknown bool, version string, profileOverride string) {
 	if client == nil {
-		return false, false, ""
+		return false, false, "", ""
 	}
 
 	probeCtx, cancel := context.WithTimeout(ctx, daemonProbeTimeout)
 	defer cancel()
 	document, err := client.Status(probeCtx)
 	if err != nil {
-		return false, isTimeout(err), ""
+		return false, isTimeout(err), "", ""
 	}
-	return true, false, strings.TrimSpace(document.Version)
+	return true, false, strings.TrimSpace(document.Version), strings.TrimSpace(document.Daemon.ProfileOverride)
 }
 
 // redialDaemon reconnects after the daemon was restarted, which the connection
@@ -2713,6 +2630,18 @@ func (m Model) deleteCmd(name string) tea.Cmd {
 			return deleteMsg{name: name, err: err}
 		}
 		return deleteMsg{name: name}
+	}
+}
+
+func (m Model) setProfileAutomaticCmd(enabled bool) tea.Cmd {
+	client := m.ipc
+	return func() tea.Msg {
+		if client == nil {
+			return profileAutoMsg{enabled: enabled, err: errors.New("automatic profile selection requires the daemon")}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		defer cancel()
+		return profileAutoMsg{enabled: enabled, err: client.SetProfileAuto(ctx, enabled)}
 	}
 }
 
@@ -3260,51 +3189,6 @@ func (m *Model) markClean() {
 	m.draftSaved = false
 }
 
-func editableOutputFromMonitor(m hypr.Monitor, matchCounts map[string]int) editableOutput {
-	output := editableOutput{
-		Key:             hypr.MonitorOutputKey(m, matchCounts),
-		MatchKey:        m.HardwareKey(),
-		Name:            m.Name,
-		Description:     m.Description,
-		Make:            m.Make,
-		Model:           m.Model,
-		Serial:          m.Serial,
-		PhysicalWidth:   m.PhysicalWidth,
-		PhysicalHeight:  m.PhysicalHeight,
-		Enabled:         !m.Disabled,
-		Width:           m.Width,
-		Height:          m.Height,
-		Refresh:         m.RefreshRate,
-		X:               m.X,
-		Y:               m.Y,
-		Scale:           scaling.Round(scaling.Clamp(m.Scale)),
-		VRR:             int(m.VRR),
-		Transform:       m.Transform,
-		Focused:         m.Focused,
-		DPMSStatus:      m.DPMSStatus,
-		IsInternal:      m.IsInternal(),
-		MirrorOf:        m.MirrorOf,
-		ActiveWorkspace: m.ActiveWorkspace.Name,
-		Bitdepth:        m.Bitdepth(),
-		CM:              m.ColorManagementPreset,
-		SDRBrightness:   m.SDRBrightness,
-		SDRSaturation:   m.SDRSaturation,
-		SDRMinLuminance: m.SDRMinLuminance,
-		SDRMaxLuminance: m.SDRMaxLuminance,
-	}
-
-	output.Modes = normalizeModes(m.AvailableModes, m.ModeString())
-	output.ModeUnsupported = len(m.AvailableModes) > 0 && indexOf(m.AvailableModes, m.ModeString()) < 0
-	output.ModeIndex = indexOf(output.Modes, m.ModeString())
-	if output.ModeIndex < 0 {
-		output.ModeIndex = 0
-	}
-	if len(output.Modes) > 0 {
-		output.applyMode(output.Modes[output.ModeIndex])
-	}
-	return output
-}
-
 func editableOutputFromProfile(saved profile.OutputConfig, live hypr.Monitor, hasLive bool) editableOutput {
 	output := editableOutput{
 		Key:               saved.Key,
@@ -3643,13 +3527,13 @@ func (o editableOutput) cardLinesWithIssue(maxLines int, fg string, muted string
 	case 3:
 		return []cardLine{
 			full[0],
-			full[2],
+			full[1],
 			{text: scaleLayout + "  " + position, fg: muted},
 		}
 	case 2:
 		return []cardLine{
 			full[0],
-			full[3],
+			full[1],
 		}
 	default:
 		return []cardLine{full[0]}
@@ -3725,12 +3609,6 @@ func (m Model) canvasOutputIssue(output editableOutput) (string, bool) {
 		return "overlap", true
 	}
 	return "", false
-}
-
-func paintMonitorCard(grid [][]canvasCell, rect canvasRect, output editableOutput, selected bool, colors canvasCardColors, issue string, issueFG string) {
-	paintCard(grid, rect, selected, colors, func(maxLines, maxWidth int) []cardLine {
-		return output.cardLinesWithIssue(maxLines, colors.fg, colors.muted, issue, issueFG)
-	})
 }
 
 // paintCard draws one monitor rectangle. The caller supplies the body lines
@@ -4252,7 +4130,7 @@ var layoutFields = []string{
 	"Bit Depth",
 	"Color Mgmt",
 	"VRR",
-	"Transform",
+	"Rotation",
 	"Position X",
 	"Position Y",
 	"Mirror",

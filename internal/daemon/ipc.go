@@ -20,13 +20,15 @@ import (
 )
 
 type pendingTransaction struct {
-	id         string
-	owner      string
-	profile    profile.Profile
-	snapshot   apply.RevertState
-	deadline   time.Time
-	monitorSet string
-	timer      *time.Timer
+	id           string
+	owner        string
+	requested    profile.Profile
+	profile      profile.Profile
+	snapshot     apply.RevertState
+	deadline     time.Time
+	monitorSet   string
+	saveOnCommit bool
+	timer        *time.Timer
 }
 
 func (s *Service) Status() (appstatus.Document, error) {
@@ -47,7 +49,48 @@ func (s *Service) Status() (appstatus.Document, error) {
 	}
 	document := appstatus.Build(buildinfo.Version, true, profiles, monitors, rules)
 	document.Daemon.Unmanaged = !config.IsManaged(s.cfg.ConfigDir)
+	if manual, ok := s.manualOverride(profile.MonitorSetHash(monitors)); ok {
+		document.Daemon.ProfileOverride = manual.Name
+	}
+	s.pendingMu.Lock()
+	if pending := s.pending; pending != nil {
+		document.Daemon.Preview = &appstatus.PreviewReference{
+			TransactionID: pending.id,
+			ProfileName:   pending.profile.Name,
+			Deadline:      pending.deadline,
+			SaveOnCommit:  pending.saveOnCommit,
+			Profile:       pending.profile,
+		}
+	}
+	s.pendingMu.Unlock()
 	return document, nil
+}
+
+func (s *Service) EditorState() (appstatus.EditorDocument, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	profiles, err := s.store.List()
+	if err != nil {
+		return appstatus.EditorDocument{}, err
+	}
+	monitors, err := s.client.Monitors(ctx)
+	if err != nil {
+		return appstatus.EditorDocument{}, err
+	}
+	rules, err := s.client.WorkspaceRules(ctx)
+	if err != nil {
+		return appstatus.EditorDocument{}, err
+	}
+	return appstatus.BuildEditor(profiles, monitors, rules), nil
+}
+
+func (s *Service) EditProfile(params ipc.EditParams) (appstatus.EditorDraft, error) {
+	edited, err := profile.ApplyEditorEdit(params.Profile, params.Edit)
+	if err != nil {
+		return appstatus.EditorDraft{}, err
+	}
+	return appstatus.BuildEditorDraft(edited), nil
 }
 
 // Manage hands monitor configuration to hyprmoncfg: Omarchy's watcher steps
@@ -121,6 +164,61 @@ func (s *Service) Unmanage() error {
 	return nil
 }
 
+// SetProfileAuto separates ownership of display configuration from profile
+// choice. The daemon remains the monitor manager in both modes: automatic mode
+// picks the best hardware match, while manual mode pins the exact saved profile
+// currently on screen until the connected monitor set changes.
+func (s *Service) SetProfileAuto(params ipc.ProfileAutoParams) error {
+	s.pendingMu.Lock()
+	previewActive := s.pending != nil
+	s.pendingMu.Unlock()
+	if previewActive {
+		return errors.New("finish the active preview before changing profile selection mode")
+	}
+
+	if params.Enabled {
+		s.writeMu.Lock()
+		s.clearManualOverride()
+		s.applied = ""
+		s.writeMu.Unlock()
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.applyBest(ctx); err != nil && !errors.Is(err, errDisplaysSleeping) {
+			return err
+		}
+		s.cfg.Logf("automatic profile selection on")
+		s.signalChange()
+		return nil
+	}
+
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	profiles, err := s.store.List()
+	if err != nil {
+		return err
+	}
+	monitors, err := s.client.Monitors(ctx)
+	if err != nil {
+		return err
+	}
+	rules, err := s.client.WorkspaceRules(ctx)
+	if err != nil {
+		return err
+	}
+	active, ok := profile.ExactStateMatch(profiles, monitors, rules)
+	if !ok {
+		return errors.New("save or select a profile before turning automatic selection off")
+	}
+	s.setManualOverride(profile.MonitorSetHash(monitors), active)
+	s.applied = active.Name + "|" + profile.MonitorStateHash(monitors) + "|lid=" + string(s.lidState)
+	s.cfg.Logf("automatic profile selection off; pinned %q for this monitor set", active.Name)
+	s.signalChange()
+	return nil
+}
+
 func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transaction, error) {
 	target, err := s.resolvePreviewProfile(params)
 	if err != nil {
@@ -169,29 +267,45 @@ func (s *Service) Preview(owner string, params ipc.PreviewParams) (ipc.Transacti
 	}
 	deadline := time.Now().Add(timeout)
 	pending := &pendingTransaction{
-		id:         id,
-		owner:      owner,
-		profile:    effective,
-		snapshot:   snapshot,
-		deadline:   deadline,
-		monitorSet: profile.MonitorSetHash(monitors),
+		id:           id,
+		owner:        owner,
+		requested:    target,
+		profile:      effective,
+		snapshot:     snapshot,
+		deadline:     deadline,
+		monitorSet:   profile.MonitorSetHash(monitors),
+		saveOnCommit: params.SaveOnCommit,
 	}
 	s.pendingMu.Lock()
 	s.pending = pending
 	pending.timer = time.AfterFunc(timeout, func() { s.expirePreview(id, owner) })
 	s.pendingMu.Unlock()
 
+	s.cfg.Logf("previewing profile %q for %s", effective.Name, timeout)
 	s.signalChange()
 	return ipc.Transaction{ID: id, Profile: effective, Deadline: deadline}, nil
 }
 
 func (s *Service) Confirm(owner string, params ipc.TransactionParams) error {
+	return s.commitPreview(owner, params.TransactionID, false)
+}
+
+func (s *Service) Commit(owner string, params ipc.CommitParams) error {
+	return s.commitPreview(owner, params.TransactionID, params.Save)
+}
+
+func (s *Service) commitPreview(owner string, transactionID string, save bool) error {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 
-	pending, err := s.ownedPending(owner, params.TransactionID)
+	pending, err := s.ownedPending(owner, transactionID)
 	if err != nil {
 		return err
+	}
+	if save || pending.saveOnCommit {
+		if err := profileio.SaveWithSidecars(s.store, pending.requested); err != nil {
+			return err
+		}
 	}
 	s.clearPending(pending.id)
 
@@ -208,6 +322,7 @@ func (s *Service) Confirm(owner string, params ipc.TransactionParams) error {
 	} else {
 		s.applied = pending.profile.Name + "|" + profile.MonitorStateHash(monitors) + "|lid=" + string(s.lidState)
 	}
+	s.cfg.Logf("kept profile preview %q", pending.profile.Name)
 	s.signalChange()
 	return nil
 }
@@ -242,13 +357,44 @@ func (s *Service) Delete(params ipc.DeleteParams) error {
 func (s *Service) Disconnect(owner string) {
 	s.pendingMu.Lock()
 	pending := s.pending
-	s.pendingMu.Unlock()
 	if pending == nil || pending.owner != owner {
+		s.pendingMu.Unlock()
 		return
 	}
-	if err := s.revertOwned(owner, pending.id); err != nil {
-		s.cfg.Logf("revert disconnected IPC preview: %v", err)
+	// A monitor profile can rebuild Omarchy's per-screen bar components. That
+	// destroys the initiating socket even though the person is still looking at
+	// the changed layout. Leave the safety timer armed and make the transaction
+	// reclaimable by the replacement panel instead of reverting immediately.
+	pending.owner = ""
+	s.pendingMu.Unlock()
+	s.cfg.Logf("profile preview %q is waiting for a replacement panel", pending.profile.Name)
+	s.signalChange()
+}
+
+// Shutdown restores any unconfirmed layout before the daemon exits. Ordinary
+// client disconnects can be a harmless bar rebuild, but once the daemon itself
+// is going away there will be neither a replacement panel nor a safety timer.
+func (s *Service) Shutdown() error {
+	s.pendingMu.Lock()
+	pending := s.pending
+	owner := ""
+	id := ""
+	if pending != nil {
+		owner = pending.owner
+		id = pending.id
+		if owner == "" {
+			owner = "daemon-shutdown"
+		}
 	}
+	s.pendingMu.Unlock()
+	if id == "" {
+		return nil
+	}
+	if err := s.revertOwned(owner, id); err != nil {
+		return fmt.Errorf("restore unconfirmed profile during shutdown: %w", err)
+	}
+	s.cfg.Logf("restored unconfirmed profile during shutdown")
+	return nil
 }
 
 func (s *Service) resolvePreviewProfile(params ipc.PreviewParams) (profile.Profile, error) {
@@ -274,6 +420,10 @@ func (s *Service) ownedPending(owner string, id string) (*pendingTransaction, er
 	}
 	if s.pending.id != id {
 		return nil, fmt.Errorf("%w: unknown transaction %q", ipc.ErrTransactionUnavailable, id)
+	}
+	if s.pending.owner == "" {
+		s.pending.owner = owner
+		s.cfg.Logf("profile preview %q reclaimed by replacement client", s.pending.profile.Name)
 	}
 	if s.pending.owner != owner {
 		return nil, errors.New("interactive preview belongs to another client")
@@ -312,6 +462,8 @@ func (s *Service) revertOwned(owner string, id string) error {
 func (s *Service) expirePreview(id string, owner string) {
 	if err := s.revertOwned(owner, id); err != nil && !errors.Is(err, ipc.ErrTransactionUnavailable) {
 		s.cfg.Logf("auto-revert IPC preview: %v", err)
+	} else if err == nil {
+		s.cfg.Logf("profile preview expired and was reverted")
 	}
 }
 

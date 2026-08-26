@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
@@ -395,6 +397,84 @@ func TestProfilesMouseSelectsVisibleRow(t *testing.T) {
 	got := updated.(Model)
 	if got.selectedProfile != 1 {
 		t.Fatalf("expected visible click on Desk Dock to select row 1, got %d", got.selectedProfile)
+	}
+}
+
+func TestAutomaticProfileSelectionStillAllowsProfileBrowsing(t *testing.T) {
+	m := Model{
+		styles:          newStyles(),
+		tab:             tabProfiles,
+		daemonOK:        true,
+		profiles:        []profile.Profile{testProfile("Laptop Home", 1), testProfile("Desk Dock", 2)},
+		selectedProfile: 0,
+	}
+
+	updated, cmd := m.updateProfileKeys(tea.KeyMsg{Type: tea.KeyDown})
+	got := updated.(Model)
+	if cmd != nil || got.selectedProfile != 1 {
+		t.Fatalf("automatic selection should allow browsing profile previews, got index %d", got.selectedProfile)
+	}
+
+	updated, cmd = got.updateProfileKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	locked := updated.(Model)
+	if cmd != nil || locked.applying {
+		t.Fatalf("automatic selection must still reject activation, applying=%v cmd=%v", locked.applying, cmd != nil)
+	}
+	if !strings.Contains(locked.status, "Turn off automatic profile selection") {
+		t.Fatalf("expected an actionable activation message, got %q", locked.status)
+	}
+}
+
+func TestProfilesMouseBrowsesWithoutApplyingInEitherSelectionMode(t *testing.T) {
+	m := Model{
+		styles:            newStyles(),
+		width:             120,
+		height:            24,
+		tab:               tabProfiles,
+		daemonOK:          true,
+		activeProfileName: "Laptop Home",
+		profiles:          []profile.Profile{testProfile("Laptop Home", 1), testProfile("Desk Dock", 2)},
+	}
+
+	x, y := findVisiblePosition(t, m.renderMain(), "Desk Dock")
+	updated, cmd := m.updateMouse(mousePressAt(x, y))
+	locked := updated.(Model)
+	if cmd != nil || locked.selectedProfile != 1 || locked.applying {
+		t.Fatalf("automatic selection should browse without applying, got index=%d applying=%v", locked.selectedProfile, locked.applying)
+	}
+
+	m.profileOverride = "Laptop Home"
+	x, y = findVisiblePosition(t, m.renderMain(), "Desk Dock")
+	updated, cmd = m.updateMouse(mousePressAt(x, y))
+	manual := updated.(Model)
+	if cmd != nil || manual.selectedProfile != 1 || manual.applying {
+		t.Fatalf("manual profile click should browse without applying, got index=%d applying=%v cmd=%v", manual.selectedProfile, manual.applying, cmd != nil)
+	}
+
+	updated, cmd = manual.updateProfileKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	applying := updated.(Model)
+	if cmd == nil || !applying.applying {
+		t.Fatalf("manual Enter should begin safe apply, applying=%v cmd=%v", applying.applying, cmd != nil)
+	}
+}
+
+func TestSpaceTogglesProfileSelectionModeThroughDaemon(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	t.Cleanup(func() {
+		_ = clientConn.Close()
+		_ = serverConn.Close()
+	})
+	m := Model{
+		styles:   newStyles(),
+		tab:      tabProfiles,
+		daemonOK: true,
+		ipc:      ipc.NewClient(clientConn),
+	}
+
+	updated, cmd := m.updateProfileKeys(tea.KeyMsg{Type: tea.KeySpace})
+	got := updated.(Model)
+	if cmd == nil || !got.profileModePending {
+		t.Fatalf("expected automatic-selection toggle to start a daemon request, pending=%v cmd=%v", got.profileModePending, cmd != nil)
 	}
 }
 
@@ -2097,7 +2177,7 @@ func TestRenderInspectorPaneCompactsFieldsOnShortHeight(t *testing.T) {
 	}
 
 	view := m.renderInspectorPane(48, 30, false)
-	for _, want := range []string{"Mode", "3840x2160@143.99Hz", "Scale", "VRR", "Position X", "Position Y"} {
+	for _, want := range []string{"Mode", "3840x2160@143.99Hz", "Scale", "VRR", "Rotation", "Position X", "Position Y"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected inspector to include %q, got:\n%s", want, view)
 		}

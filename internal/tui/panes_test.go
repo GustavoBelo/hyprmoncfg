@@ -82,6 +82,20 @@ func TestProfilesListShowsMatchColumnWithBadges(t *testing.T) {
 	t.Fatalf("expected a row for the unconnected profile, got:\n%s", view)
 }
 
+func TestProfilesListShowsAutomaticSelectionMode(t *testing.T) {
+	m := paneTestModel(t, tabProfiles, []hypr.Monitor{paneTestDesk}, []profile.Profile{
+		profile.FromState("Desk Solo", []hypr.Monitor{paneTestDesk}, nil),
+	})
+	m.daemonOK = true
+
+	automatic := ansi.Strip(m.renderMain())
+	requireContains(t, automatic, "Automatic profile selection", "on")
+
+	m.profileOverride = "Desk Solo"
+	manual := ansi.Strip(m.renderMain())
+	requireContains(t, manual, "Automatic profile selection", "off")
+}
+
 func TestProfileDetailsExplainMatchScore(t *testing.T) {
 	both := profile.FromState("Desk Dual", []hypr.Monitor{paneTestDesk, paneTestSide}, nil)
 
@@ -101,11 +115,18 @@ func TestProfileDetailsExplainMatchScore(t *testing.T) {
 
 func TestProfileDetailsDrawMonitorLayoutMarkingAbsentDisplays(t *testing.T) {
 	both := profile.FromState("Desk Dual", []hypr.Monitor{paneTestDesk, paneTestSide}, nil)
+	both.Workspaces = profile.WorkspaceSettings{
+		Enabled:       true,
+		Strategy:      profile.WorkspaceStrategySequential,
+		MaxWorkspaces: 6,
+		GroupSize:     3,
+		MonitorOrder:  []string{both.Outputs[0].Key, both.Outputs[1].Key},
+	}
 
 	m := paneTestModel(t, tabProfiles, []hypr.Monitor{paneTestDesk}, []profile.Profile{both})
 	view := ansi.Strip(m.renderMain())
 
-	requireContains(t, view, "Monitor Layout", "DP-1", "DP-2", "not connected")
+	requireContains(t, view, "Monitor Layout", "DP-1", "DP-2", "not connected", "1, 2, 3", "4, 5, 6")
 }
 
 func TestProfileDetailsListDisplaysTheCanvasCannotDraw(t *testing.T) {
@@ -238,6 +259,62 @@ func TestPreviewCanvasesDoNotClaimTheAccent(t *testing.T) {
 	}
 }
 
+func TestEveryTabUsesTheSameAdaptiveMonitorCardVocabulary(t *testing.T) {
+	m := Model{styles: newStyles()}
+	output := editableOutput{
+		Name:      "DP-1",
+		Make:      "Microstep",
+		Model:     "MPG321UR-QD",
+		Enabled:   true,
+		Modes:     []string{"3840x2160@143.99Hz"},
+		ModeIndex: 0,
+		Width:     3840,
+		Height:    2160,
+		Scale:     1.33333,
+		X:         10,
+		Y:         20,
+	}
+	colors := m.staticCardStyle()
+	emphases := []monitorCardEmphasis{monitorCardLayout, monitorCardProfile, monitorCardWorkspaces}
+	var expected []string
+	for idx, emphasis := range emphases {
+		lines := m.monitorCardLines(output, []string{"1", "2", "3", "4"}, emphasis,
+			6, 40, colors, "", m.styles.palette.warning)
+		texts := make([]string, len(lines))
+		for line := range lines {
+			texts[line] = lines[line].text
+		}
+		if idx == 0 {
+			expected = texts
+		} else if strings.Join(texts, "\n") != strings.Join(expected, "\n") {
+			t.Fatalf("emphasis %d changed monitor content: got %q want %q", emphasis, texts, expected)
+		}
+		if got := lines[len(lines)-1]; got.text != "1, 2, 3, 4" || got.bold != (emphasis != monitorCardLayout) {
+			t.Fatalf("workspace emphasis %d = %+v", emphasis, got)
+		}
+	}
+
+	requireContains(t, strings.Join(expected, "\n"),
+		"DP-1", "Microstep MPG321UR-QD", "3840x2160@143.99Hz", "pos 10,20", "1, 2, 3, 4")
+
+	compact := m.monitorCardLines(output, []string{"1", "2", "3", "4"}, monitorCardLayout,
+		3, 40, colors, "", m.styles.palette.warning)
+	if got := []string{compact[0].text, compact[1].text, compact[2].text}; strings.Join(got, "|") != "DP-1|Microstep MPG321UR-QD|1, 2, 3, 4" {
+		t.Fatalf("compact monitor identity/workspace priority = %q", got)
+	}
+}
+
+func TestLayoutCanvasIncludesTheDraftWorkspacePlan(t *testing.T) {
+	m := paneTestModel(t, tabLayout, []hypr.Monitor{paneTestDesk, paneTestSide}, nil)
+	m.workspaceEdit.Enabled = true
+	m.workspaceEdit.Strategy = profile.WorkspaceStrategySequential
+	m.workspaceEdit.MaxWorkspaces = 6
+	m.workspaceEdit.GroupSize = 3
+
+	view := ansi.Strip(m.renderCanvas(100, 20))
+	requireContains(t, view, "1, 2, 3", "4, 5, 6")
+}
+
 func TestLoadLiveStateSelectsTheActiveProfile(t *testing.T) {
 	desk := paneTestDesk
 	desk.Focused = true
@@ -272,11 +349,15 @@ func TestLoadLiveStateFallsBackToTheHighestScoringProfile(t *testing.T) {
 }
 
 func TestBusyDaemonIsNotReportedAsStopped(t *testing.T) {
-	m := Model{styles: newStyles(), daemonOK: true}
+	m := Model{styles: newStyles(), daemonOK: true, profileOverride: "Desk Solo"}
 
 	busy, _ := m.Update(refreshMsg{daemonOK: false, daemonUnknown: true, background: true})
-	if !mustModel(t, busy).daemonOK {
+	busyModel := mustModel(t, busy)
+	if !busyModel.daemonOK {
 		t.Fatal("a probe that timed out must leave the last known daemon state alone")
+	}
+	if busyModel.profileOverride != "Desk Solo" {
+		t.Fatalf("a timed-out probe must preserve manual profile mode, got %q", busyModel.profileOverride)
 	}
 
 	stopped, _ := m.Update(refreshMsg{daemonOK: false, background: true})

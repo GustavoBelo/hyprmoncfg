@@ -194,6 +194,13 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 	case MethodSubscribe:
 		client.subscribed.Store(true)
 		result, err = s.Handler.Status()
+	case MethodEditor:
+		result, err = s.Handler.EditorState()
+	case MethodEdit:
+		var params EditParams
+		if err = decodeParams(request.Params, &params); err == nil {
+			result, err = s.Handler.EditProfile(params)
+		}
 	case MethodPreview:
 		var params PreviewParams
 		if err = decodeParams(request.Params, &params); err == nil {
@@ -203,6 +210,11 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		var params TransactionParams
 		if err = decodeParams(request.Params, &params); err == nil {
 			err = s.Handler.Confirm(owner, params)
+		}
+	case MethodCommit:
+		var params CommitParams
+		if err = decodeParams(request.Params, &params); err == nil {
+			err = s.Handler.Commit(owner, params)
 		}
 	case MethodRevert:
 		var params TransactionParams
@@ -223,6 +235,11 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		err = s.Handler.Manage()
 	case MethodUnmanage:
 		err = s.Handler.Unmanage()
+	case MethodProfileAuto:
+		var params ProfileAutoParams
+		if err = decodeParams(request.Params, &params); err == nil {
+			err = s.Handler.SetProfileAuto(params)
+		}
 	default:
 		err = fmt.Errorf("unknown IPC method %q", request.Method)
 	}
