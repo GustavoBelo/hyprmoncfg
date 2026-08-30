@@ -37,9 +37,10 @@ type couchController struct {
 	trackedWindow string
 	// reason records why the last session ended, for the status document.
 	reason string
-	// hooks holds the undos for everything the session changed outside the
-	// display layout: audio, idle, notifications, the bar.
-	hooks *hooks.Session
+	// hooks records what each session hook found before it changed anything,
+	// so it can be put back -- including by a different process, since it is
+	// persisted with the session.
+	hooks map[string]hooks.State
 	// detector is kept for the duration so a window-title event can re-assert
 	// fullscreen without rebuilding its snapshot.
 	detector *couch.BigPictureDetector
@@ -193,9 +194,13 @@ func (c *couchController) enter(ctx context.Context, trigger string) error {
 
 	env := c.hookEnv(cfg, monitors)
 	applied := hooks.Enter(ctx, env, cfg.HookEnabled)
-	if names := applied.Applied(); len(names) > 0 {
+	if names := hooks.Names(applied); len(names) > 0 {
 		couch.AppendLog(state, "couch: session hooks applied: %s", strings.Join(names, ", "))
 	}
+	// Recorded before the session proper begins, so a crash from here on can
+	// still be undone by whoever finds the session file.
+	session.Hooks = applied
+	_ = couch.WriteSession(state, session)
 
 	c.mu.Lock()
 	c.started = session.StartedAt
@@ -306,6 +311,13 @@ func (c *couchController) watch(ctx context.Context, cfg couch.Config, steamPID 
 		count := detector.Count(ctx)
 		if count > 0 {
 			seen = true
+			// Steam drops out of fullscreen on its own -- coming back from a
+			// game, or when Omarchy's floating rule reasserts itself -- and it
+			// does not always change the window title on the way, so a
+			// title-event hook alone misses it. The loop already has the
+			// window list in hand, so re-checking costs nothing and only acts
+			// on a window that is not fullscreen.
+			couch.KeepBigPictureFullscreen(ctx, c.svc.client, detector)
 		}
 		if seen && count == 0 {
 			return "Big Picture closed"
@@ -336,8 +348,8 @@ func (c *couchController) leave(ctx context.Context, state string) {
 
 	// Undo the hooks before the layout: putting sound back on a desk output
 	// that is still disabled would fail.
-	if applied != nil {
-		_ = applied.Leave(ctx, hooks.Env{Logf: c.svc.cfg.Logf})
+	if len(applied) > 0 {
+		_ = hooks.Leave(ctx, hooks.Env{Logf: c.svc.cfg.Logf}, applied)
 	}
 
 	if desk != nil {
@@ -418,15 +430,29 @@ func (c *couchController) Reconcile(ctx context.Context) {
 		couch.ClearSession(state)
 		return
 	}
-	couch.AppendLog(state, "couch: found an abandoned session from PID %d in phase %s; restoring the desktop",
+	couch.AppendLog(state, "couch: found an abandoned session from PID %d in phase %s; putting the desktop back",
 		orphan.PID, orphan.Phase)
-	if err := c.svc.applyProfileLocked(ctx, *orphan.Desk); err != nil {
-		couch.AppendLog(state, "couch: could not restore the desktop layout: %v", err)
-		c.svc.cfg.Logf("could not restore the desktop after an abandoned couch session: %v", err)
-		return
+
+	// The hooks first, and separately from the layout: a killed daemon left
+	// the bar hidden and sound on the TV, and restoring only the displays
+	// would leave the desktop half in console mode.
+	if len(orphan.Hooks) > 0 {
+		if err := hooks.Leave(ctx, hooks.Env{Logf: c.svc.cfg.Logf}, orphan.Hooks); err != nil {
+			couch.AppendLog(state, "couch: some session hooks did not restore: %v", err)
+		} else {
+			couch.AppendLog(state, "couch: restored %s", strings.Join(hooks.Names(orphan.Hooks), ", "))
+		}
+	}
+
+	if orphan.Desk != nil && len(orphan.Desk.Outputs) > 0 {
+		if err := c.svc.applyProfileLocked(ctx, *orphan.Desk); err != nil {
+			couch.AppendLog(state, "couch: could not restore the desktop layout: %v", err)
+			c.svc.cfg.Logf("could not restore the desktop after an abandoned couch session: %v", err)
+			return
+		}
 	}
 	couch.ClearSession(state)
-	c.svc.cfg.Logf("restored the desktop layout left behind by an abandoned couch session")
+	c.svc.cfg.Logf("put the desktop back after an abandoned couch session")
 }
 
 // observeWindowEvent lets Big Picture opened outside couch mode pull the

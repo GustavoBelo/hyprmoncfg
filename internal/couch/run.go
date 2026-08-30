@@ -139,13 +139,17 @@ func (r Runner) Play(ctx context.Context) error {
 		}
 	}
 	applied := hooks.Enter(ctx, hookEnv, cfg.HookEnabled)
-	if names := applied.Applied(); len(names) > 0 {
+	if names := hooks.Names(applied); len(names) > 0 {
 		AppendLog(state, "play: session hooks applied: %s", strings.Join(names, ", "))
 	}
+	// Recorded before anything else can go wrong, so a crash from here on can
+	// still be undone by whoever finds the session file.
+	session.Hooks = applied
+	_ = WriteSession(state, session)
 	defer func() {
 		// Undo the hooks before the layout: putting sound back on a desk
 		// output that is still disabled would fail.
-		_ = applied.Leave(context.WithoutCancel(ctx), hookEnv)
+		_ = hooks.Leave(context.WithoutCancel(ctx), hookEnv, applied)
 	}()
 
 	// Big Picture opens on the focused monitor, so focus the TV before asking

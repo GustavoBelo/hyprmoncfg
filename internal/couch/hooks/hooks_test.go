@@ -2,32 +2,9 @@ package hooks
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"testing"
 )
-
-type fakeHook struct {
-	name      string
-	available bool
-	enterErr  error
-	entered   *int
-	undone    *int
-	undoErr   error
-}
-
-func (f *fakeHook) Name() string        { return f.name }
-func (f *fakeHook) Description() string { return f.name }
-func (f *fakeHook) Available() bool     { return f.available }
-func (f *fakeHook) Enter(context.Context, Env) (Undo, error) {
-	if f.enterErr != nil {
-		return nil, f.enterErr
-	}
-	*f.entered++
-	return func(context.Context) error {
-		*f.undone++
-		return f.undoErr
-	}, nil
-}
 
 // The sink for the TV is picked by naming, since the display connector and the
 // audio device are separate subsystems with no reliable link.
@@ -70,40 +47,72 @@ func TestDescriptionMatchIgnoresShortWords(t *testing.T) {
 	}
 }
 
-// Undo runs in reverse and keeps going past a failure, so one stuck hook
-// cannot strand the rest of the desktop in console mode.
-func TestLeaveUndoesInReverseAndSurvivesFailures(t *testing.T) {
-	var order []string
-	session := &Session{undos: []namedUndo{
-		{name: "first", undo: func(context.Context) error { order = append(order, "first"); return nil }},
-		{name: "broken", undo: func(context.Context) error { order = append(order, "broken"); return errors.New("nope") }},
-		{name: "last", undo: func(context.Context) error { order = append(order, "last"); return nil }},
-	}}
+// A hook records what it found as data, not as a closure, so the record
+// survives the process that made it. A daemon killed mid-session used to leave
+// the bar hidden and sound on the TV with nothing able to undo either.
+func TestHookStateIsSerialisableAndSurvivesTheProcess(t *testing.T) {
+	applied := map[string]State{
+		"audio": {"previous_sink": "alsa_output.usb-KTMicro.analog-stereo"},
+		"bar":   {"hidden": "false"},
+	}
 
-	err := session.Leave(context.Background(), Env{})
-	if err == nil {
-		t.Fatal("a failing undo should be reported")
+	encoded, err := json.Marshal(applied)
+	if err != nil {
+		t.Fatalf("a hook record must be serialisable: %v", err)
 	}
-	want := []string{"last", "broken", "first"}
-	if len(order) != len(want) {
-		t.Fatalf("undo order = %v, want %v", order, want)
+	var decoded map[string]State
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
 	}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Fatalf("undo order = %v, want %v", order, want)
-		}
+	if decoded["audio"]["previous_sink"] != "alsa_output.usb-KTMicro.analog-stereo" {
+		t.Fatalf("the previous output was lost: %+v", decoded)
 	}
-	if len(session.Applied()) != 0 {
-		t.Fatal("a finished session should hold no undos")
+	if got := Names(decoded); len(got) != 2 {
+		t.Fatalf("Names = %v, want both hooks", got)
 	}
 }
 
-func TestLeaveOnNilSessionIsSafe(t *testing.T) {
-	var session *Session
-	if err := session.Leave(context.Background(), Env{}); err != nil {
-		t.Fatalf("leaving a session that never started: %v", err)
+// Names follows the order hooks are applied in, not map order, so the log line
+// is stable between runs.
+func TestNamesIsStable(t *testing.T) {
+	applied := map[string]State{"bar": {}, "audio": {}, "idle": {}}
+	first := Names(applied)
+	for i := 0; i < 20; i++ {
+		if got := Names(applied); !equalStrings(got, first) {
+			t.Fatalf("Names is unstable: %v then %v", first, got)
+		}
 	}
-	if session.Applied() != nil {
-		t.Fatal("a nil session has applied nothing")
+	if first[0] != "audio" {
+		t.Fatalf("expected apply order, got %v", first)
 	}
+}
+
+// Undoing a record that names a hook this build no longer has must not stop
+// the rest from being put back.
+func TestLeaveSkipsUnknownHooks(t *testing.T) {
+	err := Leave(context.Background(), Env{}, map[string]State{"a-hook-from-the-future": {}})
+	if err != nil {
+		t.Fatalf("an unknown hook is not a failure to report: %v", err)
+	}
+}
+
+func TestLeaveOnAnEmptyRecordIsSafe(t *testing.T) {
+	if err := Leave(context.Background(), Env{}, nil); err != nil {
+		t.Fatalf("nothing to undo: %v", err)
+	}
+	if got := Names(nil); len(got) != 0 {
+		t.Fatalf("Names(nil) = %v", got)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

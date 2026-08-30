@@ -2,11 +2,12 @@
 // layout: audio on the TV, the lock screen held off, notifications silenced,
 // the bar out of the way.
 //
-// Every hook returns an Undo that restores exactly what it changed, captured at
-// the moment it changed it. None of them toggles blindly: a session that ends
-// with the bar hidden because it was already hidden when the session started is
-// a bug, and so is one that turns the lock screen back on for someone who had
-// it off.
+// A hook records what it found before changing anything, and that record is
+// data rather than a closure. That is what makes it survive: a daemon killed
+// mid-session loses every closure it held, and the desktop would be left with
+// the bar hidden and sound on a TV nobody is watching. The record goes into the
+// session file next to the display snapshot, so whoever starts next can put
+// both back.
 package hooks
 
 import (
@@ -17,8 +18,9 @@ import (
 	"time"
 )
 
-// Undo restores what a hook changed.
-type Undo func(context.Context) error
+// State is what a hook captured before it changed anything. It is persisted, so
+// it has to stay small and serialisable.
+type State map[string]string
 
 // Env is what a hook needs to know about the session.
 type Env struct {
@@ -38,14 +40,20 @@ func (e Env) logf(format string, args ...any) {
 
 // Hook is one reversible change a console session makes.
 type Hook interface {
-	// Name is the key used in the config to turn this hook off.
+	// Name is the key used in the config and in the session record.
 	Name() string
 	// Description is one line for the settings UI.
 	Description() string
-	// Available reports whether this machine has what the hook needs. A hook
-	// that is unavailable is not offered, rather than offered and broken.
+	// Available reports whether this machine has what the hook needs. An
+	// unavailable hook is not offered, rather than offered and broken.
 	Available() bool
-	Enter(ctx context.Context, env Env) (Undo, error)
+	// Capture records the current state. Returning a nil State means there is
+	// nothing to change and nothing to put back.
+	Capture(ctx context.Context, env Env) (State, error)
+	// Apply enters the console state.
+	Apply(ctx context.Context, env Env) error
+	// Restore puts back what Capture recorded.
+	Restore(ctx context.Context, env Env, prev State) error
 }
 
 // All returns every hook, in the order a session applies them.
@@ -70,21 +78,22 @@ func Available() []Hook {
 	return usable
 }
 
-// Session runs a set of hooks and undoes them together.
-type Session struct {
-	undos []namedUndo
+func byName(name string) (Hook, bool) {
+	for _, h := range All() {
+		if h.Name() == name {
+			return h, true
+		}
+	}
+	return nil, false
 }
 
-type namedUndo struct {
-	name string
-	undo Undo
-}
-
-// Enter runs each enabled hook. A hook that fails is logged and skipped rather
-// than aborting the session: losing the HDMI audio switch is not a reason to
-// refuse to play, and whatever did apply is still undone on the way out.
-func Enter(ctx context.Context, env Env, enabled func(name string) bool) *Session {
-	session := &Session{}
+// Enter runs each enabled hook and returns what to put back later.
+//
+// A hook that fails is logged and skipped rather than aborting the session:
+// losing the HDMI audio switch is not a reason to refuse to play, and whatever
+// did apply is still recorded so it can be undone.
+func Enter(ctx context.Context, env Env, enabled func(name string) bool) map[string]State {
+	applied := make(map[string]State)
 	for _, hook := range All() {
 		if enabled != nil && !enabled(hook.Name()) {
 			continue
@@ -92,44 +101,52 @@ func Enter(ctx context.Context, env Env, enabled func(name string) bool) *Sessio
 		if !hook.Available() {
 			continue
 		}
-		undo, err := hook.Enter(ctx, env)
+		prev, err := hook.Capture(ctx, env)
 		if err != nil {
+			env.logf("couch: hook %s could not read the current state: %v", hook.Name(), err)
+			continue
+		}
+		if prev == nil {
+			// Already in the state the session wants; leave it alone in both
+			// directions.
+			continue
+		}
+		if err := hook.Apply(ctx, env); err != nil {
 			env.logf("couch: hook %s did not apply: %v", hook.Name(), err)
 			continue
 		}
-		if undo != nil {
-			session.undos = append(session.undos, namedUndo{name: hook.Name(), undo: undo})
-		}
+		applied[hook.Name()] = prev
 	}
-	return session
+	return applied
 }
 
-// Leave undoes everything that applied, most recent first, and keeps going
-// past a failure so one stuck hook cannot strand the rest.
-func (s *Session) Leave(ctx context.Context, env Env) error {
-	if s == nil {
-		return nil
-	}
+// Leave undoes everything recorded, and keeps going past a failure so one stuck
+// hook cannot strand the rest of the desktop in console mode.
+func Leave(ctx context.Context, env Env, applied map[string]State) error {
 	var failures []error
-	for i := len(s.undos) - 1; i >= 0; i-- {
-		entry := s.undos[i]
-		if err := entry.undo(ctx); err != nil {
-			env.logf("couch: hook %s did not restore: %v", entry.name, err)
+	for name, prev := range applied {
+		hook, ok := byName(name)
+		if !ok {
+			// A hook that no longer exists in this build; nothing to undo it
+			// with, and guessing would be worse.
+			env.logf("couch: no hook named %s to undo", name)
+			continue
+		}
+		if err := hook.Restore(ctx, env, prev); err != nil {
+			env.logf("couch: hook %s did not restore: %v", name, err)
 			failures = append(failures, err)
 		}
 	}
-	s.undos = nil
 	return errors.Join(failures...)
 }
 
-// Applied names the hooks that took effect, for the log and the status.
-func (s *Session) Applied() []string {
-	if s == nil {
-		return nil
-	}
-	names := make([]string, 0, len(s.undos))
-	for _, entry := range s.undos {
-		names = append(names, entry.name)
+// Names lists what a session changed, for the log.
+func Names(applied map[string]State) []string {
+	names := make([]string, 0, len(applied))
+	for _, hook := range All() {
+		if _, ok := applied[hook.Name()]; ok {
+			names = append(names, hook.Name())
+		}
 	}
 	return names
 }

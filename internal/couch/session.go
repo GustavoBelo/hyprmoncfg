@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/crmne/hyprmoncfg/internal/couch/hooks"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
@@ -49,6 +50,12 @@ type Session struct {
 	// killed session be undone: whoever finds the file next can put the exact
 	// desktop back, including a layout that was never saved as a profile.
 	Desk *profile.Profile `json:"desk,omitempty"`
+	// Hooks is what each session hook found before it changed anything.
+	//
+	// It lives here rather than in a closure for the same reason Desk does: a
+	// daemon killed mid-session loses every closure it held, and the desktop
+	// would be left with the bar hidden and sound on a TV nobody is watching.
+	Hooks map[string]hooks.State `json:"hooks,omitempty"`
 }
 
 // SnapshotDesk returns the layout a session recorded on the way in.
@@ -61,12 +68,16 @@ func SnapshotDesk(stateDir string) (profile.Profile, bool) {
 }
 
 // OrphanedSession reports a recorded session whose process is gone and which
-// still holds a desktop layout to restore. The daemon reconciles these at
+// still holds something to put back. The daemon reconciles these at
 // startup: before, a SIGKILL left the TV layout applied and the desk dark, with
 // nothing but a "stale" note in the status.
 func OrphanedSession(stateDir string) (Session, bool) {
 	s, stale := StaleSession(stateDir)
-	if !stale || s.Desk == nil || len(s.Desk.Outputs) == 0 {
+	if !stale {
+		return Session{}, false
+	}
+	hasDesk := s.Desk != nil && len(s.Desk.Outputs) > 0
+	if !hasDesk && len(s.Hooks) == 0 {
 		return Session{}, false
 	}
 	return s, true

@@ -18,7 +18,8 @@ func (*audioHook) Name() string        { return "audio" }
 func (*audioHook) Description() string { return "Send sound to the TV over HDMI" }
 func (*audioHook) Available() bool     { return have("pactl") }
 
-func (h *audioHook) Enter(ctx context.Context, env Env) (Undo, error) {
+// Capture records which output sound is on now, so it can go back there.
+func (h *audioHook) Capture(ctx context.Context, env Env) (State, error) {
 	sinks, err := listSinks(ctx)
 	if err != nil {
 		return nil, err
@@ -27,7 +28,6 @@ func (h *audioHook) Enter(ctx context.Context, env Env) (Undo, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	target, ok := pickHDMISink(sinks, env)
 	if !ok {
 		return nil, errors.New("no HDMI audio output found")
@@ -36,21 +36,42 @@ func (h *audioHook) Enter(ctx context.Context, env Env) (Undo, error) {
 		// Already on the TV; leave it, and leave it alone on the way out.
 		return nil, nil
 	}
+	return State{"previous_sink": previous, "target_sink": target.Name}, nil
+}
 
+func (h *audioHook) Apply(ctx context.Context, env Env) error {
+	sinks, err := listSinks(ctx)
+	if err != nil {
+		return err
+	}
+	target, ok := pickHDMISink(sinks, env)
+	if !ok {
+		return errors.New("no HDMI audio output found")
+	}
 	if err := selectSink(ctx, target); err != nil {
-		return nil, err
+		return err
 	}
 	env.logf("couch: audio moved to %s", target.Description)
+	return nil
+}
 
-	return func(ctx context.Context) error {
-		restore, ok := sinkByName(sinks, previous)
-		if !ok {
-			// The old output is gone -- headphones unplugged mid-session --
-			// so there is nothing to go back to and forcing it would fail.
-			return nil
-		}
-		return selectSink(ctx, restore)
-	}, nil
+func (h *audioHook) Restore(ctx context.Context, env Env, prev State) error {
+	previous := prev["previous_sink"]
+	if previous == "" {
+		return nil
+	}
+	sinks, err := listSinks(ctx)
+	if err != nil {
+		return err
+	}
+	restore, ok := sinkByName(sinks, previous)
+	if !ok {
+		// The old output is gone -- headphones unplugged mid-session -- so
+		// there is nothing to go back to and forcing it would fail.
+		env.logf("couch: the previous audio output %s is gone; leaving sound where it is", previous)
+		return nil
+	}
+	return selectSink(ctx, restore)
 }
 
 type sink struct {
