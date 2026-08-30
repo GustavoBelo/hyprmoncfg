@@ -47,7 +47,7 @@ hyprmoncfg is a visual multi-monitor layout editor and automatic profile switche
 Arch Linux:
 
 ```bash
-yay -S hyprmoncfg
+yay -S hyprmoncfg-bin
 # or
 yay -S hyprmoncfg-git
 ```
