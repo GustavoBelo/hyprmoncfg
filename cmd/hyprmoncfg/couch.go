@@ -513,6 +513,14 @@ func newCouchDoctorCmd(configDir *string) *cobra.Command {
 							cfg.Layout.Mode, native)
 					}
 				}
+				// Mirroring puts both outputs at 0,0 by definition, so a client
+				// enumerating displays sees two of them on the same coordinates
+				// at different sizes. Steam Big Picture reads that as a broken
+				// arrangement and says so on every launch.
+				if cfg.Layout.Desk == couch.DeskMirror {
+					report(false, false,
+						"the desk mirrors the TV, so both displays sit at 0,0 and Steam warns the arrangement is wrong; turn the desk off during play to stop it")
+				}
 			}
 
 			if _, err := exec.LookPath("steam"); err != nil {
