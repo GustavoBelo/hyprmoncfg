@@ -203,12 +203,8 @@ func (r Runner) Play(ctx context.Context) error {
 	if cfg.CloseAppsEnabled && len(cfg.AppsToClose) > 0 {
 		go func() {
 			time.Sleep(time.Duration(cfg.CloseAppsWaitSeconds) * time.Second)
-			killed := CloseTrackedApps(context.WithoutCancel(ctx), r.Client, cfg.AppsToClose)
-			if len(killed) > 0 {
-				AppendLog(state, "apps: closed tracked processes %v", killed)
-			} else {
-				AppendLog(state, "apps: no running process matched %v", cfg.AppsToClose)
-			}
+			result := CloseTrackedApps(context.WithoutCancel(ctx), r.Client, cfg.AppsToClose)
+			AppendLog(state, "apps: %s", DescribeCloseResult(result, cfg.AppsToClose))
 		}()
 	}
 
@@ -250,7 +246,7 @@ func (r Runner) focusTV(ctx context.Context, layout ConsoleLayout) {
 	if name == "" {
 		return
 	}
-	if err := r.Client.Dispatch(ctx, "focusmonitor", name); err != nil {
+	if err := r.Client.FocusMonitor(ctx, name); err != nil {
 		r.logf("could not focus %s before launching Big Picture: %v", name, err)
 	}
 }

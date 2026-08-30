@@ -28,14 +28,10 @@ func KeepBigPictureFullscreen(ctx context.Context, client WindowCloser, detector
 		// toggled fullscreen returns to its floating geometry the moment it
 		// loses the state.
 		if w.Floating {
-			_ = client.Dispatch(ctx, "settiled", "address:"+w.Address)
+			_ = client.SetWindowTiled(ctx, w.Address)
 		}
-		if err := client.Dispatch(ctx, "fullscreenstate", "2", "address:"+w.Address); err != nil {
-			// Older Hyprland has no fullscreenstate; fall back to focusing the
-			// window and toggling.
-			if err := client.Dispatch(ctx, "focuswindow", "address:"+w.Address); err == nil {
-				_ = client.Dispatch(ctx, "fullscreen", "0")
-			}
+		if err := client.SetWindowFullscreen(ctx, w.Address, true); err != nil {
+			continue
 		}
 		fixed++
 	}

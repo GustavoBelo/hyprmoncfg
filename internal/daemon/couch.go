@@ -226,7 +226,7 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 	// a session action rather than a workspace rule in the generated profile,
 	// which would fight whatever workspace layout the desktop uses.
 	if name := cfg.Layout.TVName; name != "" {
-		if err := c.svc.client.Dispatch(ctx, "focusmonitor", name); err != nil {
+		if err := c.svc.client.FocusMonitor(ctx, name); err != nil {
 			couch.AppendLog(state, "couch: could not focus %s: %v", name, err)
 		}
 	}
@@ -281,12 +281,8 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 				return
 			case <-time.After(time.Duration(cfg.CloseAppsWaitSeconds) * time.Second):
 			}
-			killed := couch.CloseTrackedApps(context.WithoutCancel(ctx), c.svc.client, cfg.AppsToClose)
-			if len(killed) > 0 {
-				couch.AppendLog(state, "apps: closed tracked processes %v", killed)
-			} else {
-				couch.AppendLog(state, "apps: no running process matched %v", cfg.AppsToClose)
-			}
+			result := couch.CloseTrackedApps(context.WithoutCancel(ctx), c.svc.client, cfg.AppsToClose)
+			couch.AppendLog(state, "apps: %s", couch.DescribeCloseResult(result, cfg.AppsToClose))
 		}()
 	}
 

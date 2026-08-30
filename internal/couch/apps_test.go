@@ -2,6 +2,7 @@ package couch
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -31,12 +32,11 @@ func (f *fakeCloser) Monitors(ctx context.Context) ([]hypr.Monitor, error) {
 	return nil, nil
 }
 
-func (f *fakeCloser) Dispatch(_ context.Context, dispatcher string, args ...string) error {
+func (f *fakeCloser) CloseWindow(_ context.Context, address string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.dispatch = append(f.dispatch, dispatcher+" "+strings.Join(args, " "))
-	if f.closeRemoves && dispatcher == "closewindow" && len(args) == 1 && strings.HasPrefix(args[0], "address:") {
-		address := strings.TrimPrefix(args[0], "address:")
+	f.dispatch = append(f.dispatch, "closewindow address:"+address)
+	if f.closeRemoves {
 		kept := f.windows[:0]
 		for _, w := range f.windows {
 			if w.Address != address {
@@ -44,6 +44,34 @@ func (f *fakeCloser) Dispatch(_ context.Context, dispatcher string, args ...stri
 			}
 		}
 		f.windows = kept
+	}
+	return nil
+}
+
+func (f *fakeCloser) SetWindowFullscreen(_ context.Context, address string, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dispatch = append(f.dispatch, fmt.Sprintf("fullscreen %t address:%s", on, address))
+	for i := range f.windows {
+		if f.windows[i].Address == address {
+			if on {
+				f.windows[i].Fullscreen = 2
+			} else {
+				f.windows[i].Fullscreen = 0
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeCloser) SetWindowTiled(_ context.Context, address string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dispatch = append(f.dispatch, "settiled address:"+address)
+	for i := range f.windows {
+		if f.windows[i].Address == address {
+			f.windows[i].Floating = false
+		}
 	}
 	return nil
 }
@@ -71,8 +99,8 @@ func spawnSleeper(t *testing.T) int {
 
 func TestCloseTrackedAppsNeverTargetsProtectedOrSelf(t *testing.T) {
 	client := &fakeCloser{}
-	if killed := CloseTrackedApps(context.Background(), client, []string{"hyprland", "steam"}); len(killed) != 0 {
-		t.Fatalf("protected processes must never be killed, got %v", killed)
+	if killed := CloseTrackedApps(context.Background(), client, []string{"hyprland", "steam"}); killed.Matched() {
+		t.Fatalf("protected processes must never be touched, got %+v", killed)
 	}
 	if got := client.dispatched(); len(got) != 0 {
 		t.Fatalf("no window should be closed for protected apps, got %v", got)
@@ -116,8 +144,8 @@ func TestCloseTrackedAppsClosesWindowedPWA(t *testing.T) {
 	if !found {
 		t.Fatalf("expected dispatch %q, got %v", want, dispatch)
 	}
-	if len(killed) != 0 {
-		t.Fatalf("graceful close should not escalate, killed %v", killed)
+	if len(killed.Signalled) != 0 {
+		t.Fatalf("graceful close should not escalate, killed %v", killed.Signalled)
 	}
 }
 
@@ -133,8 +161,8 @@ func TestCloseTrackedAppsEscalatesToSIGTERM(t *testing.T) {
 	}}
 	// Matching is case-insensitive, but on the class -- not the title.
 	killed := CloseTrackedApps(context.Background(), client, []string{"Chrome-Web.WhatsApp.com__-Default"})
-	if len(killed) != 1 || killed[0] != pid {
-		t.Fatalf("expected SIGTERM escalation on PID %d, got %v", pid, killed)
+	if len(killed.Signalled) != 1 || killed.Signalled[0] != pid {
+		t.Fatalf("expected SIGTERM escalation on PID %d, got %v", pid, killed.Signalled)
 	}
 
 	deadline := time.Now().Add(2 * time.Second)
@@ -163,8 +191,8 @@ func TestCloseTrackedAppsNoEscalationWhenWindowGone(t *testing.T) {
 	if len(client.dispatched()) == 0 {
 		t.Fatal("the window should have been asked to close")
 	}
-	if len(killed) != 0 {
-		t.Fatalf("closed windows must not be signalled, killed %v", killed)
+	if len(killed.Signalled) != 0 {
+		t.Fatalf("closed windows must not be signalled, killed %v", killed.Signalled)
 	}
 	if syscall.Kill(pid, 0) != nil {
 		t.Fatalf("sleeper PID %d should still be alive", pid)
@@ -175,7 +203,7 @@ func TestCloseTrackedAppsNoEscalationWhenWindowGone(t *testing.T) {
 func TestCloseTrackedAppsCommSweepIgnoresUnrelated(t *testing.T) {
 	spawnSleeper(t)
 	killed := CloseTrackedApps(context.Background(), &fakeCloser{}, []string{"definitely-not-running-app"})
-	if len(killed) != 0 {
+	if len(killed.Signalled) != 0 {
 		t.Fatalf("unrelated processes must survive, killed %v", killed)
 	}
 }
@@ -277,6 +305,51 @@ func TestSuggestCloseableAppsExcludesLaunchers(t *testing.T) {
 	for _, app := range SuggestCloseableApps() {
 		if isLauncherCommand(app.Exec) {
 			t.Fatalf("launcher %q was suggested (from %q)", app.Exec, app.Name)
+		}
+	}
+}
+
+// A window that closes politely needs no signal. Reporting only the killed
+// PIDs made every successful close read as "no running process matched" -- a
+// real session logged exactly that while it was in fact closing the window.
+func TestCloseResultTellsSuccessApartFromNoMatch(t *testing.T) {
+	client := &fakeCloser{windows: []hypr.Window{
+		{Address: "0xaa", Class: "chrome-web.whatsapp.com__-Default", Title: "web.whatsapp.com", Pid: 12345},
+	}, closeRemoves: true}
+	oldDelay := closeAppsEscalationDelay
+	closeAppsEscalationDelay = time.Millisecond
+	defer func() { closeAppsEscalationDelay = oldDelay }()
+
+	got := CloseTrackedApps(context.Background(), client, []string{"chrome-web.whatsapp.com__-Default"})
+	if !got.Matched() {
+		t.Fatal("closing a window is a match, not a miss")
+	}
+	if got.ClosedWindows != 1 {
+		t.Fatalf("expected one window closed, got %d", got.ClosedWindows)
+	}
+	if len(got.Signalled) != 0 {
+		t.Fatalf("a polite close needs no signal, got %v", got.Signalled)
+	}
+
+	miss := CloseTrackedApps(context.Background(), &fakeCloser{}, []string{"definitely-not-running"})
+	if miss.Matched() {
+		t.Fatal("nothing was running; that is a miss")
+	}
+}
+
+func TestDescribeCloseResultReadsCorrectly(t *testing.T) {
+	cases := []struct {
+		result CloseResult
+		want   string
+	}{
+		{CloseResult{}, "nothing on the close list is running"},
+		{CloseResult{ClosedWindows: 2}, "closed 2 window(s)"},
+		{CloseResult{Signalled: []int{42}}, "signalled [42]"},
+		{CloseResult{ClosedWindows: 1, Signalled: []int{42}}, "closed 1 window(s) and signalled [42]"},
+	}
+	for _, tc := range cases {
+		if got := DescribeCloseResult(tc.result, []string{"app"}); !strings.Contains(got, tc.want) {
+			t.Fatalf("DescribeCloseResult(%+v) = %q, want it to contain %q", tc.result, got, tc.want)
 		}
 	}
 }

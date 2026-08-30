@@ -3,6 +3,7 @@ package couch
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -270,7 +271,26 @@ func validProcessName(name string) bool {
 // name does not give them away (Electron and Chromium PWAs report a generic
 // comm like "chromium") are found through Hyprland windows instead: first the
 // window is closed gracefully, then any survivor gets SIGTERM on its PID.
-func CloseTrackedApps(ctx context.Context, client WindowCloser, apps []string) []int {
+// CloseResult says what actually happened, because "nothing was signalled" and
+// "nothing matched" are different outcomes that used to look the same.
+//
+// A window that closes politely needs no signal, so reporting only the killed
+// PIDs made every successful close read as "no running process matched" in the
+// log -- which is exactly what a real session reported while it was in fact
+// closing the window it was asked to.
+type CloseResult struct {
+	// ClosedWindows is how many windows were asked to close.
+	ClosedWindows int
+	// Signalled lists processes that had to be signalled to go away.
+	Signalled []int
+}
+
+// Matched reports whether anything on the close list was found at all.
+func (r CloseResult) Matched() bool {
+	return r.ClosedWindows > 0 || len(r.Signalled) > 0
+}
+
+func CloseTrackedApps(ctx context.Context, client WindowCloser, apps []string) CloseResult {
 	targets := make(map[string]struct{}, len(apps))
 	for _, app := range SanitizeApps(apps) {
 		if _, protected := ProtectedProcesses[app]; protected {
@@ -279,23 +299,22 @@ func CloseTrackedApps(ctx context.Context, client WindowCloser, apps []string) [
 		targets[strings.ToLower(app)] = struct{}{}
 	}
 	if len(targets) == 0 {
-		return nil
+		return CloseResult{}
 	}
 
-	killed := make([]int, 0)
-	killed = append(killed, closeWindowedApps(ctx, client, targets)...)
-	killed = append(killed, closeCommApps(targets)...)
-
-	return killed
+	closed, signalled := closeWindowedApps(ctx, client, targets)
+	result := CloseResult{ClosedWindows: closed, Signalled: signalled}
+	result.Signalled = append(result.Signalled, closeCommApps(targets)...)
+	return result
 }
 
 // closeWindowedApps asks Hyprland to close windows whose class or title names
 // a tracked app, then escalates to SIGTERM when a window survived the grace
 // period.
-func closeWindowedApps(ctx context.Context, client WindowCloser, targets map[string]struct{}) []int {
+func closeWindowedApps(ctx context.Context, client WindowCloser, targets map[string]struct{}) (int, []int) {
 	windows, err := client.Clients(ctx)
 	if err != nil {
-		return nil
+		return 0, nil
 	}
 
 	survivors := make([]hypr.Window, 0, 2)
@@ -306,13 +325,14 @@ func closeWindowedApps(ctx context.Context, client WindowCloser, targets map[str
 		if w.Pid == os.Getpid() || pidProtected(w.Pid) {
 			continue
 		}
-		if err := client.Dispatch(ctx, "closewindow", "address:"+w.Address); err == nil {
+		if err := client.CloseWindow(ctx, w.Address); err == nil {
 			survivors = append(survivors, w)
 		}
 	}
 
-	if len(survivors) == 0 {
-		return nil
+	closed := len(survivors)
+	if closed == 0 {
+		return 0, nil
 	}
 
 	select {
@@ -337,7 +357,7 @@ func closeWindowedApps(ctx context.Context, client WindowCloser, targets map[str
 			killed = append(killed, w.Pid)
 		}
 	}
-	return sigkillEscalation(killed)
+	return closed, sigkillEscalation(killed)
 }
 
 // windowMatchesTarget decides whether a window belongs to a tracked app.
@@ -442,3 +462,17 @@ func sigkillEscalation(pids []int) []int {
 // window class, which is far longer than the 15 characters /proc/<pid>/comm
 // allows.
 const maxTargetNameLength = 64
+
+// DescribeCloseResult turns an outcome into the line a session logs.
+func DescribeCloseResult(result CloseResult, requested []string) string {
+	switch {
+	case !result.Matched():
+		return fmt.Sprintf("nothing on the close list is running %v", requested)
+	case len(result.Signalled) == 0:
+		return fmt.Sprintf("closed %d window(s) from the close list", result.ClosedWindows)
+	case result.ClosedWindows == 0:
+		return fmt.Sprintf("signalled %v from the close list", result.Signalled)
+	default:
+		return fmt.Sprintf("closed %d window(s) and signalled %v", result.ClosedWindows, result.Signalled)
+	}
+}

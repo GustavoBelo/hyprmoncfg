@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -60,15 +62,35 @@ func (*barHook) Description() string { return "Hide the desktop bar" }
 func (*barHook) Available() bool     { return have("omarchy-toggle-bar") }
 
 func (h *barHook) Enter(ctx context.Context, env Env) (Undo, error) {
-	// on/off are states rather than a toggle, so this is safe to repeat and
-	// safe to undo without reading first.
-	if _, err := run(ctx, "omarchy-toggle-bar", "off"); err != nil {
+	// The argument names the flag, not the bar: omarchy-toggle-bar forwards to
+	// `omarchy-toggle bar-off <action>`, so "on" enables bar-off and hides the
+	// bar, while "off" clears it and shows the bar again. Reading it the other
+	// way round hid the bar when a session ended instead of while it ran.
+	//
+	// They are states rather than a toggle, so this is safe to repeat.
+	if barHidden() {
+		// Already hidden for the user's own reasons; leave it in both
+		// directions.
+		return nil, nil
+	}
+	if _, err := run(ctx, "omarchy-toggle-bar", "on"); err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context) error {
-		_, err := run(ctx, "omarchy-toggle-bar", "on")
+		_, err := run(ctx, "omarchy-toggle-bar", "off")
 		return err
 	}, nil
+}
+
+// barHidden reads the flag omarchy-toggle writes, which is the same state the
+// shell reads.
+func barHidden() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(home, ".local", "state", "omarchy", "toggles", "bar-off"))
+	return err == nil
 }
 
 // notificationsHook silences do-not-disturb for the session.

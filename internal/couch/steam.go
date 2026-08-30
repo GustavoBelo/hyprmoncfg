@@ -31,11 +31,17 @@ type WindowSource interface {
 	Monitors(ctx context.Context) ([]hypr.Monitor, error)
 }
 
-// WindowCloser adds window dispatching to WindowSource for app cleanup and
-// closing Big Picture.
+// WindowCloser adds the window actions a session needs.
+//
+// These are named for what they mean rather than exposing a raw dispatcher,
+// because the dispatcher dialect is not a caller's concern: Hyprland on a Lua
+// config refuses the classic syntax outright, and hypr.Client decides which
+// form to send.
 type WindowCloser interface {
 	WindowSource
-	Dispatch(ctx context.Context, dispatcher string, args ...string) error
+	CloseWindow(ctx context.Context, address string) error
+	SetWindowFullscreen(ctx context.Context, address string, on bool) error
+	SetWindowTiled(ctx context.Context, address string) error
 }
 
 // Confidence ranks how sure a tell is that a window really is the Steam
@@ -223,7 +229,7 @@ func WaitForBigPicture(ctx context.Context, detector *BigPictureDetector, timeou
 func CloseBigPicture(ctx context.Context, client WindowCloser, detector *BigPictureDetector) int {
 	closed := 0
 	for _, w := range detector.Windows(ctx) {
-		if err := client.Dispatch(ctx, "closewindow", "address:"+w.Address); err == nil {
+		if err := client.CloseWindow(ctx, w.Address); err == nil {
 			closed++
 		}
 	}
