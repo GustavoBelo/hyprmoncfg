@@ -1,7 +1,8 @@
 # Modo Console (Couch Mode) — estado da sessão e o que falta
 
-Branch: `feat/couch-mode` · 33 arquivos alterados, 13 novos, ~5.9k linhas · 98 testes
-novos no lado Go, 32 no plugin · nada commitado.
+Branch: `main` do fork `GustavoBelo/hyprmoncfg` · commits `669e5bd`, `a4e9093`,
+`880e650` · plugin em `GustavoBelo/omarchy-hyprmoncfg` (`88b0a57`).
+Roteiro do que falta: **[TV-TEST.md](TV-TEST.md)**.
 
 ---
 
@@ -69,8 +70,10 @@ hl.config("general:allow_tearing", true)   → pcall ok, valor não muda
 Ambos são **no-ops silenciosos**. Nenhum hook tenta mexer em opção; o `doctor`
 avisa para o usuário setar `general:allow_tearing` na config dele.
 
-**O que funciona em runtime:** dispatchers (`hyprctl dispatch`), `hl.window_rule()`
-(devolve handle), e `hl.get_config()` para leitura.
+**Correção posterior:** a primeira versão desta nota dizia que `hyprctl dispatch`
+funcionava. Não funciona — ver 3.9. O que de fato funciona em runtime é
+`hl.window_rule()` (devolve handle), `hl.get_config()` para leitura, e os
+dispatchers **só na forma Lua**.
 
 ### 3.3 Nomes de evento do Hyprland
 
@@ -117,6 +120,28 @@ Regra final: **maior resolução entre os modos ≥100Hz, na proporção nativa*
 
 Vazio no host apesar de `joydev` carregado. A detecção passou a ler
 `/sys/class/input/event*/device/capabilities/key` e testar o bit `BTN_SOUTH` (0x130).
+
+### 3.9 `hyprctl dispatch` também é recusado no parser Lua
+
+```
+$ hyprctl dispatch focuswindow address:0x55d99b7888e0
+error: [string "return hl.dispatch(focuswindow address:0x55d9…)"]:1: ')' expected
+```
+
+Ele embrulha o pedido como `hl.dispatch(<texto cru>)`, que não é Lua válido —
+**toda** forma clássica é recusada. O `WakeDisplays` do hyprmoncfg já sabia disso
+e escolhia o dialeto à mão; o código do couch não. As formas Lua verificadas por
+efeito, numa janela descartável:
+
+```lua
+hl.dispatch(hl.dsp.window.close({ window = w }))
+hl.dispatch(hl.dsp.window.float({ action = "unset", window = w }))
+hl.dispatch(hl.dsp.window.fullscreen({ mode = "fullscreen", action = "set", window = w }))
+```
+
+Não existe busca por endereço: varre-se `hl.get_windows()` casando `tostring(w)`
+com `HL.Window(0x…)`. E `hl.dsp.window.move` é mais um no-op silencioso — aceita
+e não move.
 
 ### 3.8 Casamento de app por substring de título é perigoso
 
@@ -165,22 +190,42 @@ assinaturas causavam dependência de ordem de conexão.
 
 ## 5. Estado verificado
 
-| O que | Como |
+Build, vet, gofmt e testes limpos. Além disso, **exercitado contra o compositor
+ao vivo** em 2026-08-30:
+
+| O que | Resultado |
 |---|---|
-| Build, vet, gofmt | limpos |
-| Testes | 18 pacotes Go + 32 do plugin, verdes |
-| Geração do perfil | contra o hardware real, em config temporária |
-| Detecção HDR por EDID | contra os dois monitores reais |
-| Contagem de controles | 0, correto (nenhum conectado) |
-| `couch doctor` | "Ready for a console session" |
-| Daemon adota a mesa | `current layout matches profile "escritório"; no change needed` |
-| Seletor de apps | contra o desktop ao vivo, 37 candidatos, sem lançadores |
+| Big Picture aparece | 6–7 s (era 150 s, ou nunca) |
+| Steam já aberto | resolvido no mesmo segundo — o caminho que falhava 4/4 |
+| Fullscreen na TV | `fs=2 size=1920x1080 mon=1`, mantido por 22 s |
+| Gatilho de Big Picture externo | entrou sozinho |
+| `FocusMonitor` | `HDMI-A-1 focused:true` |
+| Fechar apps | `closed 1 window(s) from the close list` |
+| Daemon ignora troca de foco | 21 eventos emitidos, 0 ações |
+| `kill -9` no meio da sessão | layout, barra, DND e `session.json` recuperados |
+| Parada normal | layout, áudio, barra e idle exatos |
+| Perfil gerado, HDR por EDID, seletor de apps | contra o hardware real |
 
-**Instalado:** binários em `~/.local/bin`, serviço `hyprmoncfgd` habilitado, plugin
-copiado e habilitado, `.desktop` + ícone em `~/.local/share` (lançadores pinados no
-caminho absoluto).
+**Instalado:** binários em `~/.local/bin`, serviço `hyprmoncfgd` habilitado,
+plugin copiado e habilitado, `.desktop` + ícone em `~/.local/share` com o
+caminho absoluto do binário.
 
----
+### Seis bugs que só a execução real revelou
+
+Todos corrigidos em `a4e9093` e `880e650`.
+
+1. **Nenhuma ação de janela funcionava** — `hyprctl dispatch` vira
+   `hl.dispatch(<texto cru>)` no parser Lua, que não é Lua válido.
+2. **Hook da barra invertido** — escondia ao sair, não durante.
+3. **Log ao contrário** — dizia "no running process matched" enquanto fechava.
+4. **DND nunca funcionou** — `omarchy-shell notifications dnd` não é método.
+   O par certo é `dndState`/`setDnd`, que ainda é idempotente.
+5. **Fullscreen não grudava** — o Steam sai dele sem mudar o título.
+6. **Undo dos hooks não sobrevivia a crash** — eram closures; agora são dados
+   no `session.json`, ao lado do snapshot do layout.
+
+O padrão que atravessa quase todos: **aceita o comando, sai com 0, não faz
+nada**. Verifique sempre por efeito, nunca por código de retorno.
 
 ## 6. O que falta
 
@@ -217,45 +262,27 @@ de modos da TV).
    junto com a primeira release do fork.
 4. **Bump de versão e release** do hyprmoncfg e do plugin (`1.3.0` já no manifest).
 
-### 6.4 Verificação que não foi feita
+### 6.4 O que ainda depende da TV acesa
 
-Nada disso foi exercitado: **nenhuma sessão real rodou**, porque isso apagaria a tela
-sem o usuário pedir.
-
-1. `couch play` → TV com HDR, áudio no HDMI, barra sumida, sem lock. Cronometrar: o
-   Big Picture tem que aparecer em segundos, não em 150 s.
-2. Voltar de um jogo → o Steam **não** pode virar flutuante 1100x700 (é a regra do
-   Omarchy; `KeepBigPictureFullscreen` deve reagir ao `windowtitle`).
-3. Fechar o Big Picture → volta tudo: layout, áudio (node 34, USB), barra, idle.
-4. Repetir com o **Steam já aberto** — o caminho que falhava.
-5. Abrir o Big Picture direto pelo Steam → o daemon entra sozinho (exige
-   `watch_big_picture: true`, hoje não setado).
-6. Ligar o controle → entra sozinho (exige `enter_on_controller_connect: true`, hoje
-   não setado); desligar → sai, respeitando os 60 s de uso mínimo.
-7. `kill -9` no daemon no meio da sessão; reiniciar → reconcilia e restaura a mesa.
-8. Alternar entre janelas → `journalctl --user -u hyprmoncfgd -f` fica **quieto**
-   (é a regressão do `activewindow` que foi corrigida).
-9. Fechar apps: marcar `chrome-web.whatsapp.com__-Default` no seletor e conferir que
-   só ele morre.
-10. gamescope aninhado — **exige instalar** `gamescope` (repo CachyOS, não AUR).
+Ver **[TV-TEST.md](TV-TEST.md)** — o roteiro completo. Em resumo: o áudio indo
+para o HDMI (em standby a TV não apresenta ELD, então o sink não existe), o
+resultado visual, a decisão entre 1920x1080@120 e 3840x2160@120, voltar de um
+jogo, o gatilho pelo controle, e o gamescope (não instalado).
 
 ### 6.5 Higiene
 
-- **Dois window rules inertes** ficaram no Hyprland desta sessão, de sondagem:
-  `^hyprmoncfg-probe-nonexistent$` e `^hyprmoncfg-probe2$`. Nenhuma janela casa com
-  elas; qualquer `hyprctl reload` limpa.
-- Os dois gatilhos automáticos (`watch_big_picture`,
-  `enter_on_controller_connect`) existem no código e na TUI mas estão **desligados**
-  na config atual.
+Resolvido: os binários antigos em `/usr/local/bin` foram removidos, e os dois
+gatilhos automáticos estão ligados na config.
 
----
+Pendente: dois window rules inertes ficaram no Hyprland de sondagem
+(`^hyprmoncfg-probe-nonexistent$`, `^hyprmoncfg-probe2$`). Nenhuma janela casa
+com eles; qualquer `hyprctl reload` limpa.
 
 ## 7. Ordem sugerida
 
-1. `sudo rm` dos binários velhos — sem isso, qualquer teste é ambíguo.
-2. Decidir o layout (3840x2160@120 + VRR, provavelmente).
-3. Rodar a verificação 6.4 itens 1–4, que é o coração do modo.
-4. Ligar os gatilhos automáticos e verificar 5–6.
-5. Fechar a folga do perfil (6.3.1).
-6. Separar os commits (6.3.2) e commitar.
-7. gamescope, se quiser.
+1. **[TV-TEST.md](TV-TEST.md)**, em casa com a TV acesa. Os testes 1–3 são os
+   que decidem se isto vira um console de verdade.
+2. Fixar o layout escolhido (provavelmente 3840x2160@120 + VRR).
+3. Fechar a folga do perfil (6.3.1): regerar a cada edição na TUI.
+4. Separar os commits do núcleo de perfis (6.3.2) para PR upstream.
+5. gamescope, se quiser.
