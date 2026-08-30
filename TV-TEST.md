@@ -1,5 +1,19 @@
 # Teste com a TV ligada
 
+> **Estado em 2026-08-30, tarde.** Testes 1, 2, 3 e 6 **passaram**; faltam o 4 e
+> o 5, que precisam de alguém jogando. O roteiro fica aqui porque é o que se
+> repete a cada mudança de hardware — e porque rodá-lo revelou seis bugs que
+> nenhum teste automatizado pegaria (`PLAN.md` §5).
+>
+> | # | | |
+> |---|---|---|
+> | 1 | Áudio | ✅ vai para o pin da TV e volta — **exigiu conserto**, ver abaixo |
+> | 2 | Visual | ✅ tela cheia, sem overscan, legível do sofá, cores boas |
+> | 3 | Resolução | ✅ **3840x2160@120** escolhido; estável, sem queda para 60 |
+> | 4 | Voltar de um jogo | ⬜ pendente |
+> | 5 | Controle | 🟡 a entrada disparou sozinha; o ciclo completo falta |
+> | 6 | gamescope | ✅ instalado e exercitado, primeira execução do código |
+
 O que sobrou depois da sessão de 2026-08-30. Todo o resto já foi exercitado com
 a TV em standby; isto é só o que **exige a TV fisicamente acesa**.
 
@@ -39,7 +53,35 @@ reverte sozinho em 10 s sem você fazer nada — é a rede que já existe.
 
 ## 1. Áudio vai para a TV e volta
 
-O único hook que nunca pôde ser testado.
+**Passou, depois de um conserto.** Na primeira execução o som foi para o
+**monitor da mesa**, e o comando reportou sucesso.
+
+O porquê vale saber, porque o mesmo se repete em qualquer máquina com dois
+displays numa placa só: a placa apresenta um pin de áudio por conector, e todo
+sink derivado deles se descreve como a *placa* (`Navi 48 HDMI/DP Audio
+Controller`), nunca como o display. Não dá para escolher pelo nome. Pior, a
+placa expõe **um sink HDMI por vez**, então acender a TV não faz nascer um
+segundo — é preciso trocar o perfil do card.
+
+O elo que funciona é o EDID, via ELD:
+
+```sh
+for f in /proc/asound/card*/eld#*.*; do
+  echo "== $f"; grep -E "monitor_present|monitor_name" "$f"
+done
+```
+
+Aqui: `25G64` no pin 0 (mesa) e `SAMSUNG` no pin 1 (TV). O pin nomeia a porta
+(`hdmi-output-N`) e a porta escolhe o perfil do card.
+
+Para conferir, **olhe a porta, nunca o nome do sink**:
+
+```sh
+S=$(pactl get-default-sink)
+pactl -f json list sinks | jq -r --arg s "$S" '.[]|select(.name==$s)|"port=\(.active_port)"'
+```
+
+O roteiro original:
 
 ```sh
 pactl get-default-sink                    # anote: deve ser o KT USB
@@ -99,6 +141,11 @@ O que observar:
 
 Escolha um e deixe. É o ajuste que separa "funciona" de "parece um console".
 
+**Resultado:** `3840x2160@120` pegou e ficou estável — sem piscada e sem queda
+para 60, então o cabo aguenta HDMI 2.1. Comparado lado a lado com 1080p120 e
+escolhido por ser melhor, com o texto ainda legível do sofá. Fixado no
+`couch.json`.
+
 ## 4. Voltar de um jogo
 
 O bug que você já contornava à mão no `hyprland.lua`.
@@ -139,6 +186,17 @@ Confirme que o controle é visto:
 hyprmoncfg couch doctor | grep controller
 ```
 
+**Parcial.** A entrada disparou sozinha ao plugar o controle
+(`couch: entering via a controller was connected`), mas a sessão não servia para
+nada: o Steam morria com `Unable to open X11 display`, porque o daemon não
+enxergava a sessão gráfica. Corrigido; o ciclo completo ainda não foi refeito.
+
+Uma mudança de comportamento importa aqui: o gatilho agora segue a **borda** de
+conexão, não a presença. Antes, com o controle plugado, qualquer `couch stop`
+era desfeito no polling seguinte — não havia como sair do modo console. Então
+para testar é preciso **desplugar e replugar**; com o controle já ligado, nada
+acontece, e isso é o certo.
+
 ## 6. gamescope (opcional)
 
 Não está instalado, e é pacote novo no sistema — por isso não instalei.
@@ -149,8 +207,25 @@ sudo pacman -S gamescope
 
 Depois, na aba 4, ligue **gamescope** e ajuste o cap de frames. Ganha HDR e FSR
 por jogo. O código monta a linha a partir do próprio layout do console
-(resolução, refresh e `--hdr-enabled` quando o perfil tem `cm: hdr`), mas **nunca
-foi executado** — trate como não verificado.
+(resolução, refresh e `--hdr-enabled` quando o perfil tem `cm: hdr`).
+
+**Passou.** Instalado (3.16.25) e executado pela primeira vez. A linha montada
+foi exatamente a esperada, tirada do perfil sem nada digitado duas vezes:
+
+```
+/usr/bin/gamescope -f -W 3840 -H 2160 -r 120 --hdr-enabled -- /usr/bin/steam -gamepadui
+```
+
+Janela em `fs=2 size=3840x2160` na TV. Um detalhe do primeiro teste virou
+conserto: **o gamescope não morria com a sessão** — sobrava uma janela
+fullscreen que o Hyprland mudava para a mesa assim que a TV era desligada. Agora
+o grupo de processos é encerrado no fim da sessão, e o `Reconcile` limpa um
+abandonado depois de um crash.
+
+Sob gamescope o Big Picture **não** é detectado, porque a classe da janela é
+`gamescope`; a sessão cai em vigiar o processo do Steam. É o comportamento certo
+e não vai mudar: sob gamescope existe uma janela só, cujo título vira o do jogo,
+então casar por título leria "abriu um jogo" como "fechou o Big Picture".
 
 ---
 
@@ -168,3 +243,14 @@ saem com código 0 e não fazem nada** — `hyprctl keyword`, `hl.config()`,
 `hyprctl dispatch` no parser Lua, `hl.dsp.window.move`, e o
 `omarchy-shell notifications dnd`. Se algo parecer ignorado, verifique pelo
 *efeito*, nunca pelo código de retorno.
+
+E uma segunda, aprendida ao rodar este roteiro: **teste o caminho automático,
+não o conveniente.** Todas as sessões da rodada anterior foram abertas por
+`couch play` num terminal, e o terminal empresta um ambiente que o daemon não
+tem — sessão Wayland, display X11, os helpers do Omarchy no PATH. Tudo passava.
+Nenhum gatilho automático funcionava. Se um caminho é o que o usuário vai usar
+de verdade, é por ele que se testa:
+
+```sh
+journalctl --user -u hyprmoncfgd -f     # e então plugue o controle
+```

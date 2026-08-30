@@ -1,7 +1,7 @@
 # Modo Console (Couch Mode) — estado da sessão e o que falta
 
-Branch: `main` do fork `GustavoBelo/hyprmoncfg` · commits `669e5bd`, `a4e9093`,
-`880e650` · plugin em `GustavoBelo/omarchy-hyprmoncfg` (`88b0a57`).
+Branch: `main` do fork `GustavoBelo/hyprmoncfg`, com o upstream `v1.16.1`
+mesclado · plugin em `GustavoBelo/omarchy-hyprmoncfg` (`b2d9e01`).
 Roteiro do que falta: **[TV-TEST.md](TV-TEST.md)**.
 
 ---
@@ -206,6 +206,10 @@ ao vivo** em 2026-08-30:
 | Parada normal | layout, áudio, barra e idle exatos |
 | Perfil gerado, HDR por EDID, seletor de apps | contra o hardware real |
 
+> Esta tabela é da sessão de 29–30/08 pela manhã, com a TV em standby e todas
+> as sessões abertas por `couch play` num terminal. É verdadeira e foi
+> insuficiente: ver "Mais seis, com a TV acesa" logo abaixo.
+
 **Instalado:** binários em `~/.local/bin`, serviço `hyprmoncfgd` habilitado,
 plugin copiado e habilitado, `.desktop` + ícone em `~/.local/share` com o
 caminho absoluto do binário.
@@ -227,62 +231,108 @@ Todos corrigidos em `a4e9093` e `880e650`.
 O padrão que atravessa quase todos: **aceita o comando, sai com 0, não faz
 nada**. Verifique sempre por efeito, nunca por código de retorno.
 
-## 6. O que falta
+### Mais seis, com a TV acesa (2026-08-30, tarde)
 
-### 6.1 Ação do usuário (bloqueia o resto)
+Com a TV ligada de verdade, e exercitando os caminhos automáticos em vez do
+`couch play` do terminal, apareceram outros seis. Corrigidos em `df4c712`,
+`e602bd4` e `924a45c`.
 
-```sh
-sudo rm -f /usr/local/bin/hyprmoncfg /usr/local/bin/hyprmoncfgd
-```
+7. **O som ia para o monitor da mesa.** Uma placa apresenta um pin de áudio HDMI
+   por conector, e todo sink derivado deles se descreve como a *placa*
+   (`Navi 48 HDMI/DP Audio Controller`), nunca como o display. O desempate por
+   descrição não casava com nada e o fallback pegava o primeiro sink "hdmi" — o
+   da mesa. Pior: a placa expõe **um sink HDMI por vez**, então acender a TV não
+   cria um segundo; é preciso trocar o **perfil do card**. O elo que funciona é o
+   EDID: o ELD em `/proc/asound/card*/eld#*.*` traz o `monitor_name`, que vem do
+   mesmo EDID que o Hyprland reporta. Aqui, `25G64` no pin 0 e `SAMSUNG` no pin 1.
+8. **Todo gatilho automático estava quebrado.** Uma unit de usuário do systemd
+   herda `XDG_RUNTIME_DIR` e um PATH pelado: sem `WAYLAND_DISPLAY`, sem
+   `DISPLAY`, sem `HYPRLAND_INSTANCE_SIGNATURE`, sem `/usr/share/omarchy/bin`.
+   O daemon fala com o Hyprland assim mesmo (o hyprctl aceita `--instance`
+   descoberto), então nada parecia errado — mas o Steam que ele lançava morria
+   com `Unable to open X11 display`, e os hooks de idle/DND/night light se
+   declaravam indisponíveis em silêncio. Só o `couch play` do terminal escapava,
+   por herdar o ambiente do shell. **É por isso que tudo parecia funcionar.**
+9. **O gatilho do controle seguia a presença, não a conexão.** Perguntar "tem um
+   controle plugado?" a cada 2 s fazia a sessão renascer 1 s depois de qualquer
+   `couch stop` — não havia como sair do modo console sem desplugar o controle.
+   A mesma leitura entrava em modo console no login de quem deixa o controle
+   ligado. Agora dispara na borda 0→N, com a contagem semeada no arranque.
+10. **Desligar o daemon abandonava a sessão.** Um `systemctl --user restart`
+    deixava o layout da TV aplicado, o som na TV e a barra escondida, porque os
+    hooks são desfeitos pelo processo que os aplicou. O `Reconcile` não cobre o
+    restart: o registro ainda nomeia um processo que está só terminando, então o
+    daemon novo o lê como vivo, descarta o registro, e deixa o casamento
+    automático impor um perfil sobre um desktop que ninguém restaurou — foi
+    exatamente o que aconteceu, aplicou o `game`. E não bastou esperar: o
+    `KillMode` padrão sinaliza o cgroup inteiro, então o `hyprctl` e o `pactl`
+    do restore morriam no meio (`signal: terminated`). `KillMode=mixed`.
+11. **O gamescope não morria com a sessão.** Primeira execução do código, que
+    nunca tinha rodado. Parar a sessão devolvia layout, áudio e barra e deixava
+    o gamescope no ar: uma janela fullscreen sem nada atrás, que o Hyprland
+    mudava para a mesa assim que a TV era desligada. Mais um zumbi por sessão,
+    porque o daemon nunca esperava pelos filhos que criava.
+12. **O `.goreleaser.yml` publicava no repo do upstream.** Uma tag no fork
+    tentaria cortar release em `crmne/hyprmoncfg`.
 
-Os binários de 26/ago têm precedência no PATH e **corrompem a configuração**: a TUI
-antiga não conhece o campo `layout`, então grava de volta o esquema velho e perde o
-layout e o `apps_to_close`. Também reescreve o perfil `couch` **sem** `managed_by`,
-o que o torna candidato do casamento automático. Aconteceu uma vez nesta sessão;
-volta a acontecer enquanto os dois existirem.
+O padrão novo é outro, e vale registrar: **o que funciona quando você testa à
+mão pode estar quebrado quando o programa se testa sozinho.** Todo teste da
+sessão anterior passou por um terminal, e o terminal traz junto um ambiente que
+o daemon não tem. Exercite o caminho automático, não o caminho conveniente.
 
-### 6.2 Decisão pendente: o layout
+## 6. Onde isto ficou
 
-Hoje **1920x1080@120, HDR, VRR off, mesa ligada** — herdado por migração do perfil
-`game`, que era o contorno de espelhamento. A heurística proporia
-**3840x2160@120, HDR, VRR, mesa desligada** (4K nativo a 120Hz, confirmado na lista
-de modos da TV).
+### 6.1 Resolvido
 
-### 6.3 Código
+| | |
+|---|---|
+| Layout da TV | **3840x2160@120, HDR** — escolhido olhando, contra 1080p120. Fixado no `couch.json`. |
+| Áudio | vai para o pin da TV e volta. Medido pela porta (`hdmi-output-1`), não pelo nome. |
+| Gatilhos automáticos | funcionam: o daemon adota o ambiente da sessão gráfica. |
+| Merge do upstream | `v1.16.1` integrado; o editor novo não expõe o perfil gerado. |
+| PR upstream | [crmne/hyprmoncfg#51](https://github.com/crmne/hyprmoncfg/pull/51), draft, só o `colorPresetsAgree`. |
+| Perfil na TUI | regerado a cada edição. |
+| gamescope | instalado e exercitado; a linha sai do próprio perfil e morre com a sessão. |
+| Versão | plugin em `1.4.0`, `minimumVersion` `1.17.0`; goreleaser aponta para o fork. |
 
-1. **Regerar o perfil a cada edição na TUI.** Hoje o perfil só é regerado no `couch
-   enable` e no início de cada sessão. O layout aplicado está sempre correto, mas o
-   arquivo pode ficar velho entre uma edição e a próxima sessão. Fechar a folga
-   também faria um erro de geração aparecer na hora da edição.
-2. **Separar o commit do `ExactStateMatch`** (+ os `ForcedProfile: "Home"` nos testes
-   do daemon) e o do `colorPresetsAgree`. São correções do núcleo de perfis, não do
-   modo console, e valem PR upstream por si só.
-3. **`minimumVersion` do plugin** está em `1.15.0` enquanto o build reporta `dev`.
-   Passa hoje porque `versionAtLeast` trata `dev` como compatível, mas precisa subir
-   junto com a primeira release do fork.
-4. **Bump de versão e release** do hyprmoncfg e do plugin (`1.3.0` já no manifest).
+### 6.2 O que falta
 
-### 6.4 O que ainda depende da TV acesa
+1. **Testes 4 e 5 do [TV-TEST.md](TV-TEST.md)** — voltar de um jogo, e o ciclo
+   completo do controle (entrar ao plugar, sair após 60 s de uso). São os dois
+   que precisam de alguém jogando.
+2. **Cortar a tag `v1.17.0-rc.1`** e deixar o goreleaser publicar a pré-release.
+   Tudo está preparado; falta só a tag.
+3. **VRR continua desligado.** A heurística proporia ligado. Não foi testado com
+   jogo rodando, que é o único lugar onde se vê diferença.
+4. **`general:allow_tearing` está off.** O `doctor` avisa; é config manual do
+   Hyprland, e nenhuma opção muda em runtime no parser Lua.
 
-Ver **[TV-TEST.md](TV-TEST.md)** — o roteiro completo. Em resumo: o áudio indo
-para o HDMI (em standby a TV não apresenta ELD, então o sink não existe), o
-resultado visual, a decisão entre 1920x1080@120 e 3840x2160@120, voltar de um
-jogo, o gatilho pelo controle, e o gamescope (não instalado).
+### 6.3 Coisas que ficaram sabidas e não consertadas
 
-### 6.5 Higiene
+- **Um hook que falha ao restaurar prende o desktop para sempre.** O `Capture`
+  devolve `nil` quando o estado já é o que a sessão quer — desenhado para não
+  desfazer o que o usuário escolheu —, então uma sessão seguinte lê a barra
+  escondida como intencional e nunca a devolve. Aconteceu aqui: o teste do
+  `KillMode`, antes do conserto, deixou a barra e o DND presos, e as sessões
+  seguintes não os tocaram. Com o desligamento consertado e o `Reconcile`
+  cobrindo o crash, o caminho ficou estreito; distinguir "o usuário escolheu" de
+  "uma sessão anterior largou" exigiria mais estado.
+- **Sob gamescope o Big Picture não é detectado** — a classe da janela é
+  `gamescope`. A sessão cai em vigiar o processo do Steam, que é o comportamento
+  certo: sob gamescope existe uma janela só, e o título dela vira o do jogo, então
+  casar por título leria "abriu um jogo" como "fechou o Big Picture".
+- **`currentFormat` reporta `XRGB8888`** (8 bits) mesmo com `cm: hdr` aplicado, a
+  1080p120 e a 4K120. As cores foram julgadas boas a olho. Não investigado se o
+  HDR está de fato negociado ou se o Hyprland só reporta o formato do plano.
 
-Resolvido: os binários antigos em `/usr/local/bin` foram removidos, e os dois
-gatilhos automáticos estão ligados na config.
+### 6.4 Higiene
 
-Pendente: dois window rules inertes ficaram no Hyprland de sondagem
+Pendente: dois window rules inertes de sondagem no Hyprland
 (`^hyprmoncfg-probe-nonexistent$`, `^hyprmoncfg-probe2$`). Nenhuma janela casa
 com eles; qualquer `hyprctl reload` limpa.
 
 ## 7. Ordem sugerida
 
-1. **[TV-TEST.md](TV-TEST.md)**, em casa com a TV acesa. Os testes 1–3 são os
-   que decidem se isto vira um console de verdade.
-2. Fixar o layout escolhido (provavelmente 3840x2160@120 + VRR).
-3. Fechar a folga do perfil (6.3.1): regerar a cada edição na TUI.
-4. Separar os commits do núcleo de perfis (6.3.2) para PR upstream.
-5. gamescope, se quiser.
+1. Testes 4 e 5 do [TV-TEST.md](TV-TEST.md), jogando de verdade.
+2. Tag `v1.17.0-rc.1` e a pré-release.
+3. Decidir o VRR com um jogo rodando.
