@@ -9,7 +9,7 @@ nav_order: 1
 ### Arch Linux
 
 ```bash
-yay -S hyprmoncfg
+yay -S hyprmoncfg-bin
 ```
 
 ```bash

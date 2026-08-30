@@ -25,15 +25,19 @@ const (
 )
 
 const (
-	MethodStatus    = "status"
-	MethodSubscribe = "subscribe"
-	MethodPreview   = "preview"
-	MethodConfirm   = "confirm"
-	MethodRevert    = "revert"
-	MethodSave      = "save"
-	MethodDelete    = "delete"
-	MethodManage    = "manage"
-	MethodUnmanage  = "unmanage"
+	MethodStatus      = "status"
+	MethodSubscribe   = "subscribe"
+	MethodEditor      = "editor_state"
+	MethodEdit        = "edit_profile"
+	MethodPreview     = "preview"
+	MethodConfirm     = "confirm"
+	MethodCommit      = "commit"
+	MethodRevert      = "revert"
+	MethodSave        = "save"
+	MethodDelete      = "delete"
+	MethodManage      = "manage"
+	MethodUnmanage    = "unmanage"
+	MethodProfileAuto = "set_profile_auto"
 
 	// Couch mode. The session lives in the daemon, so the TUI, the panel and
 	// the CLI all drive it from here rather than each spawning their own
@@ -115,10 +119,21 @@ type PreviewParams struct {
 	Profile        *profile.Profile `json:"profile,omitempty"`
 	ProfileName    string           `json:"profile_name,omitempty"`
 	TimeoutSeconds int              `json:"timeout_seconds,omitempty"`
+	SaveOnCommit   bool             `json:"save_on_commit,omitempty"`
+}
+
+type EditParams struct {
+	Profile profile.Profile    `json:"profile"`
+	Edit    profile.EditorEdit `json:"edit"`
 }
 
 type TransactionParams struct {
 	TransactionID string `json:"transaction_id"`
+}
+
+type CommitParams struct {
+	TransactionID string `json:"transaction_id"`
+	Save          bool   `json:"save"`
 }
 
 type SaveParams struct {
@@ -129,6 +144,10 @@ type DeleteParams struct {
 	Name string `json:"name"`
 }
 
+type ProfileAutoParams struct {
+	Enabled bool `json:"enabled"`
+}
+
 type Transaction struct {
 	ID       string          `json:"id"`
 	Profile  profile.Profile `json:"profile"`
@@ -137,8 +156,11 @@ type Transaction struct {
 
 type Handler interface {
 	Status() (appstatus.Document, error)
+	EditorState() (appstatus.EditorDocument, error)
+	EditProfile(params EditParams) (appstatus.EditorDraft, error)
 	Preview(owner string, params PreviewParams) (Transaction, error)
 	Confirm(owner string, params TransactionParams) error
+	Commit(owner string, params CommitParams) error
 	Revert(owner string, params TransactionParams) error
 	Save(params SaveParams) error
 	Delete(params DeleteParams) error
@@ -147,6 +169,8 @@ type Handler interface {
 	// take the include out, or the next monitor event puts it straight back.
 	Manage() error
 	Unmanage() error
+	SetProfileAuto(params ProfileAutoParams) error
+
 	// CouchStatus, CouchStart and CouchStop drive the console session. The
 	// daemon owns it so it survives the TUI closing and can be reconciled if
 	// the daemon itself is killed.

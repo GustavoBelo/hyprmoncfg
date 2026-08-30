@@ -158,6 +158,15 @@ func renderLegacyConfig(p profile.Profile, monitors []hypr.Monitor, useV2 bool) 
 		}
 		monitorBlocks = append(monitorBlocks, "monitor = "+hyprlangEscape(CommandForOutput(identifier, item.config, mirrorTarget)))
 	}
+	for _, monitor := range profile.OmittedMonitors(p, monitors) {
+		identifier := legacyHyprlangSelector(selectorForMonitor(resolver, monitor), monitor)
+		disabled := profile.OutputConfig{Enabled: false}
+		if useV2 {
+			monitorBlocks = append(monitorBlocks, renderMonitorV2Block(hyprlangEscape(identifier), disabled, ""))
+		} else {
+			monitorBlocks = append(monitorBlocks, "monitor = "+hyprlangEscape(CommandForOutput(identifier, disabled, "")))
+		}
+	}
 
 	workspaceLines := make([]string, 0)
 	rules := profile.ResolveWorkspaceRules(p, monitors)
@@ -209,6 +218,15 @@ func renderLuaConfig(p profile.Profile, monitors []hypr.Monitor, useV2 bool) (st
 			continue
 		}
 		monitorBlocks = append(monitorBlocks, "hl.monitor("+luaQuote(CommandForOutput(identifier, item.config, mirrorTarget))+")")
+	}
+	for _, monitor := range profile.OmittedMonitors(p, monitors) {
+		identifier := selectorForMonitor(resolver, monitor)
+		disabled := profile.OutputConfig{Enabled: false}
+		if useV2 {
+			monitorBlocks = append(monitorBlocks, renderLuaMonitorCall(identifier, disabled, ""))
+		} else {
+			monitorBlocks = append(monitorBlocks, "hl.monitor("+luaQuote(CommandForOutput(identifier, disabled, ""))+")")
+		}
 	}
 
 	workspaceLines := make([]string, 0)
@@ -486,4 +504,11 @@ func resolveProfileOutputs(p profile.Profile, resolver profile.MonitorResolver) 
 		matchedByKey[output.Key] = item
 	}
 	return matched, matchedByKey
+}
+
+func selectorForMonitor(resolver profile.MonitorResolver, monitor hypr.Monitor) string {
+	return resolver.SelectorForOutput(profile.OutputConfig{
+		MatchKey: monitor.HardwareKey(),
+		Name:     monitor.Name,
+	}, monitor)
 }

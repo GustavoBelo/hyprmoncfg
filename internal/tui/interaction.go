@@ -286,7 +286,7 @@ func (m *Model) activateInspectorField() tea.Cmd {
 		}
 		return m.openNumericInput(kind, m.selectedOutput, title, hint, value)
 	case 3:
-		m.openFieldPicker("Bit Depth", m.inspectorField, []string{"8", "10", "16"})
+		m.openFieldPicker("Bit Depth", m.inspectorField, []string{"8", "10"})
 		return nil
 	case 4:
 		m.openFieldPicker("Color Management", m.inspectorField, []string{"srgb", "auto", "wide", "hdr", "hdredid", "dcip3", "dp3", "adobe", "edid"})
@@ -295,7 +295,7 @@ func (m *Model) activateInspectorField() tea.Cmd {
 		m.openFieldPicker("VRR", m.inspectorField, []string{"off", "on", "fullscreen"})
 		return nil
 	case 6:
-		m.openFieldPicker("Transform", m.inspectorField, []string{"normal", "90", "180", "270", "flipped", "flipped+90", "flipped+180", "flipped+270"})
+		m.openFieldPicker("Rotation", m.inspectorField, []string{"normal", "90", "180", "270", "flipped", "flipped+90", "flipped+180", "flipped+270"})
 		return nil
 	case 9:
 		targets := []string{"None"}
@@ -1378,6 +1378,9 @@ func (m Model) updateProfilesMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	inner := listRect.inner(m.styles.activePane)
+	if msg.Y == inner.y {
+		return m.toggleProfileAutomatic()
+	}
 	row := msg.Y - inner.y - profileListHeaderRows + m.profileListScroll(inner.h)
 	if row < 0 || row >= len(m.profiles) || msg.Y < inner.y+profileListHeaderRows {
 		return m, nil

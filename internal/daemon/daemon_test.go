@@ -16,6 +16,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/couch"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 )
@@ -178,6 +179,195 @@ func TestClearManualOverride(t *testing.T) {
 
 	if _, ok := svc.manualOverride("desk-set"); ok {
 		t.Fatal("expected explicit clear to remove manual profile override")
+	}
+}
+
+func TestProfileAutomaticModeIsVisibleAndCanBeRestored(t *testing.T) {
+	monitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, monitorsJSON, monitorsJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	saved := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(saved); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+
+	if err := svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "Laptop" {
+		t.Fatalf("profile override = %q, want Laptop", document.Daemon.ProfileOverride)
+	}
+
+	if err := svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	document, err = svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "" {
+		t.Fatalf("profile override survived automatic mode: %q", document.Daemon.ProfileOverride)
+	}
+}
+
+func TestManualProfilePreviewIsNotReplacedAndKeepPinsTheNewProfile(t *testing.T) {
+	monitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	shiftedJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":120,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, monitorsJSON, shiftedJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	current := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	if err := svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	target := current
+	target.Name = "Laptop shifted"
+	target.Outputs[0].X = 120
+	transaction, err := svc.Preview("test-panel", ipc.PreviewParams{Profile: &target, TimeoutSeconds: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.Disconnect("test-panel")
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.Preview == nil || document.Daemon.Preview.TransactionID != transaction.ID {
+		t.Fatalf("disconnected panel lost the recoverable preview: %+v", document.Daemon.Preview)
+	}
+	if preview := document.Daemon.Preview; preview.Profile.Name != target.Name || len(preview.Profile.Outputs) != 1 || preview.Profile.Outputs[0].X != 120 {
+		t.Fatalf("recoverable preview lost its effective target profile: %+v", preview.Profile)
+	}
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rendered := readMonitorsConf(t, env); !strings.Contains(rendered, "position = 120x0") {
+		t.Fatalf("automatic pass replaced the interactive profile preview:\n%s", rendered)
+	}
+
+	if err := svc.Confirm("replacement-panel", ipc.TransactionParams{TransactionID: transaction.ID}); err != nil {
+		t.Fatal(err)
+	}
+	document, err = svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != target.Name {
+		t.Fatalf("kept profile override = %q, want %q", document.Daemon.ProfileOverride, target.Name)
+	}
+	if document.Daemon.Preview != nil {
+		t.Fatalf("kept preview remained pending: %+v", document.Daemon.Preview)
+	}
+}
+
+func TestSavingLayoutPreviewPreservesAutomaticProfileSelection(t *testing.T) {
+	beforeJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	afterJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, beforeJSON, afterJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	current := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+
+	edited := current
+	edited.Outputs[0].Scale = 2
+	transaction, err := svc.Preview("test-panel", ipc.PreviewParams{
+		Profile: &edited, TimeoutSeconds: 10, SaveOnCommit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Commit("test-panel", ipc.CommitParams{TransactionID: transaction.ID, Save: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "" {
+		t.Fatalf("saving an automatic layout created a profile override: %q", document.Daemon.ProfileOverride)
+	}
+	saved, err := env.store.Load("Laptop")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Outputs[0].Scale != 2 {
+		t.Fatalf("saved scale = %v, want 2", saved.Outputs[0].Scale)
+	}
+}
+
+func TestSavingLayoutPreviewPreservesManualProfileSelection(t *testing.T) {
+	beforeJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	afterJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, beforeJSON, afterJSON)
+	monitors := []hypr.Monitor{{
+		Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5, DPMSStatus: true,
+	}}
+	current := profile.FromMonitors("Laptop", monitors)
+	if err := env.store.Save(current); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	if err := svc.SetProfileAuto(ipc.ProfileAutoParams{Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+
+	edited := current
+	edited.Outputs[0].Scale = 2
+	transaction, err := svc.Preview("test-panel", ipc.PreviewParams{
+		Profile: &edited, TimeoutSeconds: 10, SaveOnCommit: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Commit("test-panel", ipc.CommitParams{TransactionID: transaction.ID, Save: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	document, err := svc.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.Daemon.ProfileOverride != "Laptop" {
+		t.Fatalf("saving a manual layout lost its profile override: %q", document.Daemon.ProfileOverride)
+	}
+	manual, ok := svc.manualOverride(profile.MonitorSetHash(monitors))
+	if !ok || manual.Outputs[0].Scale != 2 {
+		t.Fatalf("manual override was not updated to the saved layout: %+v (ok=%v)", manual, ok)
 	}
 }
 

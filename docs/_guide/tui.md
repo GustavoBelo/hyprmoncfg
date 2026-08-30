@@ -52,7 +52,7 @@ Press `Enter` on any **Display** or **Color** field to edit it:
 
 - **Mode** opens a scrollable picker with every supported resolution and refresh rate
 - **Scale**, **Position X**, **Position Y** accept typed numeric values
-- **Transform**, **VRR** cycle through their options with Enter or scroll
+- **Rotation**, **VRR** cycle through their options with Enter or scroll
 - **Mirror** lets you mirror the selected monitor to any other connected display. For a crisp image, set the mirrored monitor's Mode to match the source resolution. If the resolutions don't match, Hyprland upscales the image, which looks blurry
 
 ## Save dialog

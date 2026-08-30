@@ -47,6 +47,34 @@ type canvasCard struct {
 	body   func(maxLines, maxWidth int) []cardLine
 }
 
+type monitorCardEmphasis int
+
+const (
+	monitorCardLayout monitorCardEmphasis = iota
+	monitorCardProfile
+	monitorCardWorkspaces
+)
+
+// monitorCardLines is the shared monitor-card vocabulary for every tab. The
+// emphasis changes only the visual weight of workspace assignments; geometry
+// and identity remain available everywhere and collapse in the same order when
+// a card is too small.
+func (m Model) monitorCardLines(output editableOutput, workspaces []string, emphasis monitorCardEmphasis, maxLines, maxWidth int, colors canvasCardColors, issue, issueFG string) []cardLine {
+	if len(workspaces) == 0 || maxLines < 2 {
+		return output.cardLinesWithIssue(maxLines, colors.fg, colors.muted, issue, issueFG)
+	}
+
+	lines := output.cardLinesWithIssue(maxLines-1, colors.fg, colors.muted, issue, issueFG)
+	for _, text := range fitWorkspaceLines(workspaces, maxWidth, 1) {
+		lines = append(lines, cardLine{
+			text: text,
+			fg:   m.styles.palette.paneActiveBorder,
+			bold: emphasis != monitorCardLayout,
+		})
+	}
+	return lines
+}
+
 // renderStaticCanvas paints outputs on a canvas that cannot be edited. The
 // profile and workspace previews use it so every canvas in the app shares the
 // layout tab's geometry, grid, and card chrome.
@@ -157,8 +185,8 @@ func profileScoreLabel(summary profileMatchSummary) string {
 const (
 	profileListTagWidth   = 6
 	profileListScoreWidth = 5
-	// The header row plus the blank line that separates it from the profiles.
-	profileListHeaderRows = 2
+	// Automatic-selection control, spacer, table header, and spacer.
+	profileListHeaderRows = 4
 )
 
 // profileListColumns is the shared column geometry of that table, so the
@@ -200,6 +228,23 @@ func (m Model) profileListHeader(cols profileListColumns) string {
 		row += " " + fmt.Sprintf("%*s", cols.score, fitString(profileListScoreHeader, cols.score))
 	}
 	return m.styles.subtle.Render(row)
+}
+
+func (m Model) profileAutomaticRow(width int) string {
+	label := "Automatic profile selection"
+	state := "off"
+	stateStyle := m.styles.warning
+	if m.profileAutomatic() {
+		state = "on"
+		stateStyle = m.styles.statusOK
+	}
+	if m.profileModePending {
+		state = "..."
+		stateStyle = m.styles.subtle
+	}
+	stateWidth := lipgloss.Width(state)
+	labelWidth := max(1, width-stateWidth-1)
+	return m.styles.value.Render(fmt.Sprintf("%-*s", labelWidth, fitString(label, labelWidth))) + " " + stateStyle.Render(state)
 }
 
 // profileListRows renders one row per profile.
@@ -269,40 +314,43 @@ func (m Model) profileMatchVerdict(summary profileMatchSummary) string {
 // so a surprising number is never a mystery.
 func (m Model) profileMatchReasons(summary profileMatchSummary) []string {
 	result := summary.result
-	entries := []struct {
-		count  int
-		points int
-		text   string
-	}{
-		{result.EnabledMatched, profile.ScoreEnabledMatch, "connected"},
-		{result.DisabledMatched, profile.ScoreDisabledMatch, "connected, kept off"},
-		{result.MissingOutputs, profile.ScoreMissingOutput, "not connected"},
-		{result.MissingOffOutputs, profile.ScoreMissingOffOutput, "not connected, kept off"},
-		{result.UnknownOutputs, profile.ScoreUnknownOutput, "connected, not in profile"},
-	}
-
-	lines := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.count == 0 {
-			continue
-		}
+	reasons := profile.ExplainMatch(result)
+	lines := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
 		points := ""
 		if summary.matches() {
-			points = fmt.Sprintf("%+d", entry.count*entry.points)
+			points = fmt.Sprintf("%+d", reason.Points)
 		}
 		style := m.styles.subtle
-		if entry.points > 0 {
+		if reason.Points > 0 {
 			style = m.styles.value
 		}
 		lines = append(lines, fmt.Sprintf("%s %s",
 			m.styles.subtle.Render(fmt.Sprintf("%5s", points)),
-			style.Render(fmt.Sprintf("%d %s %s", entry.count, pluralDisplays(entry.count), entry.text)),
+			style.Render(fmt.Sprintf("%d %s %s", reason.Count, pluralDisplays(reason.Count), matchReasonLabel(reason.Kind))),
 		))
 	}
 	if len(lines) == 0 {
 		lines = append(lines, m.styles.subtle.Render("      no displays connected"))
 	}
 	return lines
+}
+
+func matchReasonLabel(kind profile.MatchReasonKind) string {
+	switch kind {
+	case profile.MatchReasonConnected:
+		return "connected"
+	case profile.MatchReasonConnectedKeptOff:
+		return "connected, kept off"
+	case profile.MatchReasonNotConnected:
+		return "not connected"
+	case profile.MatchReasonNotConnectedKeptOff:
+		return "not connected, kept off"
+	case profile.MatchReasonConnectedUnknown:
+		return "connected, not in profile"
+	default:
+		return ""
+	}
 }
 
 func pluralDisplays(count int) string {
@@ -458,6 +506,7 @@ func workspacePlanByConnector(rules []profile.WorkspaceRule) map[string][]string
 func (m Model) renderProfileCanvas(p profile.Profile, width, height int) string {
 	outputs := m.profileEditableOutputs(p)
 	connected := m.profileConnectedKeys(p)
+	workspaces := workspacePlanByConnector(profile.ResolveWorkspaceRules(p, nil))
 
 	return m.renderStaticCanvas(outputs, width, height, func(output editableOutput) canvasCard {
 		// Nothing here is being dragged, so a display the profile can drive gets
@@ -473,7 +522,8 @@ func (m Model) renderProfileCanvas(p profile.Profile, width, height int) string 
 		return canvasCard{
 			colors: colors,
 			body: func(maxLines, maxWidth int) []cardLine {
-				return output.cardLinesWithIssue(maxLines, colors.fg, colors.muted, issue, m.styles.palette.warning)
+				return m.monitorCardLines(output, workspaces[output.Name], monitorCardProfile,
+					maxLines, maxWidth, colors, issue, m.styles.palette.warning)
 			},
 		}
 	})
@@ -498,25 +548,11 @@ func (m Model) renderWorkspaceCanvas(preview map[string][]string, width, height 
 		return canvasCard{
 			colors: colors,
 			body: func(maxLines, maxWidth int) []cardLine {
-				return m.workspaceCardLines(output, workspaces, maxLines, maxWidth, colors)
+				return m.monitorCardLines(output, workspaces, monitorCardWorkspaces,
+					maxLines, maxWidth, colors, "", m.styles.palette.warning)
 			},
 		}
 	})
-}
-
-func (m Model) workspaceCardLines(output editableOutput, workspaces []string, maxLines, maxWidth int, colors canvasCardColors) []cardLine {
-	lines := []cardLine{{text: output.Name, fg: colors.fg, bold: true}}
-	if model := output.cardModelLabel(); maxLines >= 3 && model != unknownModelLabel {
-		lines = append(lines, cardLine{text: model, fg: colors.muted})
-	}
-	if len(workspaces) == 0 {
-		return append(lines, cardLine{text: "(no workspaces)", fg: colors.muted})
-	}
-
-	for _, text := range fitWorkspaceLines(workspaces, maxWidth, max(1, maxLines-len(lines))) {
-		lines = append(lines, cardLine{text: text, fg: m.styles.palette.paneActiveBorder, bold: true})
-	}
-	return lines
 }
 
 // fitWorkspaceLines packs workspace ids into at most maxLines rows, marking

@@ -66,11 +66,21 @@ func TestEvaluateMatchReportsConnectedEnabledOutputs(t *testing.T) {
 	if result.ConnectedEnabledOutputs != 1 || result.Score != 150 {
 		t.Fatalf("desk match = %+v, want one connected enabled output and score 150", result)
 	}
+	if !result.ExactDisplayMatch() {
+		t.Fatalf("desk match = %+v, want exact connected display set", result)
+	}
+	reasons := ExplainMatch(result)
+	if len(reasons) != 2 || reasons[0] != (MatchReason{Kind: MatchReasonConnected, Count: 1, Points: 100}) || reasons[1] != (MatchReason{Kind: MatchReasonConnectedKeptOff, Count: 1, Points: 50}) {
+		t.Fatalf("desk match reasons = %+v", reasons)
+	}
 
 	unavailable := New("projector", []OutputConfig{{Key: projector.HardwareKey(), Enabled: true, Scale: 1}})
 	result = EvaluateMatch(unavailable, []hypr.Monitor{laptop, external})
 	if result.ConnectedEnabledOutputs != 0 || result.Score != 0 {
 		t.Fatalf("unavailable match = %+v, want zero value", result)
+	}
+	if result.ExactDisplayMatch() {
+		t.Fatalf("unavailable match = %+v, should not be exact", result)
 	}
 
 	unsafe := New("external-only", []OutputConfig{
@@ -228,6 +238,28 @@ func TestExactStateMatchRejectsAmbiguousDuplicateProfiles(t *testing.T) {
 
 	if _, ok := ExactStateMatch([]Profile{left, right}, monitors, nil); ok {
 		t.Fatal("expected ambiguous exact profile matches to be rejected")
+	}
+}
+
+func TestExactStateMatchTreatsConnectedOutputOmittedFromProfileAsDisabled(t *testing.T) {
+	laptop := hypr.Monitor{
+		Name: "eDP-1", Make: "Samsung", Model: "Panel", Serial: "A1",
+		Width: 2880, Height: 1800, RefreshRate: 120, Scale: 1.5,
+	}
+	external := hypr.Monitor{
+		Name: "DP-1", Make: "Microstep", Model: "MPG321UR-QD", Serial: "B2",
+		Width: 3840, Height: 2160, RefreshRate: 144, Scale: 1, Disabled: true,
+	}
+	saved := FromState("Laptop", []hypr.Monitor{laptop}, nil)
+
+	matched, ok := ExactStateMatch([]Profile{saved}, []hypr.Monitor{laptop, external}, nil)
+	if !ok || matched.Name != "Laptop" {
+		t.Fatalf("expected omitted disabled external monitor to preserve the Laptop match, got %q (ok=%v)", matched.Name, ok)
+	}
+
+	external.Disabled = false
+	if _, ok := ExactStateMatch([]Profile{saved}, []hypr.Monitor{laptop, external}, nil); ok {
+		t.Fatal("expected an omitted but enabled external monitor not to match Laptop")
 	}
 }
 

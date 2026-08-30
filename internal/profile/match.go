@@ -24,6 +24,33 @@ type MatchResult struct {
 	UnknownOutputs    int // connected outputs this profile says nothing about
 }
 
+// ExactDisplayMatch reports whether the profile describes the complete set of
+// displays connected right now. A connected display may deliberately be kept
+// off; that is still an exact setup match as long as the profile knows about
+// it. Layout, mode, and workspace differences are intentionally irrelevant.
+func (r MatchResult) ExactDisplayMatch() bool {
+	return r.ConnectedEnabledOutputs > 0 &&
+		r.MissingOutputs == 0 &&
+		r.MissingOffOutputs == 0 &&
+		r.UnknownOutputs == 0
+}
+
+type MatchReasonKind string
+
+const (
+	MatchReasonConnected           MatchReasonKind = "connected"
+	MatchReasonConnectedKeptOff    MatchReasonKind = "connected_kept_off"
+	MatchReasonNotConnected        MatchReasonKind = "not_connected"
+	MatchReasonNotConnectedKeptOff MatchReasonKind = "not_connected_kept_off"
+	MatchReasonConnectedUnknown    MatchReasonKind = "connected_unknown"
+)
+
+type MatchReason struct {
+	Kind   MatchReasonKind `json:"kind"`
+	Count  int             `json:"count"`
+	Points int             `json:"points"`
+}
+
 // Score weights, exported so the breakdown can be rendered as arithmetic.
 // Every output a profile names but cannot find costs something, so the profile
 // that describes exactly the connected displays wins over one that also
@@ -35,6 +62,25 @@ const (
 	ScoreMissingOffOutput = -10
 	ScoreUnknownOutput    = -20
 )
+
+// ExplainMatch exposes the score arithmetic in display-neutral terms so every
+// frontend can explain profile matching without copying the scoring rules.
+func ExplainMatch(result MatchResult) []MatchReason {
+	candidates := []MatchReason{
+		{Kind: MatchReasonConnected, Count: result.EnabledMatched, Points: result.EnabledMatched * ScoreEnabledMatch},
+		{Kind: MatchReasonConnectedKeptOff, Count: result.DisabledMatched, Points: result.DisabledMatched * ScoreDisabledMatch},
+		{Kind: MatchReasonNotConnected, Count: result.MissingOutputs, Points: result.MissingOutputs * ScoreMissingOutput},
+		{Kind: MatchReasonNotConnectedKeptOff, Count: result.MissingOffOutputs, Points: result.MissingOffOutputs * ScoreMissingOffOutput},
+		{Kind: MatchReasonConnectedUnknown, Count: result.UnknownOutputs, Points: result.UnknownOutputs * ScoreUnknownOutput},
+	}
+	reasons := make([]MatchReason, 0, len(candidates))
+	for _, reason := range candidates {
+		if reason.Count > 0 {
+			reasons = append(reasons, reason)
+		}
+	}
+	return reasons
+}
 
 func EvaluateMatch(p Profile, monitors []hypr.Monitor) MatchResult {
 	p.Normalize()
@@ -174,6 +220,8 @@ func ExactStateMatch(profiles []Profile, monitors []hypr.Monitor, rules []hypr.W
 }
 
 func profilesShareEffectiveState(a, b Profile, monitors []hypr.Monitor) bool {
+	a = withOmittedMonitorsDisabled(a, monitors)
+	b = withOmittedMonitorsDisabled(b, monitors)
 	a.Normalize()
 	b.Normalize()
 	if !outputsShareEffectiveState(a.Outputs, b.Outputs) {
@@ -197,6 +245,29 @@ func profilesShareEffectiveState(a, b Profile, monitors []hypr.Monitor) bool {
 		}
 	}
 	return true
+}
+
+func withOmittedMonitorsDisabled(p Profile, monitors []hypr.Monitor) Profile {
+	omitted := OmittedMonitors(p, monitors)
+	if len(omitted) == 0 {
+		return p
+	}
+
+	matchCounts := hypr.MonitorMatchCounts(monitors)
+	p.Outputs = append([]OutputConfig(nil), p.Outputs...)
+	for _, monitor := range omitted {
+		p.Outputs = append(p.Outputs, OutputConfig{
+			Key:         hypr.MonitorOutputKey(monitor, matchCounts),
+			MatchKey:    monitor.HardwareKey(),
+			Name:        monitor.Name,
+			Description: monitor.Description,
+			Make:        monitor.Make,
+			Model:       monitor.Model,
+			Serial:      monitor.Serial,
+			Enabled:     false,
+		})
+	}
+	return p
 }
 
 func outputsShareEffectiveState(a, b []OutputConfig) bool {

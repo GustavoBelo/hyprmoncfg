@@ -91,6 +91,8 @@ hyprmoncfg confirms that Hyprland loads the generated monitor file. This catches
 
 hyprmoncfg adds the include itself, at the end of your root config, and moves it back to the end if something is appended after it. Loading last is what makes the applied layout final: any monitor rule read afterwards would override it. `hyprmoncfg doctor` reports the current state and `--fix` settles it on demand.
 
+Saved profiles are authoritative for the connected monitor set. When a connected output is absent from the selected profile, the generated file writes an explicit disabled rule for it. This overrides an earlier wildcard such as Omarchy's preferred/automatic monitor default instead of letting that default leave an unwanted display enabled.
+
 The Lua include resolves its own path at load time:
 
 ```lua

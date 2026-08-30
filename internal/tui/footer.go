@@ -47,7 +47,10 @@ func (m Model) footerHelpText() string {
 		}
 		return "`drag/arrows` move | `[ ]` monitors | `Tab` pane | `Enter` edit | `a` apply | `s` save | `?` keys"
 	case tabProfiles:
-		return "`Enter` load | `a` apply | `e` exec | `d` delete | `s` save | `?` keys"
+		if m.profileAutomatic() {
+			return "`↑↓` browse | `Space` manual mode | `l` edit | `e` exec | `d` delete | `?` keys"
+		}
+		return "`↑↓` browse | `Enter` apply | `Space` automatic | `l` edit | `e` exec | `d` delete | `?` keys"
 	case tabWorkspaces:
 		return "`↑↓` select | `←→` adjust | `a` apply | `s` save | `?` keys"
 	case tabCouch:

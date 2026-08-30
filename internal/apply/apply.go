@@ -74,6 +74,9 @@ func CommandsForProfile(p profile.Profile, monitors []hypr.Monitor) ([]string, e
 
 	resolver := profile.NewMonitorResolver(monitors)
 	matched, matchedByKey := resolveProfileOutputs(p, resolver)
+	if len(matched) == 0 {
+		return nil, fmt.Errorf("profile %q does not match any connected monitor", p.Name)
+	}
 
 	commands := make([]string, 0, len(matched))
 	for _, item := range matched {
@@ -84,6 +87,9 @@ func CommandsForProfile(p profile.Profile, monitors []hypr.Monitor) ([]string, e
 			}
 		}
 		commands = append(commands, render.CommandForOutput(item.monitor.Name, item.config, mirrorTarget))
+	}
+	for _, monitor := range profile.OmittedMonitors(p, monitors) {
+		commands = append(commands, render.CommandForOutput(monitor.Name, profile.OutputConfig{Enabled: false}, ""))
 	}
 
 	if len(commands) == 0 {
@@ -608,40 +614,7 @@ func RenderConfig(p profile.Profile, monitors []hypr.Monitor, opts RenderOptions
 }
 
 func ValidateLayout(outputs []profile.OutputConfig) error {
-	type rect struct {
-		name string
-		x1   int
-		y1   int
-		x2   int
-		y2   int
-	}
-
-	rects := make([]rect, 0, len(outputs))
-	for _, output := range outputs {
-		if !output.Enabled || output.MirrorOf != "" {
-			continue
-		}
-		width, height := logicalOutputSize(output)
-		rects = append(rects, rect{
-			name: outputName(output),
-			x1:   output.X,
-			y1:   output.Y,
-			x2:   output.X + width,
-			y2:   output.Y + height,
-		})
-	}
-
-	for i := 0; i < len(rects); i++ {
-		for j := i + 1; j < len(rects); j++ {
-			if rects[i].x1 < rects[j].x2 &&
-				rects[i].x2 > rects[j].x1 &&
-				rects[i].y1 < rects[j].y2 &&
-				rects[i].y2 > rects[j].y1 {
-				return fmt.Errorf("layout overlaps: %s intersects %s", rects[i].name, rects[j].name)
-			}
-		}
-	}
-	return nil
+	return profile.ValidateLayout(outputs)
 }
 
 func ValidateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hypr.Monitor) error {
@@ -693,6 +666,13 @@ func ValidateAppliedProfile(p profile.Profile, before []hypr.Monitor, after []hy
 		}
 		// VRR validation skipped: hyprctl reports VRR as a boolean (active
 		// or not), not the configured mode (0/1/2).
+	}
+
+	for _, monitor := range profile.OmittedMonitors(p, before) {
+		applied, ok := afterResolver.Resolve(monitor.HardwareKey(), monitor.Name)
+		if ok && !applied.Disabled {
+			return fmt.Errorf("%s remained enabled even though it is not in profile %q", monitor.Name, p.Name)
+		}
 	}
 
 	return nil

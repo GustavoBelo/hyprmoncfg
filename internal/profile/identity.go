@@ -80,6 +80,32 @@ func (r MonitorResolver) SelectorForOutput(output OutputConfig, monitor hypr.Mon
 	return monitor.MonitorSelector()
 }
 
+// OmittedMonitors returns connected outputs a profile does not mention. A
+// profile is an authoritative layout, so these outputs are implicitly off.
+// Keeping this resolution here gives config rendering, live apply validation,
+// and active-profile detection one definition of "omitted".
+func OmittedMonitors(p Profile, monitors []hypr.Monitor) []hypr.Monitor {
+	p.Normalize()
+	resolver := NewMonitorResolver(monitors)
+	claimed := make(map[string]struct{}, len(p.Outputs))
+	for _, output := range p.Outputs {
+		monitor, ok := resolver.ResolveOutput(output)
+		if !ok {
+			continue
+		}
+		claimed[strings.ToLower(strings.TrimSpace(monitor.Name))] = struct{}{}
+	}
+
+	omitted := make([]hypr.Monitor, 0, len(monitors)-len(claimed))
+	for _, monitor := range monitors {
+		if _, ok := claimed[strings.ToLower(strings.TrimSpace(monitor.Name))]; ok {
+			continue
+		}
+		omitted = append(omitted, monitor)
+	}
+	return omitted
+}
+
 type outputIdentityEntry struct {
 	OldKey    string
 	MatchKey  string

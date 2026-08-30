@@ -51,9 +51,9 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 		groups = append(groups, keyGroup{
 			title: "Selected profile",
 			bindings: []keyBinding{
-				{"↑ ↓", "Select a profile"},
-				{"Enter", "Load it into the layout editor"},
-				{"a", "Apply it"},
+				{"↑ ↓, click", "Browse profiles and preview their saved setup"},
+				{"Enter, a", "Apply it (manual profile mode only)"},
+				{"l", "Load it into the layout editor"},
 				{"e", "Edit its exec command"},
 				{"d", "Delete it"},
 			},
