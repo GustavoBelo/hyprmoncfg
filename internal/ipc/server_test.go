@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -16,13 +17,17 @@ import (
 )
 
 type testHandler struct {
-	mu           sync.Mutex
-	document     appstatus.Document
-	preview      Transaction
-	previewErr   error
-	revertErr    error
-	managed      bool
-	disconnected []string
+	mu            sync.Mutex
+	document      appstatus.Document
+	preview       Transaction
+	previewErr    error
+	revertErr     error
+	managed       bool
+	couch         CouchState
+	couchStarted  []string
+	couchStopped  int
+	couchStartErr error
+	disconnected  []string
 }
 
 func (h *testHandler) Status() (appstatus.Document, error) { return h.document, nil }
@@ -40,6 +45,31 @@ func (h *testHandler) Manage() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.managed = true
+	return nil
+}
+
+func (h *testHandler) CouchStatus() (CouchState, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.couch, nil
+}
+
+func (h *testHandler) CouchStart(params CouchStartParams) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.couchStartErr != nil {
+		return h.couchStartErr
+	}
+	h.couchStarted = append(h.couchStarted, params.Trigger)
+	h.couch = CouchState{Phase: "playing", Active: true}
+	return nil
+}
+
+func (h *testHandler) CouchStop() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.couchStopped++
+	h.couch = CouchState{Phase: "idle"}
 	return nil
 }
 
@@ -321,5 +351,82 @@ func TestDispatchRoutesManageAndUnmanage(t *testing.T) {
 		if got != test.want {
 			t.Fatalf("after %s, managed = %v, want %v", test.method, got, test.want)
 		}
+	}
+}
+
+// The console session lives in the daemon, so every surface -- TUI, panel, CLI
+// -- drives it through these three methods rather than spawning its own
+// detached process and racing the others over the same displays.
+func TestCouchMethodsRoundTrip(t *testing.T) {
+	handler := &testHandler{}
+	_, path, _ := runTestServer(t, handler)
+	ctx := context.Background()
+	client, err := Dial(ctx, path)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	state, err := client.CouchStatus(ctx)
+	if err != nil {
+		t.Fatalf("CouchStatus: %v", err)
+	}
+	if state.Active {
+		t.Fatal("a fresh daemon must not report an active session")
+	}
+
+	if err := client.CouchStart(ctx, "the TUI"); err != nil {
+		t.Fatalf("CouchStart: %v", err)
+	}
+	handler.mu.Lock()
+	started := append([]string(nil), handler.couchStarted...)
+	handler.mu.Unlock()
+	if len(started) != 1 || started[0] != "the TUI" {
+		t.Fatalf("the trigger should reach the daemon, got %v", started)
+	}
+
+	if state, err = client.CouchStatus(ctx); err != nil || !state.Active {
+		t.Fatalf("expected an active session, got %+v err=%v", state, err)
+	}
+
+	if err := client.CouchStop(ctx); err != nil {
+		t.Fatalf("CouchStop: %v", err)
+	}
+	handler.mu.Lock()
+	stopped := handler.couchStopped
+	handler.mu.Unlock()
+	if stopped != 1 {
+		t.Fatalf("stop count = %d, want 1", stopped)
+	}
+}
+
+// Starting without a body is valid: the trigger is informational.
+func TestCouchStartAcceptsAnEmptyTrigger(t *testing.T) {
+	handler := &testHandler{}
+	_, path, _ := runTestServer(t, handler)
+	client, err := Dial(context.Background(), path)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+	if err := client.CouchStart(context.Background(), ""); err != nil {
+		t.Fatalf("CouchStart with no trigger: %v", err)
+	}
+}
+
+func TestCouchStartSurfacesTheDaemonsRefusal(t *testing.T) {
+	handler := &testHandler{couchStartErr: errors.New("monitor configuration is handed back to Hyprland")}
+	_, path, _ := runTestServer(t, handler)
+	client, dialErr := Dial(context.Background(), path)
+	if dialErr != nil {
+		t.Fatalf("dial: %v", dialErr)
+	}
+	defer client.Close()
+	err := client.CouchStart(context.Background(), "the panel")
+	if err == nil {
+		t.Fatal("a refusal must reach the caller")
+	}
+	if !strings.Contains(err.Error(), "handed back") {
+		t.Fatalf("the reason should survive the round trip, got %v", err)
 	}
 }

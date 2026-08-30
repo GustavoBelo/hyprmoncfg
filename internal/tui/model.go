@@ -19,6 +19,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
+	"github.com/crmne/hyprmoncfg/internal/config"
+	"github.com/crmne/hyprmoncfg/internal/couch"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
@@ -37,6 +39,7 @@ const (
 	modeModePicker
 	modeNumericInput
 	modeProfileExecInput
+	modeCouchAppPicker
 	modeKeybindings
 )
 
@@ -46,6 +49,7 @@ const (
 	tabLayout mainTab = iota
 	tabProfiles
 	tabWorkspaces
+	tabCouch
 )
 
 type layoutFocus int
@@ -63,17 +67,22 @@ const (
 )
 
 type refreshMsg struct {
-	monitors       []hypr.Monitor
-	profiles       []profile.Profile
-	workspaceRules []hypr.WorkspaceRule
-	workspaces     []hypr.WorkspaceState
-	lidState       lid.State
-	daemonOK       bool
-	daemonUnknown  bool
-	daemonVersion  string
-	daemonClient   *ipc.Client
-	background     bool
-	err            error
+	monitors        []hypr.Monitor
+	profiles        []profile.Profile
+	workspaceRules  []hypr.WorkspaceRule
+	workspaces      []hypr.WorkspaceState
+	lidState        lid.State
+	couchConfig     *couch.Config
+	couchSession    *couch.Session
+	couchStale      bool
+	couchManaged    bool
+	couchHDRCapable map[string]bool
+	daemonOK        bool
+	daemonUnknown   bool
+	daemonVersion   string
+	daemonClient    *ipc.Client
+	background      bool
+	err             error
 }
 
 type saveMsg struct {
@@ -284,6 +293,13 @@ type Model struct {
 	inspectorTab    inspectorTab
 	selectedProfile int
 
+	couchConfig     *couch.Config
+	couchSession    *couch.Session
+	couchStale      bool
+	couchManaged    bool
+	couchHDRCapable map[string]bool
+	couchSelected   int
+
 	pending       *pendingApply
 	revertGuard   *pendingRevertGuard
 	remoteGuard   *pendingRemoteGuard
@@ -292,6 +308,7 @@ type Model struct {
 	picker        *modePickerState
 	input         *numericInputState
 	execInput     *profileExecInputState
+	couchPicker   *couchAppPickerState
 	drag          *canvasDragState
 	toast         *toastState
 	snap          *snapHintState
@@ -409,6 +426,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workspaceRules = msg.workspaceRules
 		m.workspaces = msg.workspaces
 		m.lidState = msg.lidState
+		m.couchConfig = msg.couchConfig
+		if msg.couchSession != nil {
+			s := *msg.couchSession
+			m.couchSession = &s
+		} else {
+			m.couchSession = nil
+		}
+		m.couchStale = msg.couchStale
+		m.couchManaged = msg.couchManaged
+		if msg.couchHDRCapable != nil {
+			m.couchHDRCapable = msg.couchHDRCapable
+		}
 
 		reloadLive := len(m.editOutputs) == 0 || liveChanged || (!msg.background && !m.dirty)
 		if reloadLive {
@@ -599,6 +628,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNumericInputKeys(msg)
 		case modeProfileExecInput:
 			return m.updateProfileExecInputKeys(msg)
+		case modeCouchAppPicker:
+			return m.updateCouchAppPickerKeys(msg)
 		case modeKeybindings:
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -660,6 +691,13 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3":
 		m.tab = tabWorkspaces
 		return m, nil
+	case "4":
+		if !m.couchEnabled() {
+			m.setStatusErr("Couch Mode is off. Press c on the Layout tab to enable it.")
+			return m, nil
+		}
+		m.tab = tabCouch
+		return m, nil
 	case "?":
 		m.mode = modeKeybindings
 		return m, nil
@@ -706,12 +744,17 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateProfileKeys(msg)
 	case tabWorkspaces:
 		return m.updateWorkspaceKeys(msg)
+	case tabCouch:
+		return m.updateCouchKeys(msg)
 	default:
 		return m, nil
 	}
 }
 
 func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "c" {
+		return m.enableCouchFromLayout()
+	}
 	if len(m.editOutputs) == 0 {
 		return m, nil
 	}
@@ -915,6 +958,8 @@ func (m Model) View() string {
 		return m.renderModalScreen(m.renderNumericInput())
 	case modeProfileExecInput:
 		return m.renderModalScreen(m.renderProfileExecInput())
+	case modeCouchAppPicker:
+		return m.renderModalScreen(m.renderCouchAppPicker())
 	case modeKeybindings:
 		return m.renderModalScreen(m.renderKeybindings())
 	default:
@@ -941,6 +986,8 @@ func (m Model) renderMain() string {
 		body = m.renderProfilesView(bodyHeight)
 	case tabWorkspaces:
 		body = m.renderWorkspaceView(bodyHeight)
+	case tabCouch:
+		body = m.renderCouchView(bodyHeight)
 	}
 	body = lipgloss.NewStyle().Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
 
@@ -968,6 +1015,9 @@ func (m Model) renderMain() string {
 
 func (m Model) renderTabs() string {
 	labels := []string{"Layout", "Profiles", "Workspaces"}
+	if m.couchEnabled() {
+		labels = append(labels, "Couch Mode")
+	}
 	parts := make([]string, 0, len(labels)*2+1)
 	lineStyle := withFG(lipgloss.NewStyle(), m.styles.palette.paneBorder)
 	parts = append(parts, lineStyle.Render("─"))
@@ -1027,14 +1077,23 @@ func (m Model) renderCanvasPane(width int, height int) string {
 }
 
 func (m Model) canvasPaneMeta() string {
+	parts := make([]string, 0, 2)
 	switch m.lidState {
 	case lid.Open:
-		return "Lid: open"
+		parts = append(parts, "Lid: open")
 	case lid.Closed:
-		return "Lid: closed"
-	default:
-		return ""
+		parts = append(parts, "Lid: closed")
 	}
+	if !m.couchEnabled() && m.twoMonitorsLive() {
+		parts = append(parts, m.styles.warning.Render("Couch Mode setup: press c"))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// twoMonitorsLive reports whether Hyprland currently reports at least two
+// displays; Couch Mode setup only makes sense with a TV plus a desk screen.
+func (m Model) twoMonitorsLive() bool {
+	return len(m.monitors) >= 2
 }
 
 func (m Model) renderCanvas(width, height int) string {
@@ -2566,6 +2625,9 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
 		profiles, err := store.List()
+		// The console layout is generated and edited on the Couch tab; showing
+		// it here would invite freehand edits that defeat its constraints.
+		profiles = profile.SelectableProfiles(profiles)
 		if err != nil {
 			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, daemonClient: replacement, background: background, err: err}
 		}
@@ -2582,17 +2644,39 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			lidState = lid.Unknown
 		}
 
+		var couchConfig *couch.Config
+		if cfg, err := couch.LoadConfig(filepath.Dir(store.Dir())); err == nil {
+			couchConfig = &cfg
+		}
+		couchManaged := config.IsManaged(filepath.Dir(store.Dir()))
+		couchHDRCapable := hypr.HDRCapableConnectors()
+		var couchSession *couch.Session
+		var couchStale bool
+		if stateDir, err := couch.StateDir(); err == nil {
+			if session, running := couch.RunningSession(stateDir); running {
+				couchSession = &session
+			} else if session, stale := couch.StaleSession(stateDir); stale {
+				couchSession = &session
+				couchStale = true
+			}
+		}
+
 		return refreshMsg{
-			monitors:       monitors,
-			profiles:       profiles,
-			workspaceRules: workspaceRules,
-			workspaces:     workspaces,
-			lidState:       lidState,
-			daemonOK:       daemonOK,
-			daemonUnknown:  daemonUnknown,
-			daemonVersion:  daemonVersion,
-			daemonClient:   replacement,
-			background:     background,
+			monitors:        monitors,
+			profiles:        profiles,
+			workspaceRules:  workspaceRules,
+			workspaces:      workspaces,
+			lidState:        lidState,
+			couchConfig:     couchConfig,
+			couchSession:    couchSession,
+			couchStale:      couchStale,
+			couchManaged:    couchManaged,
+			couchHDRCapable: couchHDRCapable,
+			daemonOK:        daemonOK,
+			daemonUnknown:   daemonUnknown,
+			daemonVersion:   daemonVersion,
+			daemonClient:    replacement,
+			background:      background,
 		}
 	}
 }

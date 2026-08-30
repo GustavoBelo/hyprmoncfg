@@ -34,7 +34,36 @@ const (
 	MethodDelete    = "delete"
 	MethodManage    = "manage"
 	MethodUnmanage  = "unmanage"
+
+	// Couch mode. The session lives in the daemon, so the TUI, the panel and
+	// the CLI all drive it from here rather than each spawning their own
+	// detached process and racing over the same displays.
+	MethodCouchStatus = "couch.status"
+	MethodCouchStart  = "couch.start"
+	MethodCouchStop   = "couch.stop"
 )
+
+// CouchStartParams says what asked for the session, which lands in the log.
+type CouchStartParams struct {
+	Trigger string `json:"trigger,omitempty"`
+}
+
+// CouchState is the daemon's answer about the console session.
+type CouchState struct {
+	Phase       string `json:"phase"`
+	Active      bool   `json:"active"`
+	StartedAt   string `json:"started_at,omitempty"`
+	Duration    string `json:"duration,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Controllers int    `json:"controllers"`
+	Enabled     bool   `json:"enabled"`
+	Configured  bool   `json:"configured"`
+	Managed     bool   `json:"managed"`
+	TVName      string `json:"tv_name,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	HDR         bool   `json:"hdr,omitempty"`
+	VRR         bool   `json:"vrr,omitempty"`
+}
 
 const EventStatus = "status"
 
@@ -109,5 +138,11 @@ type Handler interface {
 	// take the include out, or the next monitor event puts it straight back.
 	Manage() error
 	Unmanage() error
+	// CouchStatus, CouchStart and CouchStop drive the console session. The
+	// daemon owns it so it survives the TUI closing and can be reconciled if
+	// the daemon itself is killed.
+	CouchStatus() (CouchState, error)
+	CouchStart(params CouchStartParams) error
+	CouchStop() error
 	Disconnect(owner string)
 }

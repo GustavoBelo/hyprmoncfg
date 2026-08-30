@@ -20,7 +20,33 @@ type EventType string
 const (
 	EventMonitorAdded   EventType = "monitoradded"
 	EventMonitorRemoved EventType = "monitorremoved"
+	EventWindowOpened   EventType = "openwindow"
+	EventWindowClosed   EventType = "closewindow"
+	EventWindowTitle    EventType = "windowtitle"
+	EventConfigReloaded EventType = "configreloaded"
 )
+
+// eventNames maps Hyprland's socket2 event names onto the types above.
+//
+// The lookup is exact on purpose. Matching by prefix used to fold
+// "activewindowv2" into "activewindow" and, worse, let every window event reach
+// the monitor subscription, so the daemon re-derived the layout on each focus
+// change. The v2 spellings that genuinely mean the same thing are listed here
+// instead, which keeps monitoraddedv2 working without opening that door again.
+var eventNames = map[string]EventType{
+	"monitoradded":     EventMonitorAdded,
+	"monitoraddedv2":   EventMonitorAdded,
+	"monitorremoved":   EventMonitorRemoved,
+	"monitorremovedv2": EventMonitorRemoved,
+	"openwindow":       EventWindowOpened,
+	"closewindow":      EventWindowClosed,
+	"windowtitle":      EventWindowTitle,
+	"windowtitlev2":    EventWindowTitle,
+	"configreloaded":   EventConfigReloaded,
+}
+
+// MonitorEventTypes are the events that change which displays exist.
+var MonitorEventTypes = []EventType{EventMonitorAdded, EventMonitorRemoved}
 
 type Event struct {
 	Type  EventType
@@ -353,7 +379,21 @@ func (c *Client) socket2Path(ctx context.Context) (string, error) {
 	return filepath.Join(runtimeDir, "hypr", sig, ".socket2.sock"), nil
 }
 
+// SubscribeMonitorEvents reports only the events that change which displays
+// exist. The daemon acts on every event it receives, so widening this feed
+// makes it re-derive the layout for unrelated activity.
 func (c *Client) SubscribeMonitorEvents(ctx context.Context) (<-chan Event, <-chan error) {
+	return c.SubscribeEvents(ctx, MonitorEventTypes...)
+}
+
+// SubscribeEvents streams the named Hyprland events. Passing none streams every
+// event the parser recognises.
+func (c *Client) SubscribeEvents(ctx context.Context, types ...EventType) (<-chan Event, <-chan error) {
+	wanted := make(map[EventType]struct{}, len(types))
+	for _, t := range types {
+		wanted[t] = struct{}{}
+	}
+
 	events := make(chan Event)
 	errorsCh := make(chan error, 1)
 
@@ -385,6 +425,11 @@ func (c *Client) SubscribeMonitorEvents(ctx context.Context) (<-chan Event, <-ch
 			if !ok {
 				continue
 			}
+			if len(wanted) > 0 {
+				if _, want := wanted[event.Type]; !want {
+					continue
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -408,13 +453,11 @@ func parseEvent(line string) (Event, bool) {
 	typeName := strings.TrimSpace(parts[0])
 	value := strings.TrimSpace(parts[1])
 
-	switch {
-	case strings.HasPrefix(typeName, string(EventMonitorAdded)):
-		return Event{Type: EventMonitorAdded, Value: value, Raw: line}, true
-	case strings.HasPrefix(typeName, string(EventMonitorRemoved)):
-		return Event{Type: EventMonitorRemoved, Value: value, Raw: line}, true
+	eventType, ok := eventNames[typeName]
+	if !ok {
+		return Event{}, false
 	}
-	return Event{}, false
+	return Event{Type: eventType, Value: value, Raw: line}, true
 }
 
 func versionAtLeast(value string, wantMajor, wantMinor, wantPatch int) bool {
@@ -455,4 +498,38 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+// OptionValue is one Hyprland config option as `hyprctl getoption -j` reports
+// it. Only the field matching the option's type is filled.
+type OptionValue struct {
+	Option string  `json:"option"`
+	Int    int     `json:"int"`
+	Float  float64 `json:"float"`
+	Str    string  `json:"str"`
+	Bool   bool    `json:"bool"`
+	Set    bool    `json:"set"`
+}
+
+// Option reads a live Hyprland config option.
+//
+// There is deliberately no setter. On Hyprland's Lua config parser (0.5x+)
+// `hyprctl keyword` answers "keyword can't work with non-legacy parsers" and
+// still exits 0, and the Lua hl.config() is accepted and then ignored, so any
+// runtime setter would be a silent no-op. Options that matter to a console
+// session are reported to the user to set in their own config instead.
+func (c *Client) Option(ctx context.Context, name string) (OptionValue, error) {
+	cmd, err := c.commandContext(ctx, "getoption", name, "-j")
+	if err != nil {
+		return OptionValue{}, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return OptionValue{}, fmt.Errorf("failed to read option %s: %w", name, err)
+	}
+	var value OptionValue
+	if err := json.Unmarshal(out, &value); err != nil {
+		return OptionValue{}, fmt.Errorf("failed to decode option %s: %w", name, err)
+	}
+	return value, nil
 }

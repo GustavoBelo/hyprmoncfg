@@ -7,3 +7,7 @@ dist/
 .DS_Store
 hyprmoncfg
 hyprmoncfgd
+# The pattern above also matches the cmd/hyprmoncfg directory, which would
+# silently ignore its sources; re-include them (built binaries inside still
+# match the name pattern).
+!cmd/hyprmoncfg/

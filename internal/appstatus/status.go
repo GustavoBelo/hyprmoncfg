@@ -17,6 +17,26 @@ type Document struct {
 	RecommendedProfile *ProfileMatch     `json:"recommended_profile"`
 	Profiles           []ProfileSummary  `json:"profiles"`
 	Monitors           []MonitorSummary  `json:"monitors"`
+	// Couch describes console mode. It rides the status document so panels get
+	// it pushed over the connection they already hold, instead of shelling out
+	// to `hyprmoncfg couch status` on a timer.
+	Couch *Couch `json:"couch,omitempty"`
+}
+
+// Couch is what a panel needs to show and drive console mode.
+type Couch struct {
+	Enabled     bool   `json:"enabled"`
+	Configured  bool   `json:"configured"`
+	Managed     bool   `json:"managed"`
+	Active      bool   `json:"active"`
+	Phase       string `json:"phase,omitempty"`
+	Duration    string `json:"duration,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+	Controllers int    `json:"controllers"`
+	TVName      string `json:"tv_name,omitempty"`
+	Mode        string `json:"mode,omitempty"`
+	HDR         bool   `json:"hdr,omitempty"`
+	VRR         bool   `json:"vrr,omitempty"`
 }
 
 type Daemon struct {

@@ -91,6 +91,24 @@ func (c *Client) Unmanage(ctx context.Context) error {
 	return c.call(ctx, MethodUnmanage, nil, nil)
 }
 
+// CouchStatus asks the daemon about the console session.
+func (c *Client) CouchStatus(ctx context.Context) (CouchState, error) {
+	var state CouchState
+	err := c.call(ctx, MethodCouchStatus, nil, &state)
+	return state, err
+}
+
+// CouchStart enters console mode. It returns once the layout is up and Big
+// Picture has been asked for; the session continues in the daemon.
+func (c *Client) CouchStart(ctx context.Context, trigger string) error {
+	return c.call(ctx, MethodCouchStart, CouchStartParams{Trigger: trigger}, nil)
+}
+
+// CouchStop ends the session and puts the desktop back.
+func (c *Client) CouchStop(ctx context.Context) error {
+	return c.call(ctx, MethodCouchStop, nil, nil)
+}
+
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	if c == nil || c.conn == nil {
 		return errors.New("IPC client is not connected")

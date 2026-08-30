@@ -118,7 +118,11 @@ func MatchScore(p Profile, monitors []hypr.Monitor) int {
 	return EvaluateMatch(p, monitors).Score
 }
 
+// BestMatch picks the profile that best describes the connected displays.
+// Generated profiles never take part: the console layout must only ever be
+// applied because a session asked for it.
 func BestMatch(profiles []Profile, monitors []hypr.Monitor) (Profile, int, bool) {
+	profiles = SelectableProfiles(profiles)
 	type candidate struct {
 		profile Profile
 		score   int
@@ -144,6 +148,7 @@ func BestMatch(profiles []Profile, monitors []hypr.Monitor) (Profile, int, bool)
 }
 
 func ExactStateMatch(profiles []Profile, monitors []hypr.Monitor, rules []hypr.WorkspaceRule) (Profile, bool) {
+	profiles = SelectableProfiles(profiles)
 	if len(profiles) == 0 || len(monitors) == 0 {
 		return Profile{}, false
 	}
@@ -240,7 +245,7 @@ func outputConfigsShareEffectiveState(a, b OutputConfig) bool {
 		stateScalesEqual(a.Width, a.Height, a.Scale, b.Scale) &&
 		a.Transform == b.Transform &&
 		effectiveBitdepth(a.Bitdepth) == effectiveBitdepth(b.Bitdepth) &&
-		effectiveCM(a.CM) == effectiveCM(b.CM) &&
+		colorPresetsAgree(a.CM, b.CM) &&
 		effectiveSDRMultiplier(a.SDRBrightness) == effectiveSDRMultiplier(b.SDRBrightness) &&
 		effectiveSDRMultiplier(a.SDRSaturation) == effectiveSDRMultiplier(b.SDRSaturation) &&
 		a.SDRMinLuminance == b.SDRMinLuminance &&
@@ -260,6 +265,25 @@ func effectiveCM(value string) string {
 		return "srgb"
 	}
 	return value
+}
+
+// colorPresetsAgree compares a requested colour preset against a live one.
+//
+// "auto" is a request, not a result: Hyprland resolves it to a concrete preset
+// and reports that back, so a profile saved with cm = auto -- which is what
+// hyprmoncfg itself writes for an ordinary SDR display -- could never match its
+// own applied state under a string comparison. That is enough to make
+// ExactStateMatch never fire, leaving BestMatch to impose a different profile
+// over a desktop that needed no change at all.
+func colorPresetsAgree(a, b string) bool {
+	if isAutoColorPreset(a) || isAutoColorPreset(b) {
+		return true
+	}
+	return effectiveCM(a) == effectiveCM(b)
+}
+
+func isAutoColorPreset(value string) bool {
+	return strings.EqualFold(strings.TrimSpace(value), "auto")
 }
 
 func effectiveSDRMultiplier(value float64) float64 {

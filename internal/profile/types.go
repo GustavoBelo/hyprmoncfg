@@ -70,12 +70,37 @@ type WorkspaceSettings struct {
 }
 
 type Profile struct {
-	Name       string            `json:"name"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	// ManagedBy names the feature that generates and owns this profile, empty
+	// for the user's own. A generated profile is applied only when that feature
+	// asks for it: it is excluded from automatic matching, because a console
+	// layout that switched itself on at the next hotplug would be a bug, and
+	// hidden from the profile list, because editing it freehand would defeat
+	// the constraints it is generated under.
+	ManagedBy  string            `json:"managed_by,omitempty"`
 	Outputs    []OutputConfig    `json:"outputs"`
 	Workspaces WorkspaceSettings `json:"workspaces,omitempty"`
 	Exec       string            `json:"exec"`
+}
+
+// Generated reports whether a feature owns this profile rather than the user.
+func (p Profile) Generated() bool {
+	return strings.TrimSpace(p.ManagedBy) != ""
+}
+
+// SelectableProfiles drops generated profiles, leaving what automatic matching
+// and the profile list may consider.
+func SelectableProfiles(profiles []Profile) []Profile {
+	selectable := make([]Profile, 0, len(profiles))
+	for _, p := range profiles {
+		if p.Generated() {
+			continue
+		}
+		selectable = append(selectable, p)
+	}
+	return selectable
 }
 
 func New(name string, outputs []OutputConfig) Profile {

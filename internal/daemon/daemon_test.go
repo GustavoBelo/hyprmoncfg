@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/config"
+	"github.com/crmne/hyprmoncfg/internal/couch"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -251,6 +252,56 @@ func TestApplyBestUsesSavedProfileBeforeInternalFallback(t *testing.T) {
 	}
 }
 
+// When the live layout already matches exactly one saved profile, startup
+// must adopt it silently instead of letting BestMatch's alphabetical
+// tie-break impose an unrelated profile over an unchanged desk.
+func TestApplyBestAdoptsExactStateMatchWithoutApplying(t *testing.T) {
+	monitorsJSON := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"dpmsStatus":true,"disabled":false,"mirrorOf":""}]`
+	env := newApplyBestTestEnvWithMonitors(t, monitorsJSON, monitorsJSON)
+	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
+
+	// "alpha" sorts before "zulu" and wins the old tie-break, but only zulu
+	// describes the display as it currently sits.
+	for name, x := range map[string]int{"alpha": 500, "zulu": 0} {
+		if err := env.store.Save(profile.New(name, []profile.OutputConfig{{
+			Key:     mon.HardwareKey(),
+			Name:    mon.Name,
+			Enabled: true,
+			Width:   2880,
+			Height:  1800,
+			Refresh: 120,
+			X:       x,
+			Y:       0,
+			Scale:   1.5,
+		}})); err != nil {
+			t.Fatalf("save profile %s: %v", name, err)
+		}
+	}
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	if got := reloadCount(env.logPath); got != 0 {
+		t.Fatalf("an exact state match must not touch displays, reload count = %d", got)
+	}
+	if !strings.Contains(svc.applied, "zulu|") {
+		t.Fatalf("expected the exact-matching profile to become the active one, applied=%q", svc.applied)
+	}
+
+	// A follow-up event for the same state stays a no-op as well.
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("second applyBest returned error: %v", err)
+	}
+	if got := reloadCount(env.logPath); got != 0 {
+		t.Fatalf("steady state must not reload, reload count = %d", got)
+	}
+}
+
 func TestApplyBestDefersWhileDisplaysSleep(t *testing.T) {
 	sleeping := `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":0,"y":0,"scale":1.5,"transform":0,"dpmsStatus":false,"disabled":false,"mirrorOf":""}]`
 	env := newApplyBestTestEnvWithMonitors(t, sleeping, sleeping)
@@ -384,6 +435,9 @@ exit 1
 		EventRetry:      time.Hour,
 		MonitorsConf:    monitorsConfPath,
 		HyprConfig:      hyprlandConfigPath,
+		// Pin the profile so selection mechanics stay out of the way of the
+		// sleep/hotplug choreography under test.
+		ForcedProfile: "Home",
 	})
 	go func() { done <- svc.Run(ctx) }()
 	defer func() {
@@ -569,6 +623,10 @@ exit 1
 		MonitorsConf:    monitorsConfPath,
 		HyprConfig:      hyprlandConfigPath,
 		Logf:            logs.logf,
+		// These tests exercise the mechanics after profile selection; pin the
+		// choice so the exact-match adoption does not turn startup into a
+		// no-op when the fake desktop already sits on the saved layout.
+		ForcedProfile: "Home",
 	})
 
 	var lidMu sync.Mutex
@@ -1108,5 +1166,45 @@ func TestApplyBestRecoversFromABlackScreenBesideHyprlandsFallbackHead(t *testing
 	// Hyprland's invented head must never reach the generated config.
 	if strings.Contains(rendered, "FALLBACK") {
 		t.Fatalf("the synthetic head was written into the config:\n%s", rendered)
+	}
+}
+
+// A couch session owns the displays while it runs; automatic switching must
+// not write over the TV layout the user is playing on.
+func TestApplyBestDefersWhileCouchSessionIsActive(t *testing.T) {
+	env := newApplyBestTestEnv(t, `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":100,"y":200,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`)
+	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
+
+	if err := env.store.Save(profile.New("desk", []profile.OutputConfig{{
+		Key: mon.HardwareKey(), Name: mon.Name, Enabled: true,
+		Width: 2880, Height: 1800, Refresh: 120, X: 100, Y: 200, Scale: 2,
+	}})); err != nil {
+		t.Fatalf("save profile: %v", err)
+	}
+
+	svc := New(env.client, env.store, Config{
+		MonitorsConf: env.monitorsConfPath,
+		HyprConfig:   env.hyprlandConfigPath,
+	})
+	// The controller is the daemon's own state now, not a callback it is told
+	// about from outside.
+	svc.couch.setPhase(couch.PhasePlaying)
+
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest returned error: %v", err)
+	}
+
+	rendered := readMonitorsConf(t, env)
+	if strings.Contains(rendered, "position = 100x200") {
+		t.Fatalf("applyBest applied a profile while a couch session is active:\n%s", rendered)
+	}
+
+	// Once the session ends, normal switching resumes.
+	svc.couch.setPhase(couch.PhaseIdle)
+	if err := svc.applyBest(context.Background()); err != nil {
+		t.Fatalf("applyBest after the session: %v", err)
+	}
+	if rendered := readMonitorsConf(t, env); !strings.Contains(rendered, "position = 100x200") {
+		t.Fatalf("automatic switching should resume once the session ends:\n%s", rendered)
 	}
 }

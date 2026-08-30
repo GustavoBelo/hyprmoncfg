@@ -13,6 +13,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
+	"github.com/crmne/hyprmoncfg/internal/couch"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -37,6 +38,9 @@ func (s *Service) Status() (appstatus.Document, error) {
 	if err != nil {
 		return appstatus.Document{}, err
 	}
+	// Panels and the TUI offer these for the user to apply; the generated
+	// console layout is not theirs to pick.
+	profiles = profile.SelectableProfiles(profiles)
 	monitors, err := s.client.Monitors(ctx)
 	if err != nil {
 		return appstatus.Document{}, err
@@ -47,6 +51,22 @@ func (s *Service) Status() (appstatus.Document, error) {
 	}
 	document := appstatus.Build(buildinfo.Version, true, profiles, monitors, rules)
 	document.Daemon.Unmanaged = !config.IsManaged(s.cfg.ConfigDir)
+	if state, err := s.CouchStatus(); err == nil && (state.Enabled || state.Active) {
+		document.Couch = &appstatus.Couch{
+			Enabled:     state.Enabled,
+			Configured:  state.Configured,
+			Managed:     state.Managed,
+			Active:      state.Active,
+			Phase:       state.Phase,
+			Duration:    state.Duration,
+			Reason:      state.Reason,
+			Controllers: state.Controllers,
+			TVName:      state.TVName,
+			Mode:        state.Mode,
+			HDR:         state.HDR,
+			VRR:         state.VRR,
+		}
+	}
 	return document, nil
 }
 
@@ -321,4 +341,49 @@ func transactionID() (string, error) {
 		return "", fmt.Errorf("generate transaction id: %w", err)
 	}
 	return hex.EncodeToString(token[:]), nil
+}
+
+// CouchStatus, CouchStart and CouchStop expose the console session over IPC.
+//
+// Everything that used to spawn `hyprmoncfg couch play` as a detached child --
+// the TUI, the Omarchy panel, the CLI -- comes through here instead, so there
+// is exactly one session and exactly one writer.
+func (s *Service) CouchStatus() (ipc.CouchState, error) {
+	status := s.couch.Status()
+	state := ipc.CouchState{
+		Phase:       string(status.Phase),
+		Active:      status.Active,
+		Duration:    status.Duration,
+		Reason:      status.Reason,
+		Controllers: status.Controllers,
+		Managed:     config.IsManaged(s.cfg.ConfigDir),
+	}
+	if !status.StartedAt.IsZero() {
+		state.StartedAt = status.StartedAt.Format(time.RFC3339)
+	}
+	cfg, err := couch.LoadConfig(s.cfg.ConfigDir)
+	if err != nil {
+		return state, nil
+	}
+	state.Enabled = cfg.Enabled
+	state.Configured = cfg.Configured()
+	state.TVName = cfg.Layout.TVName
+	state.Mode = cfg.Layout.Mode
+	state.HDR = cfg.Layout.HDR
+	state.VRR = cfg.Layout.VRR
+	return state, nil
+}
+
+func (s *Service) CouchStart(params ipc.CouchStartParams) error {
+	trigger := strings.TrimSpace(params.Trigger)
+	if trigger == "" {
+		trigger = "a request over IPC"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	return s.couch.Start(ctx, trigger)
+}
+
+func (s *Service) CouchStop() error {
+	return s.couch.Stop()
 }

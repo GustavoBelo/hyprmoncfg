@@ -28,6 +28,11 @@ func (s *Store) Ensure() error {
 	return os.MkdirAll(s.dir, 0o755)
 }
 
+// Dir exposes the profiles directory; its parent is the hyprmoncfg base dir.
+func (s *Store) Dir() string {
+	return s.dir
+}
+
 func (s *Store) List() ([]Profile, error) {
 	if err := s.Ensure(); err != nil {
 		return nil, err

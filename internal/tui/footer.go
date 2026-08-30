@@ -50,6 +50,8 @@ func (m Model) footerHelpText() string {
 		return "`Enter` load | `a` apply | `e` exec | `d` delete | `s` save | `?` keys"
 	case tabWorkspaces:
 		return "`↑↓` select | `←→` adjust | `a` apply | `s` save | `?` keys"
+	case tabCouch:
+		return "`↑↓` select | `←→` adjust | `p` play | `v` back to desk | `e` choose apps | `x` disable | `?` keys"
 	default:
 		return ""
 	}

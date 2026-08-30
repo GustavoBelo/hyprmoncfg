@@ -223,6 +223,19 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		err = s.Handler.Manage()
 	case MethodUnmanage:
 		err = s.Handler.Unmanage()
+	case MethodCouchStatus:
+		result, err = s.Handler.CouchStatus()
+	case MethodCouchStart:
+		var params CouchStartParams
+		// A trigger is informational, so an empty body is fine here.
+		if len(request.Params) > 0 {
+			err = decodeParams(request.Params, &params)
+		}
+		if err == nil {
+			err = s.Handler.CouchStart(params)
+		}
+	case MethodCouchStop:
+		err = s.Handler.CouchStop()
 	default:
 		err = fmt.Errorf("unknown IPC method %q", request.Method)
 	}

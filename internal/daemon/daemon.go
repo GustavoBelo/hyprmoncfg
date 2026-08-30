@@ -55,6 +55,8 @@ type Service struct {
 	lidState      lid.State
 	lidSupported  bool
 
+	couch *couchController
+
 	readLid      func(context.Context) (lid.State, error)
 	watchLid     func(context.Context, time.Duration) (<-chan lid.State, <-chan error)
 	watchSuspend func(context.Context) <-chan bool
@@ -142,7 +144,7 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 	if cfg.Logf == nil {
 		cfg.Logf = func(string, ...any) {}
 	}
-	return &Service{
+	svc := &Service{
 		client: client,
 		store:  store,
 		engine: apply.Engine{
@@ -157,6 +159,8 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 		watchLid:     lid.Watch,
 		watchSuspend: suspend.Watch,
 	}
+	svc.couch = newCouchController(svc)
+	return svc
 }
 
 func (s *Service) Run(ctx context.Context) error {
@@ -167,6 +171,13 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	s.ensureConfigInclude(ctx)
+
+	// A session whose process died still owns the displays until someone puts
+	// them back. Do it before the first applyBest, so automatic matching does
+	// not see the TV layout and adopt it as the desktop.
+	if s.couch != nil {
+		s.couch.Reconcile(ctx)
+	}
 
 	type trigger struct {
 		reason string
@@ -195,7 +206,15 @@ func (s *Service) Run(ctx context.Context) error {
 
 	suspendEvents := s.watchSuspend(ctx)
 
-	events, eventErrs := s.client.SubscribeMonitorEvents(ctx)
+	// One socket2 connection carries both jobs, dispatched by type below.
+	// Two subscriptions would mean two connections to the same socket, and
+	// which one received a given event would depend on connect order.
+	daemonEventTypes := append(append([]hypr.EventType(nil), hypr.MonitorEventTypes...),
+		hypr.EventWindowOpened, hypr.EventWindowTitle, hypr.EventWindowClosed)
+	events, eventErrs := s.client.SubscribeEvents(ctx, daemonEventTypes...)
+
+	couchPoll := time.NewTicker(3 * time.Second)
+	defer couchPoll.Stop()
 	var eventRetry <-chan time.Time
 	scheduleEventRetry := func() {
 		if eventRetry == nil {
@@ -261,6 +280,16 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 				continue
 			}
+			// Window activity feeds couch mode only. Letting it reach
+			// scheduleMonitorTrigger is what made the daemon re-derive the
+			// layout on every window that opened or changed title.
+			if isWindowEvent(ev.Type) {
+				if s.couch != nil {
+					s.couch.observeWindowEvent(ctx, ev)
+				}
+				continue
+			}
+
 			reason := string(ev.Type) + ":" + ev.Value
 			monitors, err := s.client.Monitors(ctx)
 			if err != nil {
@@ -286,10 +315,16 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 			}
 			scheduleMonitorTrigger(reason)
+		case <-couchPoll.C:
+			// Controller hotplug has no Hyprland event, so it is polled --
+			// cheaply, straight from sysfs, and only while idle.
+			if s.couch != nil {
+				s.couch.observeControllers(ctx)
+			}
 		case <-eventRetry:
 			eventRetry = nil
 			if events == nil && eventErrs == nil {
-				events, eventErrs = s.client.SubscribeMonitorEvents(ctx)
+				events, eventErrs = s.client.SubscribeEvents(ctx, daemonEventTypes...)
 			}
 		case sleeping, ok := <-suspendEvents:
 			if !ok {
@@ -503,6 +538,10 @@ func (s *Service) applyBest(ctx context.Context) error {
 		s.cfg.Logf("automatic switching paused during interactive preview")
 		return nil
 	}
+	if s.couch != nil && s.couch.Active() {
+		s.cfg.Logf("automatic switching paused while a couch session holds the displays")
+		return nil
+	}
 	// Monitor configuration was handed back to Hyprland. Applying anything here
 	// would also put the include back, undoing the hand-back on the next event.
 	if !config.IsManaged(s.cfg.ConfigDir) {
@@ -542,6 +581,21 @@ func (s *Service) applyBest(ctx context.Context) error {
 		profiles, err := s.store.List()
 		if err != nil {
 			return err
+		}
+		// When the live layout already matches exactly one saved profile,
+		// adopt it instead of re-deriving a winner. On startup nothing is
+		// recorded in s.applied, and BestMatch would otherwise impose its
+		// alphabetical pick over a desk that needs no change.
+		if s.lidState != lid.Closed {
+			if rules, rulesErr := s.client.WorkspaceRules(ctx); rulesErr == nil {
+				if match, matched := profile.ExactStateMatch(profiles, monitors, rules); matched {
+					s.cfg.Logf("current layout matches profile %q; no change needed", match.Name)
+					s.applied = match.Name + "|" + hash + "|lid=" + string(s.lidState)
+					s.lastSeenHash = hash
+					s.signalChange()
+					return nil
+				}
+			}
 		}
 		best, score, ok := profile.BestMatch(profiles, monitors)
 		if !ok {
@@ -703,4 +757,35 @@ func allDisabledFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool)
 	fallback.Workspaces = profile.WorkspaceSettings{}
 	fallback.Normalize()
 	return fallback, true
+}
+
+// applyProfileLocked applies a profile through the same engine, write lock and
+// revert path as everything else the daemon does.
+//
+// Couch mode used to reach around this with its own copy of the apply logic in
+// the CLI, which is how a session and the daemon ended up writing the monitor
+// config at the same time.
+func (s *Service) applyProfileLocked(ctx context.Context, p profile.Profile) error {
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+
+	monitors, err := s.client.Monitors(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := s.engine.Apply(ctx, p, monitors, apply.ApplyModeNonInteractive); err != nil {
+		return err
+	}
+	s.applied = p.Name + "|couch"
+	return nil
+}
+
+// isWindowEvent separates the couch-mode feed from the monitor feed. They share
+// one socket2 connection, so the split has to happen here.
+func isWindowEvent(t hypr.EventType) bool {
+	switch t {
+	case hypr.EventWindowOpened, hypr.EventWindowClosed, hypr.EventWindowTitle:
+		return true
+	}
+	return false
 }

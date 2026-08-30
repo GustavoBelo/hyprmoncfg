@@ -43,9 +43,12 @@ func newRootCmd() *cobra.Command {
 	var hyprConfig string
 
 	root := &cobra.Command{
-		Use:     "hyprmoncfg",
-		Short:   "Monitor profile manager for Hyprland",
-		Version: buildinfo.Version,
+		// main() already prints the error; without this cobra prints it too
+		// and every failure shows up twice.
+		SilenceErrors: true,
+		Use:           "hyprmoncfg",
+		Short:         "Monitor profile manager for Hyprland",
+		Version:       buildinfo.Version,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runTUI(configDir, monitorsConf, hyprConfig)
 		},
@@ -64,6 +67,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDoctorCmd(&monitorsConf, &hyprConfig))
 	root.AddCommand(newManageCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newUnmanageCmd(&configDir, &monitorsConf, &hyprConfig))
+	root.AddCommand(newCouchCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newVersionCmd("hyprmoncfg"))
 
 	return root
@@ -201,6 +205,9 @@ func newProfilesCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// The console layout is generated and owned by couch mode; it is
+			// managed on tab 4, not from the profile list.
+			profiles = profile.SelectableProfiles(profiles)
 			if len(profiles) == 0 {
 				fmt.Println("No saved profiles")
 				return nil

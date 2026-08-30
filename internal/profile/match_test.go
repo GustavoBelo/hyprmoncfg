@@ -421,3 +421,108 @@ func TestExactStateMatchIgnoresWhereHyprlandPutsAMirror(t *testing.T) {
 		t.Fatal("expected a profile that does not mirror to be a different state")
 	}
 }
+
+// The console layout must only ever be applied because a session asked for it.
+// Left in the pool it would win a hotplug on its own and drop the desktop onto
+// the TV.
+func TestGeneratedProfilesNeverWinAutomaticMatching(t *testing.T) {
+	mon := hypr.Monitor{
+		Name: "HDMI-A-1", Description: "Samsung SAMSUNG", Make: "Samsung",
+		Model: "SAMSUNG", Serial: "0x01",
+		Width: 2560, Height: 1440, RefreshRate: 120, Scale: 1,
+	}
+	output := OutputConfig{
+		Key: mon.HardwareKey(), MatchKey: mon.HardwareKey(), Name: mon.Name,
+		Enabled: true, Width: 2560, Height: 1440, Refresh: 120, Scale: 1,
+	}
+
+	console := New("couch", []OutputConfig{output})
+	console.ManagedBy = "couch"
+	monitors := []hypr.Monitor{mon}
+
+	// On its own it is the only candidate, and still must not be chosen.
+	if _, _, ok := BestMatch([]Profile{console}, monitors); ok {
+		t.Fatal("a generated profile must never be picked by BestMatch")
+	}
+	if _, ok := ExactStateMatch([]Profile{console}, monitors, nil); ok {
+		t.Fatal("a generated profile must never be adopted as the exact match")
+	}
+
+	// A user profile describing the same displays still wins normally.
+	mine := New("tv", []OutputConfig{output})
+	if _, _, ok := BestMatch([]Profile{console, mine}, monitors); !ok {
+		t.Fatal("a user profile should still match")
+	} else if match, _, _ := BestMatch([]Profile{console, mine}, monitors); match.Name != "tv" {
+		t.Fatalf("expected the user profile, got %q", match.Name)
+	}
+}
+
+// "auto" is a colour-preset request, not a result: Hyprland resolves it and
+// reports back a concrete preset. Comparing the two as strings made a profile
+// unable to recognise its own applied state, which is exactly what hyprmoncfg
+// writes for an ordinary SDR display.
+func TestColorPresetAutoMatchesWhateverItResolvesTo(t *testing.T) {
+	cases := []struct {
+		saved string
+		live  string
+		want  bool
+	}{
+		{"auto", "srgb", true},
+		{"auto", "hdr", true},
+		{"AUTO", "srgb", true},
+		{"srgb", "auto", true},
+		{"", "srgb", true}, // empty means the default, which is srgb
+		{"srgb", "", true},
+		{"srgb", "srgb", true},
+		// A profile that genuinely asks for HDR must not match an SDR display.
+		{"hdr", "srgb", false},
+		{"srgb", "hdr", false},
+	}
+	for _, tc := range cases {
+		if got := colorPresetsAgree(tc.saved, tc.live); got != tc.want {
+			t.Fatalf("colorPresetsAgree(%q, %q) = %v, want %v", tc.saved, tc.live, got, tc.want)
+		}
+	}
+}
+
+// End to end: a saved desk profile has to recognise the desktop it describes,
+// or automatic switching imposes a different profile over a layout that needed
+// no change. This is the shape of the host's own "escritório".
+func TestExactStateMatchRecognisesAProfileSavedWithAutoColor(t *testing.T) {
+	desk := hypr.Monitor{
+		Name: "DP-1", Description: "Technical Concepts Ltd 25G64",
+		Make: "Technical Concepts Ltd", Model: "25G64",
+		Width: 1920, Height: 1080, RefreshRate: 300, Scale: 1,
+		ColorManagementPreset: "srgb", SDRMinLuminance: 0.2, SDRMaxLuminance: 80,
+	}
+	tv := hypr.Monitor{
+		Name: "HDMI-A-1", Description: "Samsung Electric Company SAMSUNG 0x01000E00",
+		Make: "Samsung Electric Company", Model: "SAMSUNG", Serial: "0x01000E00",
+		Disabled: true, Scale: 1,
+	}
+	monitors := []hypr.Monitor{desk, tv}
+
+	// Saved by hyprmoncfg itself, which writes cm = auto for an SDR display.
+	saved := New("escritório", []OutputConfig{
+		{
+			Key: desk.HardwareKey(), MatchKey: desk.HardwareKey(), Name: desk.Name,
+			Enabled: true, Mode: "1920x1080@300.00Hz",
+			Width: 1920, Height: 1080, Refresh: 300, Scale: 1,
+			CM: "auto", Bitdepth: 8, SDRMinLuminance: 0.2, SDRMaxLuminance: 80,
+			SDRBrightness: 1, SDRSaturation: 1,
+		},
+		{
+			Key: tv.HardwareKey(), MatchKey: tv.HardwareKey(), Name: tv.Name,
+			Enabled: false, Mode: "4096x2160@120.00Hz",
+			Width: 4096, Height: 2160, Refresh: 120, X: 1920, Scale: 1, CM: "hdr",
+		},
+	})
+
+	match, ok := ExactStateMatch([]Profile{saved}, monitors, nil)
+	if !ok {
+		t.Fatal("a profile must recognise the layout it describes")
+	}
+	if match.Name != "escritório" {
+		t.Fatalf("matched %q", match.Name)
+	}
+}

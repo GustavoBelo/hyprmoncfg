@@ -307,3 +307,68 @@ func TestDropSyntheticMonitorsKeepsRealConnectors(t *testing.T) {
 		t.Fatalf("filtering dropped a real connector: %+v", got)
 	}
 }
+
+// The daemon acts on every event its monitor feed delivers, so a window event
+// arriving there makes it re-derive the layout on each focus change. Prefix
+// matching used to let exactly that through.
+func TestMonitorEventTypesExcludeWindowActivity(t *testing.T) {
+	monitorFeed := make(map[EventType]struct{}, len(MonitorEventTypes))
+	for _, t := range MonitorEventTypes {
+		monitorFeed[t] = struct{}{}
+	}
+
+	for _, line := range []string{
+		"activewindow>>steam,Steam",
+		"activewindowv2>>55d99b4b2f60",
+		"openwindow>>55d99b4b2f60,1,steam,Steam",
+		"closewindow>>55d99b4b2f60",
+		"windowtitlev2>>55d99b4b2f60,Steam Big Picture Mode",
+	} {
+		event, ok := parseEvent(line)
+		if !ok {
+			continue
+		}
+		if _, reaches := monitorFeed[event.Type]; reaches {
+			t.Fatalf("%q reached the monitor feed as %q", line, event.Type)
+		}
+	}
+}
+
+// Window and config events still have to parse: couch mode drives Big Picture
+// detection off them, and re-asserts a runtime layout after a config reload.
+func TestParseEventRecognisesWindowAndConfigEvents(t *testing.T) {
+	tests := []struct {
+		line      string
+		want      EventType
+		wantValue string
+	}{
+		{"openwindow>>55d99b4b2f60,1,steam,Steam", EventWindowOpened, "55d99b4b2f60,1,steam,Steam"},
+		{"closewindow>>55d99b4b2f60", EventWindowClosed, "55d99b4b2f60"},
+		{"windowtitle>>55d99b4b2f60", EventWindowTitle, "55d99b4b2f60"},
+		{"windowtitlev2>>55d99b4b2f60,Steam Big Picture Mode", EventWindowTitle, "55d99b4b2f60,Steam Big Picture Mode"},
+		{"configreloaded>>", EventConfigReloaded, ""},
+	}
+
+	for _, tt := range tests {
+		event, ok := parseEvent(tt.line)
+		if !ok {
+			t.Fatalf("expected %q to be parsed", tt.line)
+		}
+		if event.Type != tt.want {
+			t.Fatalf("expected %q to map to %q, got %q", tt.line, tt.want, event.Type)
+		}
+		if event.Value != tt.wantValue {
+			t.Fatalf("expected value %q from %q, got %q", tt.wantValue, tt.line, event.Value)
+		}
+	}
+}
+
+// activewindow is the highest-frequency event Hyprland emits. Nothing maps to
+// it, so it can never wake a subscriber that did not ask for it.
+func TestParseEventIgnoresActiveWindow(t *testing.T) {
+	for _, line := range []string{"activewindow>>steam,Steam", "activewindowv2>>55d99b4b2f60"} {
+		if _, ok := parseEvent(line); ok {
+			t.Fatalf("expected %q to be ignored", line)
+		}
+	}
+}
