@@ -214,7 +214,33 @@ func (m *Model) persistCouch(cfg couch.Config) error {
 		return err
 	}
 	m.couchConfig = &cfg
+	if err := m.regenerateCouchProfile(cfg); err != nil {
+		return fmt.Errorf("the console layout could not be regenerated: %w", err)
+	}
 	return nil
+}
+
+// regenerateCouchProfile rewrites the generated console profile to match the
+// settings just saved.
+//
+// The profile used to be rebuilt only on enable and at the start of each
+// session. What a session applied was therefore always right, but the file on
+// disk could sit a whole edit behind, which is confusing to read and hides a
+// generation error until the moment someone wants to play. Rebuilding on every
+// edit closes both gaps.
+//
+// BuildConsoleProfile rather than EnsureConsoleProfile: seeding and repairing a
+// layout is not something an edit should do behind the user's back, and the
+// validation an edit needs already happened in saveCouchLayout.
+func (m *Model) regenerateCouchProfile(cfg couch.Config) error {
+	if m.store == nil || len(m.monitors) == 0 || !cfg.Enabled || !cfg.Configured() {
+		return nil
+	}
+	built, err := couch.BuildConsoleProfile(cfg.Layout, m.monitors)
+	if err != nil {
+		return err
+	}
+	return m.store.Save(built)
 }
 
 func (m Model) updateCouchKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {

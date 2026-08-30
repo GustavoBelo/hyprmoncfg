@@ -449,3 +449,82 @@ func TestCouchAppPickerRowShowsBothNameAndToken(t *testing.T) {
 		}
 	}
 }
+
+// The generated profile used to be rebuilt only on enable and at the start of a
+// session, so the file on disk could sit an edit behind what the settings said.
+// Editing a field now rewrites it, which also surfaces a generation error while
+// the user is editing rather than when they want to play.
+func TestEditingTheLayoutRewritesTheGeneratedProfile(t *testing.T) {
+	dir := t.TempDir()
+	store := profile.NewStore(dir)
+	if err := store.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+
+	monitors := []hypr.Monitor{
+		{
+			Name: "HDMI-A-1", Description: "Samsung TV", Make: "Samsung", Model: "TV", Serial: "S1",
+			Width: 3840, Height: 2160, RefreshRate: 120, Scale: 1,
+			AvailableModes: []string{"3840x2160@120.00Hz", "1920x1080@120.00Hz"},
+		},
+	}
+
+	m := Model{store: store, monitors: monitors}
+	cfg := couch.Config{
+		Enabled: true,
+		Layout: couch.ConsoleLayout{
+			TVKey:  monitors[0].HardwareKey(),
+			TVName: "HDMI-A-1",
+			Mode:   "1920x1080@120.00Hz",
+			Desk:   couch.DeskDisabled,
+		},
+	}
+	if err := m.persistCouch(cfg); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	saved, err := store.Load(couch.ConsoleProfileName)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if saved.Outputs[0].Mode != "1920x1080@120.00Hz" {
+		t.Fatalf("mode = %q, want the mode just saved", saved.Outputs[0].Mode)
+	}
+
+	// The edit the TUI makes when the user walks the mode field.
+	cfg.Layout.Mode = "3840x2160@120.00Hz"
+	if err := m.persistCouch(cfg); err != nil {
+		t.Fatalf("persist after edit: %v", err)
+	}
+	saved, err = store.Load(couch.ConsoleProfileName)
+	if err != nil {
+		t.Fatalf("load after edit: %v", err)
+	}
+	if saved.Outputs[0].Mode != "3840x2160@120.00Hz" {
+		t.Errorf("mode = %q, want the profile to follow the edit", saved.Outputs[0].Mode)
+	}
+	if !saved.Generated() {
+		t.Error("the regenerated profile must stay owned by couch mode, or automatic matching would adopt it")
+	}
+}
+
+// A TUI with no compositor to ask has no modes to validate against, so it must
+// leave the profile alone rather than write a broken one.
+func TestPersistWithoutMonitorsLeavesTheProfileAlone(t *testing.T) {
+	dir := t.TempDir()
+	store := profile.NewStore(dir)
+	if err := store.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+
+	m := Model{store: store}
+	cfg := couch.Config{
+		Enabled: true,
+		Layout:  couch.ConsoleLayout{TVKey: "samsung|tv|s1", TVName: "HDMI-A-1", Mode: "3840x2160@120.00Hz"},
+	}
+	if err := m.persistCouch(cfg); err != nil {
+		t.Fatalf("persist: %v", err)
+	}
+	if _, err := store.Load(couch.ConsoleProfileName); err == nil {
+		t.Error("a profile was generated with no monitors to validate against")
+	}
+}
