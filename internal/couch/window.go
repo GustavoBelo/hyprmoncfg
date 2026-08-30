@@ -3,6 +3,7 @@ package couch
 import (
 	"context"
 	"strings"
+	"syscall"
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 )
@@ -66,4 +67,57 @@ func EventLooksLikeBigPicture(ev hypr.Event) bool {
 		return true
 	}
 	return steamishRe.MatchString(strings.Join(parts[1:], " "))
+}
+
+// KeepNestedFullscreen forces the nested compositor's window to fill the TV.
+//
+// gamescope is matched by the process the session started, not by class or
+// title. Its class is "gamescope" rather than anything Steam-shaped, so the
+// Gamepad UI tells cannot see it; and its title is whatever is focused inside
+// it, which becomes the game's the moment one launches, so matching on that
+// would be worse than not matching at all.
+//
+// This has to be re-run rather than done once. Re-applying the display layout
+// -- which is what changing the TV's resolution mid-session does -- drops the
+// window out of fullscreen, and with nothing to put it back the session is left
+// showing a nested compositor floating over the desktop it was meant to cover.
+func KeepNestedFullscreen(ctx context.Context, client WindowCloser, pid int) int {
+	if pid <= 0 {
+		return 0
+	}
+	windows, err := client.Clients(ctx)
+	if err != nil {
+		return 0
+	}
+	fixed := 0
+	for _, w := range windows {
+		if w.Fullscreen > 0 || !belongsToSession(w.Pid, pid) {
+			continue
+		}
+		if w.Floating {
+			_ = client.SetWindowTiled(ctx, w.Address)
+		}
+		if err := client.SetWindowFullscreen(ctx, w.Address, true); err != nil {
+			continue
+		}
+		fixed++
+	}
+	return fixed
+}
+
+// belongsToSession reports whether a window's process is part of the group the
+// session started.
+//
+// The group rather than the process: the launcher sets a session id, and a
+// nested compositor is free to put its Wayland client in a child. Comparing
+// only the leader's pid would miss it.
+func belongsToSession(windowPID, leader int) bool {
+	if windowPID <= 0 || leader <= 0 {
+		return false
+	}
+	if windowPID == leader {
+		return true
+	}
+	group, err := syscall.Getpgid(windowPID)
+	return err == nil && group == leader
 }

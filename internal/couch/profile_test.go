@@ -367,3 +367,30 @@ func TestEverySuggestionValidates(t *testing.T) {
 		}
 	}
 }
+
+// A TV's mode list is not a list of good choices. This Samsung offers
+// 4096x2160, which is 17:9 cinema on a 16:9 panel and sorts above the native
+// 3840x2160, so picking the biggest number gets a letterboxed picture.
+func TestModeMatchesPanelShape(t *testing.T) {
+	tv := hypr.Monitor{Name: "HDMI-A-1"}
+	facts := DisplayFacts{PreferredResolution: map[string]string{"HDMI-A-1": "3840x2160"}}
+
+	if _, ok := ModeMatchesPanelShape("3840x2160@120.00Hz", tv, facts); !ok {
+		t.Error("the native mode must not be flagged")
+	}
+	if _, ok := ModeMatchesPanelShape("1920x1080@120.00Hz", tv, facts); !ok {
+		t.Error("a mode with the panel's aspect must not be flagged whatever its size")
+	}
+	native, ok := ModeMatchesPanelShape("4096x2160@120.00Hz", tv, facts)
+	if ok {
+		t.Error("17:9 on a 16:9 panel must be flagged")
+	}
+	if native != "3840x2160" {
+		t.Errorf("native = %q, want 3840x2160", native)
+	}
+
+	// Nothing known about the panel is not the same as something wrong.
+	if _, ok := ModeMatchesPanelShape("4096x2160@120.00Hz", tv, DisplayFacts{}); !ok {
+		t.Error("an unknown native resolution must not produce a warning")
+	}
+}

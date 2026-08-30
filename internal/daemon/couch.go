@@ -305,8 +305,23 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 	}
 
 	steamPID := couch.ResolveSteamPID(existingInstance, known, state)
-	bpmSeen := couch.WaitForBigPicture(ctx, detector, couch.BigPictureWaitWindow)
-	if bpmSeen {
+
+	// Under gamescope there is nothing to wait for. Big Picture runs inside the
+	// nested compositor, so no Steam-shaped window ever appears on this
+	// compositor and the wait runs its full two minutes every time -- two
+	// minutes in which nothing keeps the nested window fullscreen and nothing
+	// notices if it dies. The nested compositor is the session's surface, so
+	// the watch loop takes over immediately.
+	bpmSeen := false
+	if !nested {
+		bpmSeen = couch.WaitForBigPicture(ctx, detector, couch.BigPictureWaitWindow)
+	}
+	switch {
+	case nested:
+		if fixed := couch.KeepNestedFullscreen(ctx, c.svc.client, launched.Process.Pid); fixed > 0 {
+			couch.AppendLog(state, "couch: put the nested gamescope fullscreen")
+		}
+	case bpmSeen:
 		couch.AppendLog(state, "couch: Big Picture is up")
 		c.mu.Lock()
 		c.detector = detector
@@ -314,7 +329,7 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 		if fixed := couch.KeepBigPictureFullscreen(ctx, c.svc.client, detector); fixed > 0 {
 			couch.AppendLog(state, "couch: put %d Big Picture window(s) fullscreen", fixed)
 		}
-	} else {
+	default:
 		couch.AppendLog(state, "couch: Big Picture not seen; watching Steam instead")
 	}
 
@@ -345,8 +360,23 @@ func (c *couchController) watch(ctx context.Context, cfg couch.Config, steamPID 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	c.mu.Lock()
+	nestedPID := c.nestedPID
+	c.mu.Unlock()
+
 	seen := bpmSeen
 	for {
+		if nestedPID > 0 {
+			// The nested compositor is the session's whole surface, so it has
+			// to stay fullscreen and the session ends with it. Re-applying the
+			// layout -- changing the TV's resolution mid-session does exactly
+			// that -- drops it out of fullscreen, and Big Picture detection
+			// cannot see it to put it back.
+			if !couch.ProcessAlive(nestedPID) {
+				return "gamescope exited"
+			}
+			couch.KeepNestedFullscreen(ctx, c.svc.client, nestedPID)
+		}
 		count := detector.Count(ctx)
 		if count > 0 {
 			seen = true

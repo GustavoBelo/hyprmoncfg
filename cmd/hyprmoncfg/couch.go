@@ -503,6 +503,16 @@ func newCouchDoctorCmd(configDir *string) *cobra.Command {
 				if cfg.Layout.HDR && !hypr.HDRCapableConnectors()[cfg.Layout.TVName] {
 					report(false, false, "%s does not advertise HDR in its EDID", cfg.Layout.TVName)
 				}
+				for _, mon := range monitors {
+					if mon.HardwareKey() != cfg.Layout.TVKey {
+						continue
+					}
+					if native, ok := couch.ModeMatchesPanelShape(cfg.Layout.Mode, mon, couch.LiveDisplayFacts()); !ok {
+						report(false, false,
+							"%s is not the shape of the panel; %s is native, so this one shows black bars",
+							cfg.Layout.Mode, native)
+					}
+				}
 			}
 
 			if _, err := exec.LookPath("steam"); err != nil {

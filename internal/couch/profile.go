@@ -463,3 +463,27 @@ func colorPreset(hdr bool) string {
 	}
 	return "auto"
 }
+
+// ModeMatchesPanelShape reports whether a chosen mode has the display's own
+// aspect ratio, and names the native resolution when it does not.
+//
+// The mode list a TV advertises is not a list of good choices. This Samsung
+// offers 4096x2160, which is 17:9 cinema on a 16:9 panel: picking it as "the
+// biggest number" gets a letterboxed picture with black bars, and it is an easy
+// mistake because it sorts above 3840x2160. The generator avoids it already;
+// this is for the editor, where the user may pick any mode the display lists.
+func ModeMatchesPanelShape(mode string, m hypr.Monitor, facts DisplayFacts) (native string, ok bool) {
+	preferred := facts.PreferredResolution[m.Name]
+	wanted, hasNative := aspectOf(preferred)
+	if !hasNative {
+		return "", true
+	}
+	parsed, valid := parseMode(mode)
+	if !valid || parsed.height == 0 {
+		return "", true
+	}
+	if sameAspect(float64(parsed.width)/float64(parsed.height), wanted) {
+		return "", true
+	}
+	return preferred, false
+}
