@@ -4,8 +4,13 @@ project_name: hyprmoncfg
 
 release:
   github:
-    owner: crmne
+    # The fork publishes its own releases. Left pointing at the upstream repo,
+    # a tag pushed here tries to cut a release in someone else's repository.
+    owner: GustavoBelo
     name: hyprmoncfg
+  # Mark a tag carrying a pre-release suffix (-rc, -beta) as a pre-release
+  # rather than the latest stable build.
+  prerelease: auto
 
 before:
   hooks:
