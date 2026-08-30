@@ -453,3 +453,74 @@ func TestExactStateMatchIgnoresWhereHyprlandPutsAMirror(t *testing.T) {
 		t.Fatal("expected a profile that does not mirror to be a different state")
 	}
 }
+
+// "auto" is a colour-preset request, not a result: Hyprland resolves it and
+// reports back a concrete preset. Comparing the two as strings made a profile
+// unable to recognise its own applied state, which is exactly what hyprmoncfg
+// writes for an ordinary SDR display.
+func TestColorPresetAutoMatchesWhateverItResolvesTo(t *testing.T) {
+	cases := []struct {
+		saved string
+		live  string
+		want  bool
+	}{
+		{"auto", "srgb", true},
+		{"auto", "hdr", true},
+		{"AUTO", "srgb", true},
+		{"srgb", "auto", true},
+		{"", "srgb", true}, // empty means the default, which is srgb
+		{"srgb", "", true},
+		{"srgb", "srgb", true},
+		// A profile that genuinely asks for HDR must not match an SDR display.
+		{"hdr", "srgb", false},
+		{"srgb", "hdr", false},
+	}
+	for _, tc := range cases {
+		if got := colorPresetsAgree(tc.saved, tc.live); got != tc.want {
+			t.Fatalf("colorPresetsAgree(%q, %q) = %v, want %v", tc.saved, tc.live, got, tc.want)
+		}
+	}
+}
+
+// End to end: a saved profile has to recognise the desktop it describes, or
+// automatic switching imposes a different one over a layout that needed no
+// change at all. Reported on a two-display desktop, where turning the daemon on
+// silently mirrored the desk to the TV.
+func TestExactStateMatchRecognisesAProfileSavedWithAutoColor(t *testing.T) {
+	desk := hypr.Monitor{
+		Name: "DP-1", Description: "Dell U2720Q",
+		Make: "Dell", Model: "U2720Q", Serial: "A1",
+		Width: 2560, Height: 1440, RefreshRate: 60, Scale: 1,
+		ColorManagementPreset: "srgb", SDRMinLuminance: 0.2, SDRMaxLuminance: 80,
+	}
+	tv := hypr.Monitor{
+		Name: "HDMI-A-1", Description: "LG OLED65C1",
+		Make: "LG", Model: "OLED65C1", Serial: "B2",
+		Disabled: true, Scale: 1,
+	}
+	monitors := []hypr.Monitor{desk, tv}
+
+	// Saved by hyprmoncfg itself, which writes cm = auto for an SDR display.
+	saved := New("desk", []OutputConfig{
+		{
+			Key: desk.HardwareKey(), MatchKey: desk.HardwareKey(), Name: desk.Name,
+			Enabled: true, Mode: "2560x1440@60.00Hz",
+			Width: 2560, Height: 1440, Refresh: 60, Scale: 1,
+			CM: "auto", Bitdepth: 8, SDRMinLuminance: 0.2, SDRMaxLuminance: 80,
+			SDRBrightness: 1, SDRSaturation: 1,
+		},
+		{
+			Key: tv.HardwareKey(), MatchKey: tv.HardwareKey(), Name: tv.Name,
+			Enabled: false, Mode: "3840x2160@120.00Hz",
+			Width: 3840, Height: 2160, Refresh: 120, X: 2560, Scale: 1, CM: "hdr",
+		},
+	})
+
+	match, ok := ExactStateMatch([]Profile{saved}, monitors, nil)
+	if !ok {
+		t.Fatal("a profile must recognise the layout it describes")
+	}
+	if match.Name != "desk" {
+		t.Fatalf("matched %q", match.Name)
+	}
+}
