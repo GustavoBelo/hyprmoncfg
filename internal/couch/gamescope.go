@@ -1,9 +1,12 @@
 package couch
 
 import (
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // GamescopeAvailable reports whether the nested session can be offered.
@@ -69,4 +72,35 @@ func GamescopeSummary(layout ConsoleLayout, settings GamescopeSettings) string {
 		parts = append(parts, "HUD")
 	}
 	return strings.Join(parts, ", ")
+}
+
+// StopNested ends a nested compositor the session started.
+//
+// A nested gamescope exists only to hold the session: when the session ends it
+// is a fullscreen window with nothing behind it, and Hyprland moves it to
+// whatever output is left once the TV goes away. Steam is never treated this
+// way -- it is the user's, and may well have been running first -- but
+// gamescope is the session's own.
+//
+// It is launched with Setsid, so the whole process group is signalled: killing
+// only the leader would leave the game it wrapped running headless.
+func StopNested(pid int) error {
+	if pid <= 0 {
+		return nil
+	}
+	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil {
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	// Give it a moment to take its children with it, then insist.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(-pid, 0); errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return syscall.Kill(-pid, syscall.SIGKILL)
 }

@@ -56,6 +56,13 @@ type Session struct {
 	// daemon killed mid-session loses every closure it held, and the desktop
 	// would be left with the bar hidden and sound on a TV nobody is watching.
 	Hooks map[string]hooks.State `json:"hooks,omitempty"`
+	// NestedPID is the gamescope process the session started to host Big
+	// Picture, if it did.
+	//
+	// Recorded for the same reason as the rest: a nested compositor exists only
+	// to hold the session, so it has to go when the session does, and whoever
+	// finds this file after a crash is the only one who can still do that.
+	NestedPID int `json:"nested_pid,omitempty"`
 }
 
 // SnapshotDesk returns the layout a session recorded on the way in.
@@ -77,7 +84,7 @@ func OrphanedSession(stateDir string) (Session, bool) {
 		return Session{}, false
 	}
 	hasDesk := s.Desk != nil && len(s.Desk.Outputs) > 0
-	if !hasDesk && len(s.Hooks) == 0 {
+	if !hasDesk && len(s.Hooks) == 0 && s.NestedPID == 0 {
 		return Session{}, false
 	}
 	return s, true
@@ -301,4 +308,15 @@ func ClearLog(stateDir string) {
 	dest := filepath.Join(historyDir, "couch-"+ts+".log")
 	_ = os.Rename(path, dest)
 	pruneHistory(historyDir)
+}
+
+// UpdateSessionNestedPID records the nested compositor on the live session
+// record, which is written before the process it names exists.
+func UpdateSessionNestedPID(stateDir string, pid int) {
+	s, err := ReadSession(stateDir)
+	if err != nil {
+		return
+	}
+	s.NestedPID = pid
+	_ = WriteSession(stateDir, s)
 }

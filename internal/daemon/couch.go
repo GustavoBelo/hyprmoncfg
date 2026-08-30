@@ -56,6 +56,8 @@ type couchController struct {
 	// shutting down" rather than a bare "stopped" that reads like the user
 	// pressed something.
 	stopReason string
+	// nestedPID is the gamescope the session started, if it started one.
+	nestedPID int
 }
 
 func newCouchController(svc *Service) *couchController {
@@ -261,6 +263,7 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 	}
 
 	detector := couch.NewBigPictureDetector(ctx, c.svc.client)
+	nested := false
 
 	launcher, existingInstance, err := couch.ResolveLauncher()
 	if err != nil {
@@ -271,23 +274,35 @@ func (c *couchController) run(ctx context.Context, cfg couch.Config, state strin
 	if cfg.Gamescope.Enabled {
 		// gamescope always starts its own Steam inside the nested compositor,
 		// so the steam:// handoff to a running instance does not apply.
-		nested, gsErr := couch.GamescopeCommand(cfg.Layout,
+		command, gsErr := couch.GamescopeCommand(cfg.Layout,
 			cfg.Gamescope, couch.BigPictureLauncher{Command: launcher.Command, Args: []string{"-gamepadui"}})
 		if gsErr != nil {
 			couch.AppendLog(state, "couch: gamescope unavailable, falling back to plain Big Picture: %v", gsErr)
 		} else {
-			launcher, existingInstance = nested, false
+			launcher, existingInstance, nested = command, false, true
 			couch.AppendLog(state, "couch: using gamescope (%s)",
 				couch.GamescopeSummary(cfg.Layout, cfg.Gamescope))
 		}
 	}
 	known := couch.KnownSteamPIDs()
-	if _, err := couch.LaunchBigPicture(launcher); err != nil {
+	launched, err := couch.LaunchBigPicture(launcher)
+	if err != nil {
 		couch.AppendLog(state, "couch: launching %s failed: %v", launcher.Command, err)
 		c.setReason("launch failed")
 		return
 	}
 	couch.AppendLog(state, "couch: launched %s", launcher.Command)
+	// Reap it when it goes. The daemon is the parent of what it launches, and
+	// a long-lived daemon that never waits accumulates a zombie per session.
+	go func() { _ = launched.Wait() }()
+	if nested && launched.Process != nil {
+		// Recorded rather than held, so a crash does not strand a nested
+		// compositor with no way left to find it.
+		c.mu.Lock()
+		c.nestedPID = launched.Process.Pid
+		c.mu.Unlock()
+		couch.UpdateSessionNestedPID(state, launched.Process.Pid)
+	}
 
 	steamPID := couch.ResolveSteamPID(existingInstance, known, state)
 	bpmSeen := couch.WaitForBigPicture(ctx, detector, couch.BigPictureWaitWindow)
@@ -366,9 +381,19 @@ func (c *couchController) leave(ctx context.Context, state string) {
 	c.mu.Lock()
 	desk := c.desk
 	applied := c.hooks
+	nestedPID := c.nestedPID
 	c.phase = couch.PhaseLeaving
 	c.mu.Unlock()
 	c.svc.signalChange()
+
+	// Before the layout: a nested compositor left running becomes a fullscreen
+	// window that Hyprland moves onto whatever output survives the TV going
+	// away, which is the desk.
+	if nestedPID > 0 {
+		if err := couch.StopNested(nestedPID); err != nil {
+			couch.AppendLog(state, "couch: the nested gamescope did not stop: %v", err)
+		}
+	}
 
 	// Undo the hooks before the layout: putting sound back on a desk output
 	// that is still disabled would fail.
@@ -392,6 +417,7 @@ func (c *couchController) leave(ctx context.Context, state string) {
 	c.detector = nil
 	c.cancel = nil
 	c.done = nil
+	c.nestedPID = 0
 	c.started = time.Time{}
 	c.trackedWindow = ""
 	c.mu.Unlock()
@@ -499,6 +525,12 @@ func (c *couchController) Reconcile(ctx context.Context) {
 	}
 	couch.AppendLog(state, "couch: found an abandoned session from PID %d in phase %s; putting the desktop back",
 		orphan.PID, orphan.Phase)
+
+	if orphan.NestedPID > 0 {
+		if err := couch.StopNested(orphan.NestedPID); err != nil {
+			couch.AppendLog(state, "couch: the abandoned nested gamescope did not stop: %v", err)
+		}
+	}
 
 	// The hooks first, and separately from the layout: a killed daemon left
 	// the bar hidden and sound on the TV, and restoring only the displays
