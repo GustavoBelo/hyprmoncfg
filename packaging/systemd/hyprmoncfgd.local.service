@@ -1,12 +1,22 @@
 [Unit]
 Description=Hyprland monitor profile daemon (hyprmoncfgd)
 After=graphical-session.target
+# Stop with the session the daemon manages. WantedBy stays on default.target
+# because a session without uwsm never reaches graphical-session.target, and a
+# daemon that never starts is worse than one that lingers.
+PartOf=graphical-session.target
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/hyprmoncfgd
 Restart=on-failure
 RestartSec=2
+# Signal the daemon alone, not everything in its cgroup. On the way out it puts
+# the desktop back by running hyprctl and pactl; with the default control-group
+# kill those children are terminated mid-restore, and the session's layout and
+# audio are left on the TV. TimeoutStopSec is the budget for that restore.
+KillMode=mixed
+TimeoutStopSec=20
 
 [Install]
 WantedBy=default.target

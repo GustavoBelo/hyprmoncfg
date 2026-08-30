@@ -331,14 +331,9 @@ func (c *Client) resolveInstance(ctx context.Context) (string, error) {
 }
 
 func (c *Client) discoverInstance(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, c.hyprctl, "-j", "instances")
-	out, err := cmd.Output()
+	instances, err := c.instances(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to query Hyprland instances: %w", err)
-	}
-	var instances []instanceInfo
-	if err := json.Unmarshal(out, &instances); err != nil {
-		return "", fmt.Errorf("failed to decode hyprctl instances JSON: %w", err)
+		return "", err
 	}
 	return selectInstance(instances, strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")))
 }
@@ -532,4 +527,54 @@ func (c *Client) Option(ctx context.Context, name string) (OptionValue, error) {
 		return OptionValue{}, fmt.Errorf("failed to decode option %s: %w", name, err)
 	}
 	return value, nil
+}
+
+// Session names the Hyprland instance this client talks to and the Wayland
+// socket that instance listens on.
+type Session struct {
+	Instance string
+	WLSocket string
+}
+
+// Session reports the running Hyprland instance and its Wayland socket.
+//
+// A daemon started by systemd inherits almost nothing from the graphical
+// session -- no HYPRLAND_INSTANCE_SIGNATURE, no WAYLAND_DISPLAY -- yet every
+// program it launches on the user's behalf needs both. Discovery already
+// happens here to find the socket, so the same answer is published rather than
+// asking the environment a second time and getting nothing.
+func (c *Client) Session(ctx context.Context) (Session, error) {
+	instance, err := c.resolveInstance(ctx)
+	if err != nil {
+		return Session{}, err
+	}
+	session := Session{Instance: instance, WLSocket: strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY"))}
+	if session.WLSocket != "" {
+		return session, nil
+	}
+	instances, err := c.instances(ctx)
+	if err != nil {
+		// The instance resolved, so the socket is a bonus rather than a
+		// failure; the caller falls back to scanning the runtime directory.
+		return session, nil
+	}
+	for _, inst := range instances {
+		if inst.Instance == instance {
+			session.WLSocket = inst.WLSocket
+			break
+		}
+	}
+	return session, nil
+}
+
+func (c *Client) instances(ctx context.Context) ([]instanceInfo, error) {
+	out, err := exec.CommandContext(ctx, c.hyprctl, "-j", "instances").Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to query Hyprland instances: %w", err)
+	}
+	var instances []instanceInfo
+	if err := json.Unmarshal(out, &instances); err != nil {
+		return nil, fmt.Errorf("failed to decode hyprctl instances JSON: %w", err)
+	}
+	return instances, nil
 }

@@ -548,6 +548,14 @@ func newCouchDoctorCmd(configDir *string) *cobra.Command {
 			report(couch.ConnectedControllers() > 0, false,
 				"%d controller(s) connected", couch.ConnectedControllers())
 
+			// Everything above answers for this shell. The daemon is what
+			// actually starts a session when a trigger fires, and it sees a
+			// different world: a user unit inherits no Wayland socket, no X11
+			// display and a PATH without the Omarchy helpers. Every check that
+			// mattered passed from a terminal while automatic entry launched a
+			// Steam that exited at once, so ask the daemon itself.
+			reportDaemonSession(ctx, report)
+
 			return doctorResult(out, problems)
 		},
 	}
@@ -809,4 +817,25 @@ func newCouchLogCmd() *cobra.Command {
 		},
 	)
 	return cmd
+}
+
+// reportDaemonSession asks the running daemon what it cannot reach.
+//
+// A silent daemon is not a failure here: a session started by hand from this
+// shell works either way, and `couch status` already says whether the daemon is
+// up.
+func reportDaemonSession(ctx context.Context, report func(bool, bool, string, ...any)) {
+	state, ok := couchStatusViaDaemon(ctx)
+	if !ok {
+		return
+	}
+	if len(state.MissingSessionEnv) > 0 {
+		report(false, true, "the daemon cannot see the graphical session (%s); automatic entry will start a session Steam cannot join",
+			strings.Join(state.MissingSessionEnv, ", "))
+	} else {
+		report(true, false, "the daemon can see the graphical session")
+	}
+	if len(state.UnavailableHooks) > 0 {
+		report(false, true, "the daemon cannot run these enabled hooks: %s", strings.Join(state.UnavailableHooks, ", "))
+	}
 }

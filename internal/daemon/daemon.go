@@ -260,6 +260,7 @@ func (s *Service) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			s.endCouchSessionOnShutdown()
 			return nil
 		case err, ok := <-eventErrs:
 			if !ok {
@@ -788,4 +789,28 @@ func isWindowEvent(t hypr.EventType) bool {
 		return true
 	}
 	return false
+}
+
+// endCouchSessionOnShutdown puts the desktop back before the daemon exits.
+//
+// Without it a restart -- an upgrade, a `systemctl --user restart` -- walks away
+// from a running session: the TV layout stays applied, sound stays on the TV
+// and the bar stays hidden, because the hooks are undone by the process that
+// applied them. Reconcile was meant to catch that on the way back up, but a
+// restart is exactly the case it cannot: the session record still names a
+// process that is only just exiting, so the new daemon reads it as live,
+// discards the record and then lets automatic matching impose a profile over a
+// desktop nobody restored.
+//
+// The shutdown context is already cancelled, so this gets a fresh one with a
+// short budget. Restoring most of the desktop beats restoring none of it.
+func (s *Service) endCouchSessionOnShutdown() {
+	if s.couch == nil || !s.couch.Active() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.couch.stopWithContext(ctx, "the daemon is shutting down"); err != nil {
+		s.cfg.Logf("could not end the couch session on shutdown: %v", err)
+	}
 }

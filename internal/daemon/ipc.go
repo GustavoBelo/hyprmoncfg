@@ -14,10 +14,12 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/couch"
+	"github.com/crmne/hyprmoncfg/internal/couch/hooks"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
 	"github.com/crmne/hyprmoncfg/internal/profileio"
+	"github.com/crmne/hyprmoncfg/internal/session"
 )
 
 type pendingTransaction struct {
@@ -365,6 +367,7 @@ func (s *Service) CouchStatus() (ipc.CouchState, error) {
 	if err != nil {
 		return state, nil
 	}
+	sessionHealth(&state, cfg)
 	state.Enabled = cfg.Enabled
 	state.Configured = cfg.Configured()
 	state.TVName = cfg.Layout.TVName
@@ -372,6 +375,18 @@ func (s *Service) CouchStatus() (ipc.CouchState, error) {
 	state.HDR = cfg.Layout.HDR
 	state.VRR = cfg.Layout.VRR
 	return state, nil
+}
+
+// sessionHealth reports what the daemon cannot reach, from inside the daemon.
+// Both answers differ from the ones a user shell would give, which is exactly
+// why they are collected here.
+func sessionHealth(state *ipc.CouchState, cfg couch.Config) {
+	state.MissingSessionEnv = session.Missing()
+	for _, hook := range hooks.All() {
+		if !hook.Available() && cfg.HookEnabled(hook.Name()) {
+			state.UnavailableHooks = append(state.UnavailableHooks, hook.Name())
+		}
+	}
 }
 
 func (s *Service) CouchStart(params ipc.CouchStartParams) error {

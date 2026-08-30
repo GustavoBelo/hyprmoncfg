@@ -44,10 +44,29 @@ type couchController struct {
 	// detector is kept for the duration so a window-title event can re-assert
 	// fullscreen without rebuilding its snapshot.
 	detector *couch.BigPictureDetector
+	// controllers is the gamepad count seen at the previous poll, so entering
+	// can follow the moment one is plugged in rather than the fact that one is
+	// plugged in. See observeControllers.
+	controllers int
+	// done is closed once a session has finished putting the desktop back, so
+	// a caller that must not outrun the restore -- the daemon on its way out --
+	// can wait for it.
+	done chan struct{}
+	// stopReason is why a stop was asked for, so the log says "the daemon is
+	// shutting down" rather than a bare "stopped" that reads like the user
+	// pressed something.
+	stopReason string
 }
 
 func newCouchController(svc *Service) *couchController {
-	return &couchController{svc: svc, phase: couch.PhaseIdle}
+	return &couchController{
+		svc:   svc,
+		phase: couch.PhaseIdle,
+		// Seed the count with what is already plugged in, so a pad left
+		// connected is not read as a connect the first time the poll runs and
+		// does not drag the desktop to the TV at login.
+		controllers: couch.ConnectedControllers(),
+	}
 }
 
 func (c *couchController) Phase() couch.Phase {
@@ -213,11 +232,16 @@ func (c *couchController) enter(ctx context.Context, trigger string) error {
 	_ = couch.WriteSession(state, session)
 
 	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	done := make(chan struct{})
 	c.mu.Lock()
 	c.cancel = cancel
+	c.done = done
 	c.mu.Unlock()
 
-	go c.run(sessionCtx, cfg, state)
+	go func() {
+		defer close(done)
+		c.run(sessionCtx, cfg, state)
+	}()
 	c.svc.signalChange()
 	return nil
 }
@@ -331,7 +355,7 @@ func (c *couchController) watch(ctx context.Context, cfg couch.Config, steamPID 
 
 		select {
 		case <-ctx.Done():
-			return "stopped"
+			return c.takeStopReason()
 		case <-ticker.C:
 		}
 	}
@@ -367,16 +391,51 @@ func (c *couchController) leave(ctx context.Context, state string) {
 	c.hooks = nil
 	c.detector = nil
 	c.cancel = nil
+	c.done = nil
 	c.started = time.Time{}
 	c.trackedWindow = ""
 	c.mu.Unlock()
 	c.svc.signalChange()
 }
 
-// Stop ends the session and restores the desktop.
+// takeStopReason reports why the session was asked to stop, defaulting to a
+// plain stop when nobody said.
+func (c *couchController) takeStopReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	reason := c.stopReason
+	c.stopReason = ""
+	if reason == "" {
+		return "stopped"
+	}
+	return reason
+}
+
+// Stop ends the session and restores the desktop, without waiting for the
+// restore to finish. Callers that must not outrun it use stopWithContext.
 func (c *couchController) Stop() error {
+	return c.stop(nil)
+}
+
+// stopWithContext ends the session and waits for the desktop to be back.
+//
+// The daemon uses it on the way out: returning as soon as the cancel is
+// delivered would let the process exit while the goroutine that undoes the
+// hooks is still running, which leaves sound on the TV and the bar hidden with
+// nothing left alive to fix either.
+func (c *couchController) stopWithContext(ctx context.Context, reason string) error {
+	if reason != "" {
+		c.mu.Lock()
+		c.stopReason = reason
+		c.mu.Unlock()
+	}
+	return c.stop(ctx)
+}
+
+func (c *couchController) stop(wait context.Context) error {
 	c.mu.Lock()
 	cancel := c.cancel
+	done := c.done
 	active := c.phase != couch.PhaseIdle && c.phase != ""
 	c.mu.Unlock()
 
@@ -385,7 +444,15 @@ func (c *couchController) Stop() error {
 	}
 	if cancel != nil {
 		cancel()
-		return nil
+		if wait == nil || done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+			return nil
+		case <-wait.Done():
+			return fmt.Errorf("the desktop was still being restored: %w", wait.Err())
+		}
 	}
 	// Entering, with no session goroutine yet: put the desktop back directly.
 	state, err := couch.StateDir()
@@ -493,15 +560,35 @@ func (c *couchController) observeWindowEvent(ctx context.Context, ev hypr.Event)
 
 // observeControllers enters couch mode when a gamepad shows up, which is the
 // most console-like trigger there is: turn the pad on, the TV comes up.
+//
+// It fires on the connect itself, not on a pad being connected. Asking only
+// "is one plugged in?" made the trigger re-arm every two seconds, so stopping a
+// session put the desktop back and the next poll dragged it to the TV again --
+// there was no way to leave couch mode without first unplugging the pad. The
+// same reading entered couch mode at login for anyone who leaves a pad
+// connected.
+//
+// The count is tracked even while a session runs, so unplugging and replugging
+// during play does not look like a fresh connect when it ends.
+// isControllerConnectEdge reports whether this poll saw a pad arrive, as
+// opposed to one that was already there.
+func isControllerConnectEdge(previous, now int, active bool) bool {
+	return !active && previous == 0 && now > 0
+}
+
 func (c *couchController) observeControllers(ctx context.Context) {
-	if c.Active() {
+	connected := couch.ConnectedControllers()
+
+	c.mu.Lock()
+	previous := c.controllers
+	c.controllers = connected
+	c.mu.Unlock()
+
+	if !isControllerConnectEdge(previous, connected, c.Active()) {
 		return
 	}
 	cfg, err := couch.LoadConfig(c.svc.cfg.ConfigDir)
 	if err != nil || !cfg.Enabled || !cfg.EnterOnControllerConnect {
-		return
-	}
-	if couch.ConnectedControllers() == 0 {
 		return
 	}
 	if err := c.Start(ctx, "a controller was connected"); err != nil && !errors.Is(err, errCouchBusy) {

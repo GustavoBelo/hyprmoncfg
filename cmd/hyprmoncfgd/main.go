@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/omarchywatch"
 	"github.com/crmne/hyprmoncfg/internal/profile"
+	"github.com/crmne/hyprmoncfg/internal/session"
 	"github.com/crmne/hyprmoncfg/internal/writerlock"
 )
 
@@ -69,6 +71,12 @@ func newRootCmd() *cobra.Command {
 			if !quiet {
 				logf = logger.Printf
 			}
+
+			// A user unit inherits none of the graphical session, and every
+			// program the daemon launches for the user needs it. Do this before
+			// anything else runs: hook availability is decided by looking up
+			// helper scripts on PATH.
+			adoptSession(ctx, client, logf)
 
 			// Built before the service so the service can hand the watcher back
 			// when someone turns monitor management off.
@@ -151,5 +159,29 @@ func newVersionCmd(name string) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			fmt.Fprintln(cmd.OutOrStdout(), buildinfo.Summary(name))
 		},
+	}
+}
+
+// adoptSession fills in the graphical-session environment the daemon was not
+// given, so children it launches land on the user's screen.
+//
+// Without it, a console session started by a trigger rather than by hand puts
+// the TV layout up and then launches a Steam that exits with "Unable to open
+// X11 display", while the hooks that shell out to Omarchy's helpers report
+// themselves unavailable because the scripts are not on the unit's PATH -- both
+// silently, which is what made this so hard to see.
+func adoptSession(ctx context.Context, client *hypr.Client, logf func(string, ...any)) {
+	facts := session.Facts{PathDirs: session.DiscoverPathDirs()}
+	if info, err := client.Session(ctx); err == nil {
+		facts.Instance = info.Instance
+		facts.WLSocket = info.WLSocket
+	}
+	if facts.WLSocket == "" {
+		facts.WLSocket = session.DiscoverWaylandSocket(os.Getenv("XDG_RUNTIME_DIR"))
+	}
+	facts.XDisplay = session.DiscoverXDisplay("")
+
+	if adopted := session.Apply(session.Resolve(session.Environ(), facts)); len(adopted) > 0 {
+		logf("adopted the graphical session environment: %s", strings.Join(adopted, ", "))
 	}
 }

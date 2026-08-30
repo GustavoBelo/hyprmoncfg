@@ -90,3 +90,33 @@ func TestStopWithoutASessionIsAnError(t *testing.T) {
 		t.Fatalf("phase = %q, want %q", got, couch.PhaseIdle)
 	}
 }
+
+// The controller trigger has to follow the connect, not the connection.
+// Reading it as "a pad is plugged in" made every stop bounce straight back into
+// couch mode two seconds later, so there was no way out without unplugging.
+func TestControllerTriggerFollowsTheConnectEdge(t *testing.T) {
+	cases := []struct {
+		name     string
+		previous int
+		now      int
+		active   bool
+		want     bool
+	}{
+		{name: "pad plugged in", previous: 0, now: 1, want: true},
+		{name: "pad still plugged in", previous: 1, now: 1},
+		{name: "second pad joins the first", previous: 1, now: 2},
+		{name: "pad unplugged", previous: 1, now: 0},
+		{name: "no pad at all", previous: 0, now: 0},
+		{name: "session stopped with the pad still on", previous: 1, now: 1},
+		{name: "unplugged and plugged back in", previous: 0, now: 1, want: true},
+		{name: "plugged in during a session", previous: 0, now: 1, active: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isControllerConnectEdge(tc.previous, tc.now, tc.active); got != tc.want {
+				t.Errorf("isControllerConnectEdge(%d, %d, active=%v) = %v, want %v",
+					tc.previous, tc.now, tc.active, got, tc.want)
+			}
+		})
+	}
+}

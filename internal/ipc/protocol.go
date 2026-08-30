@@ -63,6 +63,15 @@ type CouchState struct {
 	Mode        string `json:"mode,omitempty"`
 	HDR         bool   `json:"hdr,omitempty"`
 	VRR         bool   `json:"vrr,omitempty"`
+	// MissingSessionEnv names graphical-session variables the daemon still
+	// cannot see. It is empty on a healthy system; when it is not, a session
+	// started by a trigger puts the TV layout up and then launches a Steam
+	// that exits at once, silently.
+	MissingSessionEnv []string `json:"missing_session_env,omitempty"`
+	// UnavailableHooks names hooks the daemon cannot run, as the daemon sees
+	// it. Asking the CLI instead answers for the wrong process: a user shell
+	// finds the Omarchy helpers on PATH whether or not the daemon can.
+	UnavailableHooks []string `json:"unavailable_hooks,omitempty"`
 }
 
 const EventStatus = "status"
