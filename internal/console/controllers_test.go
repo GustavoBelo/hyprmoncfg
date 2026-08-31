@@ -1,4 +1,4 @@
-package couch
+package console
 
 import (
 	"os"

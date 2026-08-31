@@ -24,6 +24,15 @@ Running `hyprmoncfg` with no arguments opens the TUI.
 | `hyprmoncfg doctor` | Check that Hyprland loads hyprmoncfg's monitor config last |
 | `hyprmoncfg doctor --fix` | Add or move that include to the end of the Hyprland config |
 | `hyprmoncfg version` | Print build metadata |
+| `hyprmoncfg console session` | Host the desktop and the console in one login session (run by the login manager) |
+| `hyprmoncfg console enter` | Close the desktop and start the console session |
+| `hyprmoncfg console tv [connector]` | Choose the display the console plays on, or list the candidates |
+| `hyprmoncfg console apps list\|add\|remove` | Choose what to close before the desktop goes away |
+| `hyprmoncfg console trigger [on\|off]` | Enter console mode when a controller is switched on |
+| `hyprmoncfg console cancel` | Call off an automatic entry that is counting down |
+| `hyprmoncfg console status` | Show what console mode is configured to do |
+| `hyprmoncfg console doctor` | Check that a console session would work |
+| `hyprmoncfg console setup` | Say how to point the login manager at the hosting session |
 
 ### Common flags
 

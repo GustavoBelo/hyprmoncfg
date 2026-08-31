@@ -19,8 +19,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
-	"github.com/crmne/hyprmoncfg/internal/config"
-	"github.com/crmne/hyprmoncfg/internal/couch"
+	"github.com/crmne/hyprmoncfg/internal/console"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
@@ -39,7 +38,7 @@ const (
 	modeModePicker
 	modeNumericInput
 	modeProfileExecInput
-	modeCouchAppPicker
+	modeConsoleAppPicker
 	modeKeybindings
 )
 
@@ -49,7 +48,7 @@ const (
 	tabLayout mainTab = iota
 	tabProfiles
 	tabWorkspaces
-	tabCouch
+	tabConsole
 )
 
 type layoutFocus int
@@ -72,11 +71,9 @@ type refreshMsg struct {
 	workspaceRules  []hypr.WorkspaceRule
 	workspaces      []hypr.WorkspaceState
 	lidState        lid.State
-	couchConfig     *couch.Config
-	couchSession    *couch.Session
-	couchStale      bool
-	couchManaged    bool
-	couchHDRCapable map[string]bool
+	consoleConfig   *console.Config
+	consoleHosted   bool
+	consoleReady    bool
 	daemonOK        bool
 	daemonUnknown   bool
 	daemonVersion   string
@@ -299,12 +296,10 @@ type Model struct {
 	inspectorTab    inspectorTab
 	selectedProfile int
 
-	couchConfig     *couch.Config
-	couchSession    *couch.Session
-	couchStale      bool
-	couchManaged    bool
-	couchHDRCapable map[string]bool
-	couchSelected   int
+	consoleConfig   *console.Config
+	consoleHosted   bool
+	consoleReady    bool
+	consoleSelected int
 
 	pending       *pendingApply
 	revertGuard   *pendingRevertGuard
@@ -314,7 +309,7 @@ type Model struct {
 	picker        *modePickerState
 	input         *numericInputState
 	execInput     *profileExecInputState
-	couchPicker   *couchAppPickerState
+	consolePicker *consoleAppPickerState
 	drag          *canvasDragState
 	toast         *toastState
 	snap          *snapHintState
@@ -435,18 +430,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workspaceRules = msg.workspaceRules
 		m.workspaces = msg.workspaces
 		m.lidState = msg.lidState
-		m.couchConfig = msg.couchConfig
-		if msg.couchSession != nil {
-			s := *msg.couchSession
-			m.couchSession = &s
-		} else {
-			m.couchSession = nil
-		}
-		m.couchStale = msg.couchStale
-		m.couchManaged = msg.couchManaged
-		if msg.couchHDRCapable != nil {
-			m.couchHDRCapable = msg.couchHDRCapable
-		}
+		m.consoleConfig = msg.consoleConfig
+		m.consoleHosted = msg.consoleHosted
+		m.consoleReady = msg.consoleReady
 
 		reloadLive := len(m.editOutputs) == 0 || liveChanged || (!msg.background && !m.dirty)
 		if reloadLive {
@@ -652,8 +638,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNumericInputKeys(msg)
 		case modeProfileExecInput:
 			return m.updateProfileExecInputKeys(msg)
-		case modeCouchAppPicker:
-			return m.updateCouchAppPickerKeys(msg)
+		case modeConsoleAppPicker:
+			return m.updateConsoleAppPickerKeys(msg)
 		case modeKeybindings:
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -716,11 +702,11 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.tab = tabWorkspaces
 		return m, nil
 	case "4":
-		if !m.couchEnabled() {
-			m.setStatusErr("Couch Mode is off. Press c on the Layout tab to enable it.")
+		if !m.consoleAvailable() {
+			m.setStatusErr("Console Mode needs a gamescope session installed. See `hyprmoncfg console doctor`.")
 			return m, nil
 		}
-		m.tab = tabCouch
+		m.tab = tabConsole
 		return m, nil
 	case "?":
 		m.mode = modeKeybindings
@@ -772,8 +758,8 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateProfileKeys(msg)
 	case tabWorkspaces:
 		return m.updateWorkspaceKeys(msg)
-	case tabCouch:
-		return m.updateCouchKeys(msg)
+	case tabConsole:
+		return m.updateConsoleKeys(msg)
 	default:
 		return m, nil
 	}
@@ -781,7 +767,7 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *Model) updateLayoutKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.String() == "c" {
-		return m.enableCouchFromLayout()
+		return m.enableConsoleFromLayout()
 	}
 	if len(m.editOutputs) == 0 {
 		return m, nil
@@ -1035,8 +1021,8 @@ func (m Model) View() string {
 		return m.renderModalScreen(m.renderNumericInput())
 	case modeProfileExecInput:
 		return m.renderModalScreen(m.renderProfileExecInput())
-	case modeCouchAppPicker:
-		return m.renderModalScreen(m.renderCouchAppPicker())
+	case modeConsoleAppPicker:
+		return m.renderModalScreen(m.renderConsoleAppPicker())
 	case modeKeybindings:
 		return m.renderModalScreen(m.renderKeybindings())
 	default:
@@ -1063,8 +1049,8 @@ func (m Model) renderMain() string {
 		body = m.renderProfilesView(bodyHeight)
 	case tabWorkspaces:
 		body = m.renderWorkspaceView(bodyHeight)
-	case tabCouch:
-		body = m.renderCouchView(bodyHeight)
+	case tabConsole:
+		body = m.renderConsoleView(bodyHeight)
 	}
 	body = lipgloss.NewStyle().Height(bodyHeight).MaxHeight(bodyHeight).Render(body)
 
@@ -1092,8 +1078,8 @@ func (m Model) renderMain() string {
 
 func (m Model) renderTabs() string {
 	labels := []string{"Layout", "Profiles", "Workspaces"}
-	if m.couchEnabled() {
-		labels = append(labels, "Couch Mode")
+	if m.consoleAvailable() {
+		labels = append(labels, "Console")
 	}
 	parts := make([]string, 0, len(labels)*2+1)
 	lineStyle := withFG(lipgloss.NewStyle(), m.styles.palette.paneBorder)
@@ -1161,14 +1147,11 @@ func (m Model) canvasPaneMeta() string {
 	case lid.Closed:
 		parts = append(parts, "Lid: closed")
 	}
-	if !m.couchEnabled() && m.twoMonitorsLive() {
-		parts = append(parts, m.styles.warning.Render("Couch Mode setup: press c"))
-	}
 	return strings.Join(parts, " · ")
 }
 
 // twoMonitorsLive reports whether Hyprland currently reports at least two
-// displays; Couch Mode setup only makes sense with a TV plus a desk screen.
+// displays; Console Mode only makes sense with a TV plus a desk screen.
 func (m Model) twoMonitorsLive() bool {
 	return len(m.monitors) >= 2
 }
@@ -2544,7 +2527,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			return refreshMsg{daemonOK: daemonOK, daemonUnknown: daemonUnknown, daemonVersion: daemonVersion, profileOverride: profileOverride, daemonClient: replacement, background: background, err: err}
 		}
 		profiles, err := store.List()
-		// The console layout is generated and edited on the Couch tab; showing
+		// The console layout is generated and edited on the Console tab; showing
 		// it here would invite freehand edits that defeat its constraints.
 		profiles = profile.SelectableProfiles(profiles)
 		if err != nil {
@@ -2563,22 +2546,16 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			lidState = lid.Unknown
 		}
 
-		var couchConfig *couch.Config
-		if cfg, err := couch.LoadConfig(filepath.Dir(store.Dir())); err == nil {
-			couchConfig = &cfg
+		var consoleConfig *console.Config
+		if cfg, err := console.LoadConfig(filepath.Dir(store.Dir())); err == nil {
+			consoleConfig = &cfg
 		}
-		couchManaged := config.IsManaged(filepath.Dir(store.Dir()))
-		couchHDRCapable := hypr.HDRCapableConnectors()
-		var couchSession *couch.Session
-		var couchStale bool
-		if stateDir, err := couch.StateDir(); err == nil {
-			if session, running := couch.RunningSession(stateDir); running {
-				couchSession = &session
-			} else if session, stale := couch.StaleSession(stateDir); stale {
-				couchSession = &session
-				couchStale = true
-			}
+		consoleHosted := false
+		if runtimeDir, err := console.RuntimeDir(); err == nil {
+			consoleHosted = console.Hosted(runtimeDir)
 		}
+		entries := console.FindEntries(console.SessionDirs())
+		_, consoleReady := console.FindGamescopeSession(entries)
 
 		return refreshMsg{
 			monitors:        monitors,
@@ -2586,11 +2563,9 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			workspaceRules:  workspaceRules,
 			workspaces:      workspaces,
 			lidState:        lidState,
-			couchConfig:     couchConfig,
-			couchSession:    couchSession,
-			couchStale:      couchStale,
-			couchManaged:    couchManaged,
-			couchHDRCapable: couchHDRCapable,
+			consoleConfig:   consoleConfig,
+			consoleHosted:   consoleHosted,
+			consoleReady:    consoleReady,
 			daemonOK:        daemonOK,
 			daemonUnknown:   daemonUnknown,
 			daemonVersion:   daemonVersion,

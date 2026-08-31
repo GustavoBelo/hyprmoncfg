@@ -1,0 +1,381 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+
+	"github.com/crmne/hyprmoncfg/internal/console"
+	"github.com/crmne/hyprmoncfg/internal/hypr"
+)
+
+// consoleField identifies a selectable row of the Console tab.
+//
+// The list is short, and much shorter than the couch-mode tab it replaces,
+// because most of what that tab edited is no longer ours to decide: gamescope
+// takes the connector's preferred mode and Steam changes resolution, HDR and
+// the frame limiter per game from its own settings. Recording them here would
+// be a second source of truth that disagrees with the one actually in charge.
+type consoleField int
+
+const (
+	consoleFieldTV consoleField = iota
+	consoleFieldDesktopSession
+	consoleFieldTrigger
+	consoleFieldCloseApps
+	consoleFieldApp
+)
+
+// consoleRow is one visible row: a field, plus which app it refers to when the
+// field is consoleFieldApp.
+type consoleRow struct {
+	field consoleField
+	index int
+}
+
+func (m Model) consoleRows(cfg console.Config) []consoleRow {
+	rows := []consoleRow{
+		{field: consoleFieldTV},
+		{field: consoleFieldDesktopSession},
+		{field: consoleFieldTrigger},
+		{field: consoleFieldCloseApps},
+	}
+	for i := range cfg.AppsToClose {
+		rows = append(rows, consoleRow{field: consoleFieldApp, index: i})
+	}
+	return rows
+}
+
+func (m Model) consoleRowAt(cfg console.Config, index int) consoleRow {
+	rows := m.consoleRows(cfg)
+	if index < 0 || index >= len(rows) {
+		return consoleRow{field: consoleFieldTV}
+	}
+	return rows[index]
+}
+
+// consoleAvailable reports whether the tab is worth showing at all.
+//
+// A machine with no gamescope session cannot enter console mode, and offering a
+// tab whose every action fails is worse than not offering it.
+func (m Model) consoleAvailable() bool {
+	return m.consoleReady
+}
+
+func (m Model) consoleBaseDir() string {
+	if m.store == nil {
+		return ""
+	}
+	return filepath.Dir(m.store.Dir())
+}
+
+func (m Model) ensureConsoleConfig() console.Config {
+	if m.consoleConfig != nil {
+		return *m.consoleConfig
+	}
+	return console.Config{}
+}
+
+func (m *Model) persistConsole(cfg console.Config) error {
+	base := m.consoleBaseDir()
+	if base == "" {
+		return fmt.Errorf("no config directory")
+	}
+	if err := console.SaveConfig(base, cfg); err != nil {
+		return err
+	}
+	stored := cfg
+	m.consoleConfig = &stored
+	return nil
+}
+
+// enableConsoleFromLayout is the Layout tab's shortcut: pick the display under
+// the cursor as the TV and move to the Console tab.
+func (m Model) enableConsoleFromLayout() (tea.Model, tea.Cmd) {
+	if m.selectedOutput < 0 || m.selectedOutput >= len(m.editOutputs) {
+		m.setStatusErr("Select the display you play on first.")
+		return m, nil
+	}
+	// The live monitor, not the edited row: the TV is identified by the EDID it
+	// is actually presenting, which an unapplied edit does not have.
+	chosen := m.editOutputs[m.selectedOutput]
+	var monitor hypr.Monitor
+	found := false
+	for _, live := range m.monitors {
+		if live.Name == chosen.Name {
+			monitor, found = live, true
+			break
+		}
+	}
+	if !found {
+		m.setStatusErr("That display is not connected.")
+		return m, nil
+	}
+	cfg := m.ensureConsoleConfig()
+	cfg.TVName = monitor.Name
+	cfg.TVKey = monitor.HardwareKey()
+	cfg.TVDescription = monitor.Description
+	if cfg.DesktopSession == "" {
+		cfg.DesktopSession = console.CurrentDesktopSession(context.Background(), console.Systemctl{})
+	}
+	if err := m.persistConsole(cfg); err != nil {
+		m.setStatusErr(err.Error())
+		return m, nil
+	}
+	m.tab = tabConsole
+	m.consoleSelected = 0
+	m.setStatusOK(fmt.Sprintf("The console will play on %s.", monitor.Name))
+	return m, nil
+}
+
+func (m Model) updateConsoleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	cfg := m.ensureConsoleConfig()
+	rows := m.consoleRows(cfg)
+
+	switch msg.String() {
+	case "up", "k":
+		if m.consoleSelected > 0 {
+			m.consoleSelected--
+		}
+		return m, nil
+	case "down", "j":
+		if m.consoleSelected < len(rows)-1 {
+			m.consoleSelected++
+		}
+		return m, nil
+	case "left", "h":
+		return m.adjustConsoleField(&cfg, -1)
+	case "right", "l":
+		return m.adjustConsoleField(&cfg, 1)
+	case "e":
+		return m, m.openConsoleAppPicker(&cfg)
+	case "enter":
+		return m.startConsole()
+	}
+	return m, nil
+}
+
+func (m Model) adjustConsoleField(cfg *console.Config, dir int) (tea.Model, tea.Cmd) {
+	row := m.consoleRowAt(*cfg, m.consoleSelected)
+	switch row.field {
+	case consoleFieldTV:
+		names := connectedOutputNames(m.monitors)
+		if len(names) == 0 {
+			return m, nil
+		}
+		cfg.TVName = cycleValue(names, cfg.TVName, dir)
+		for _, mon := range m.monitors {
+			if mon.Name == cfg.TVName {
+				cfg.TVKey = mon.HardwareKey()
+				cfg.TVDescription = mon.Description
+			}
+		}
+	case consoleFieldDesktopSession:
+		files := plainSessionFiles()
+		if len(files) == 0 {
+			return m, nil
+		}
+		cfg.DesktopSession = cycleValue(files, cfg.DesktopSession, dir)
+	case consoleFieldTrigger:
+		cfg.EnterOnControllerConnect = !cfg.EnterOnControllerConnect
+	case consoleFieldApp:
+		if row.index < len(cfg.AppsToClose) {
+			cfg.AppsToClose = append(cfg.AppsToClose[:row.index], cfg.AppsToClose[row.index+1:]...)
+			if m.consoleSelected >= len(m.consoleRows(*cfg)) {
+				m.consoleSelected = max(0, len(m.consoleRows(*cfg))-1)
+			}
+		}
+	default:
+		return m, nil
+	}
+	if err := m.persistConsole(*cfg); err != nil {
+		m.setStatusErr(err.Error())
+	}
+	return m, nil
+}
+
+// startConsole asks the daemon to enter, rather than doing it here.
+//
+// The daemon owns the countdown because the countdown has to outlive whatever
+// asked for it: this TUI is about to be closed along with the rest of the
+// desktop.
+func (m Model) startConsole() (tea.Model, tea.Cmd) {
+	if !m.consoleHosted {
+		m.setStatusErr("This session cannot switch. Run `hyprmoncfg console setup` and log in again.")
+		return m, nil
+	}
+	cfg := m.ensureConsoleConfig()
+	if !cfg.Configured() {
+		m.setStatusErr("Choose the display the console plays on first.")
+		return m, nil
+	}
+	client := m.ipc
+	if client == nil {
+		m.setStatusErr("The daemon is not running, so there is nothing to hand the session to.")
+		return m, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := client.ConsoleEnter(ctx, "the TUI"); err != nil {
+		m.setStatusErr(err.Error())
+		return m, nil
+	}
+	m.setStatusOK("Console mode starting. `hyprmoncfg console cancel` stops it.")
+	return m, nil
+}
+
+func (m Model) renderConsoleView(height int) string {
+	settings := m.consoleSettingsLines()
+	leftStyle := m.paneStyle(paneToneFocused)
+
+	if m.terminalWidth() < 96 {
+		width := m.terminalWidth() - m.styles.app.GetHorizontalFrameSize()
+		settingsHeight := clampInt(len(settings)+2, 6, (height*2)/3)
+		innerW := max(1, width-leftStyle.GetHorizontalFrameSize())
+		leftBody := fitBlock(strings.Join(settings, "\n"), innerW, max(1, settingsHeight-leftStyle.GetVerticalFrameSize()))
+		left := m.renderTitledPane(paneToneFocused, "Console Mode", leftBody, width)
+		right := m.renderConsoleStatusPane(width, max(3, height-settingsHeight))
+		return lipgloss.JoinVertical(lipgloss.Left, left, right)
+	}
+
+	leftWidth, rightWidth := m.sidePaneWidths(35)
+	leftBody := fitBlock(strings.Join(settings, "\n"), max(1, leftWidth-leftStyle.GetHorizontalFrameSize()), max(1, height-leftStyle.GetVerticalFrameSize()))
+	left := m.renderTitledPane(paneToneFocused, "Console Mode", leftBody, leftWidth)
+	right := m.renderConsoleStatusPane(rightWidth, height)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", paneGapWidth), right)
+}
+
+func (m Model) consoleSettingsLines() []string {
+	cfg := m.ensureConsoleConfig()
+	rows := m.consoleRows(cfg)
+	lines := make([]string, 0, len(rows)+6)
+
+	for i, row := range rows {
+		selected := m.consoleSelected == i
+		switch row.field {
+		case consoleFieldTV:
+			lines = append(lines, m.consoleSettingLine(selected, "Plays on", orNotSet(cfg.TVName)))
+		case consoleFieldDesktopSession:
+			lines = append(lines, m.consoleSettingLine(selected, "Comes back to", orNotSet(cfg.DesktopSession)))
+		case consoleFieldTrigger:
+			lines = append(lines, m.consoleToggleLine(selected, "Start on controller", cfg.EnterOnControllerConnect))
+		case consoleFieldCloseApps:
+			lines = append(lines, "")
+			label := fmt.Sprintf("Close first (%d)", len(cfg.AppsToClose))
+			lines = append(lines, m.consoleSettingLine(selected, label, "press e"))
+		case consoleFieldApp:
+			if row.index < len(cfg.AppsToClose) {
+				lines = append(lines, m.consoleAppLine(selected, row.index, cfg.AppsToClose[row.index]))
+			}
+		}
+	}
+	return lines
+}
+
+func (m Model) consoleSettingLine(selected bool, label string, value string) string {
+	prefix := "  "
+	if selected {
+		prefix = m.styles.statusOK.Render("> ")
+		value = m.styles.focused.Render(value)
+	} else {
+		value = m.styles.value.Render(value)
+	}
+	return fmt.Sprintf("%s%s %s", prefix, m.styles.label.Render(fmt.Sprintf("%-20s", label)), value)
+}
+
+func (m Model) consoleToggleLine(selected bool, label string, on bool) string {
+	value := m.styles.subtle.Render("off")
+	if on {
+		value = m.styles.statusOK.Render("on")
+	}
+	return m.consoleSettingLine(selected, label, value)
+}
+
+func (m Model) consoleAppLine(selected bool, index int, app string) string {
+	prefix := "  "
+	label := app
+	if selected {
+		prefix = m.styles.statusOK.Render("> ")
+		label = m.styles.focused.Render(label)
+	} else {
+		label = m.styles.value.Render(label)
+	}
+	return fmt.Sprintf("%s%s %s", prefix, m.styles.subtle.Render(fmt.Sprintf("%d.", index+1)), label)
+}
+
+func (m Model) renderConsoleStatusPane(width int, height int) string {
+	style := m.paneStyle(paneToneStatic)
+	innerW := max(1, width-style.GetHorizontalFrameSize())
+	lines := []string{}
+
+	if m.consoleHosted {
+		lines = append(lines, m.styles.statusOK.Render("This session can switch."))
+	} else {
+		lines = append(lines,
+			m.styles.warning.Render("This session cannot switch."),
+			"",
+			"Console mode needs the login manager to start",
+			"the hosting session. Run:",
+			"",
+			m.styles.value.Render("  hyprmoncfg console setup"),
+			"",
+			"then log out and back in.")
+	}
+	lines = append(lines, "", m.styles.subtle.Render(
+		"Entering closes this desktop session. Come back"),
+		m.styles.subtle.Render("from Big Picture: Steam -> Power -> Switch to"),
+		m.styles.subtle.Render("Desktop."))
+	lines = append(lines, "", m.styles.subtle.Render(
+		"Resolution, HDR and the frame limiter are set"),
+		m.styles.subtle.Render("per game inside Steam, not here."))
+
+	body := fitBlock(strings.Join(lines, "\n"), innerW, max(1, height-style.GetVerticalFrameSize()))
+	return m.renderTitledPane(paneToneStatic, "Status", body, width)
+}
+
+// plainSessionFiles lists the sessions that can be come back to, which is every
+// one that is not itself a hosting session.
+func plainSessionFiles() []string {
+	files := []string{}
+	for _, e := range console.FindEntries(console.SessionDirs()) {
+		if !console.HostsConsole(e) {
+			files = append(files, e.File())
+		}
+	}
+	return files
+}
+
+func connectedOutputNames(monitors []hypr.Monitor) []string {
+	names := make([]string, 0, len(monitors))
+	for _, m := range monitors {
+		names = append(names, m.Name)
+	}
+	return names
+}
+
+func cycleValue(values []string, current string, dir int) string {
+	if len(values) == 0 {
+		return current
+	}
+	index := 0
+	for i, v := range values {
+		if v == current {
+			index = i
+			break
+		}
+	}
+	index = (index + dir + len(values)) % len(values)
+	return values[index]
+}
+
+func orNotSet(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "not set"
+	}
+	return s
+}

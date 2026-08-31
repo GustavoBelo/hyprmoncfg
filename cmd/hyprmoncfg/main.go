@@ -65,9 +65,9 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newApplyCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newDeleteCmd(&configDir))
 	root.AddCommand(newDoctorCmd(&monitorsConf, &hyprConfig))
+	root.AddCommand(newConsoleCmd(&configDir))
 	root.AddCommand(newManageCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newUnmanageCmd(&configDir, &monitorsConf, &hyprConfig))
-	root.AddCommand(newCouchCmd(&configDir, &monitorsConf, &hyprConfig))
 	root.AddCommand(newVersionCmd("hyprmoncfg"))
 
 	return root

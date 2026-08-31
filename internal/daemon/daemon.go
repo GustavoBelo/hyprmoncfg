@@ -55,7 +55,7 @@ type Service struct {
 	lidState      lid.State
 	lidSupported  bool
 
-	couch *couchController
+	console *consoleController
 
 	readLid      func(context.Context) (lid.State, error)
 	watchLid     func(context.Context, time.Duration) (<-chan lid.State, <-chan error)
@@ -159,7 +159,7 @@ func New(client *hypr.Client, store *profile.Store, cfg Config) *Service {
 		watchLid:     lid.Watch,
 		watchSuspend: suspend.Watch,
 	}
-	svc.couch = newCouchController(svc)
+	svc.console = newConsoleController(svc)
 	return svc
 }
 
@@ -171,13 +171,6 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	s.ensureConfigInclude(ctx)
-
-	// A session whose process died still owns the displays until someone puts
-	// them back. Do it before the first applyBest, so automatic matching does
-	// not see the TV layout and adopt it as the desktop.
-	if s.couch != nil {
-		s.couch.Reconcile(ctx)
-	}
 
 	type trigger struct {
 		reason string
@@ -260,7 +253,6 @@ func (s *Service) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			s.endCouchSessionOnShutdown()
 			return nil
 		case err, ok := <-eventErrs:
 			if !ok {
@@ -281,13 +273,10 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			// Window activity feeds couch mode only. Letting it reach
+			// Window events only ever fed couch mode. Letting them reach
 			// scheduleMonitorTrigger is what made the daemon re-derive the
 			// layout on every window that opened or changed title.
 			if isWindowEvent(ev.Type) {
-				if s.couch != nil {
-					s.couch.observeWindowEvent(ctx, ev)
-				}
 				continue
 			}
 
@@ -319,8 +308,8 @@ func (s *Service) Run(ctx context.Context) error {
 		case <-couchPoll.C:
 			// Controller hotplug has no Hyprland event, so it is polled --
 			// cheaply, straight from sysfs, and only while idle.
-			if s.couch != nil {
-				s.couch.observeControllers(ctx)
+			if s.console != nil {
+				s.console.observeControllers(ctx)
 			}
 		case <-eventRetry:
 			eventRetry = nil
@@ -537,10 +526,6 @@ func (s *Service) applyBest(ctx context.Context) error {
 	s.pendingMu.Unlock()
 	if interactive {
 		s.cfg.Logf("automatic switching paused during interactive preview")
-		return nil
-	}
-	if s.couch != nil && s.couch.Active() {
-		s.cfg.Logf("automatic switching paused while a couch session holds the displays")
 		return nil
 	}
 	// Monitor configuration was handed back to Hyprland. Applying anything here
@@ -763,7 +748,7 @@ func allDisabledFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool)
 // applyProfileLocked applies a profile through the same engine, write lock and
 // revert path as everything else the daemon does.
 //
-// Couch mode used to reach around this with its own copy of the apply logic in
+// Console mode used to reach around this with its own copy of the apply logic in
 // the CLI, which is how a session and the daemon ended up writing the monitor
 // config at the same time.
 func (s *Service) applyProfileLocked(ctx context.Context, p profile.Profile) error {
@@ -777,40 +762,18 @@ func (s *Service) applyProfileLocked(ctx context.Context, p profile.Profile) err
 	if _, err := s.engine.Apply(ctx, p, monitors, apply.ApplyModeNonInteractive); err != nil {
 		return err
 	}
-	s.applied = p.Name + "|couch"
+	s.applied = p.Name
 	return nil
 }
 
-// isWindowEvent separates the couch-mode feed from the monitor feed. They share
-// one socket2 connection, so the split has to happen here.
+// isWindowEvent separates window activity from the monitor feed. They share one
+// socket2 connection, because two subscriptions would mean two connections to
+// the same socket and which one received a given event would depend on connect
+// order.
 func isWindowEvent(t hypr.EventType) bool {
 	switch t {
-	case hypr.EventWindowOpened, hypr.EventWindowClosed, hypr.EventWindowTitle:
+	case hypr.EventWindowOpened, hypr.EventWindowTitle, hypr.EventWindowClosed:
 		return true
 	}
 	return false
-}
-
-// endCouchSessionOnShutdown puts the desktop back before the daemon exits.
-//
-// Without it a restart -- an upgrade, a `systemctl --user restart` -- walks away
-// from a running session: the TV layout stays applied, sound stays on the TV
-// and the bar stays hidden, because the hooks are undone by the process that
-// applied them. Reconcile was meant to catch that on the way back up, but a
-// restart is exactly the case it cannot: the session record still names a
-// process that is only just exiting, so the new daemon reads it as live,
-// discards the record and then lets automatic matching impose a profile over a
-// desktop nobody restored.
-//
-// The shutdown context is already cancelled, so this gets a fresh one with a
-// short budget. Restoring most of the desktop beats restoring none of it.
-func (s *Service) endCouchSessionOnShutdown() {
-	if s.couch == nil || !s.couch.Active() {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	if err := s.couch.stopWithContext(ctx, "the daemon is shutting down"); err != nil {
-		s.cfg.Logf("could not end the couch session on shutdown: %v", err)
-	}
 }

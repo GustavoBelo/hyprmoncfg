@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Console Mode
+Comment=Close the desktop and hand the machine to Steam's gamescope session
+Exec=xdg-terminal-exec --app-id=TUI.float -e hyprmoncfg console enter
+Terminal=false
+NoDisplay=true
+Categories=Game;Settings;
+Keywords=Steam;Big Picture;gamescope;console;TV;couch;
+Icon=input-gaming
+StartupNotify=true

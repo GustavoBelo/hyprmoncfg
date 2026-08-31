@@ -13,8 +13,7 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
-	"github.com/crmne/hyprmoncfg/internal/couch"
-	"github.com/crmne/hyprmoncfg/internal/couch/hooks"
+	"github.com/crmne/hyprmoncfg/internal/console"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -70,20 +69,19 @@ func (s *Service) Status() (appstatus.Document, error) {
 		}
 	}
 	s.pendingMu.Unlock()
-	if state, err := s.CouchStatus(); err == nil && (state.Enabled || state.Active) {
-		document.Couch = &appstatus.Couch{
-			Enabled:     state.Enabled,
+
+	// Console mode rides the status document so a panel gets it pushed over the
+	// connection it already holds, instead of shelling out on a timer.
+	if state, err := s.ConsoleStatus(); err == nil && state.Configured {
+		document.Console = &appstatus.Console{
 			Configured:  state.Configured,
-			Managed:     state.Managed,
-			Active:      state.Active,
-			Phase:       state.Phase,
-			Duration:    state.Duration,
-			Reason:      state.Reason,
+			Hosted:      state.Hosted,
+			Ready:       state.Ready,
+			Arming:      state.Arming,
+			Trigger:     state.Trigger,
 			Controllers: state.Controllers,
 			TVName:      state.TVName,
-			Mode:        state.Mode,
-			HDR:         state.HDR,
-			VRR:         state.VRR,
+			Problems:    state.Problems,
 		}
 	}
 
@@ -515,60 +513,72 @@ func transactionID() (string, error) {
 	return hex.EncodeToString(token[:]), nil
 }
 
-// CouchStatus, CouchStart and CouchStop expose the console session over IPC.
+// ConsoleStatus, ConsoleEnter and ConsoleCancel expose console mode over IPC.
 //
-// Everything that used to spawn `hyprmoncfg couch play` as a detached child --
-// the TUI, the Omarchy panel, the CLI -- comes through here instead, so there
-// is exactly one session and exactly one writer.
-func (s *Service) CouchStatus() (ipc.CouchState, error) {
-	status := s.couch.Status()
-	state := ipc.CouchState{
-		Phase:       string(status.Phase),
-		Active:      status.Active,
-		Duration:    status.Duration,
-		Reason:      status.Reason,
-		Controllers: status.Controllers,
-		Managed:     config.IsManaged(s.cfg.ConfigDir),
-	}
-	if !status.StartedAt.IsZero() {
-		state.StartedAt = status.StartedAt.Format(time.RFC3339)
-	}
-	cfg, err := couch.LoadConfig(s.cfg.ConfigDir)
+// Entering goes through the daemon rather than being run by whoever asked,
+// because the countdown has to outlive the asker: a panel button closes its own
+// window, and a shell command's terminal goes with the desktop.
+func (s *Service) ConsoleStatus() (ipc.ConsoleState, error) {
+	base, err := config.EnsureBaseDir(s.cfg.ConfigDir)
 	if err != nil {
-		return state, nil
+		return ipc.ConsoleState{}, err
 	}
-	sessionHealth(&state, cfg)
-	state.Enabled = cfg.Enabled
-	state.Configured = cfg.Configured()
-	state.TVName = cfg.Layout.TVName
-	state.Mode = cfg.Layout.Mode
-	state.HDR = cfg.Layout.HDR
-	state.VRR = cfg.Layout.VRR
+	cfg, err := console.LoadConfig(base)
+	if err != nil {
+		return ipc.ConsoleState{}, err
+	}
+	state := ipc.ConsoleState{
+		Configured:        cfg.Configured(),
+		TVName:            cfg.TVName,
+		Trigger:           cfg.EnterOnControllerConnect,
+		Controllers:       console.ConnectedControllers(),
+		MissingSessionEnv: session.Missing(),
+	}
+	if runtimeDir, err := console.RuntimeDir(); err == nil {
+		state.Hosted = console.Hosted(runtimeDir)
+	}
+	if s.console != nil {
+		state.Arming = s.console.Arming()
+	}
+	state.Problems = consoleProblems(cfg, state)
+	state.Ready = len(state.Problems) == 0
 	return state, nil
 }
 
-// sessionHealth reports what the daemon cannot reach, from inside the daemon.
-// Both answers differ from the ones a user shell would give, which is exactly
-// why they are collected here.
-func sessionHealth(state *ipc.CouchState, cfg couch.Config) {
-	state.MissingSessionEnv = session.Missing()
-	for _, hook := range hooks.All() {
-		if !hook.Available() && cfg.HookEnabled(hook.Name()) {
-			state.UnavailableHooks = append(state.UnavailableHooks, hook.Name())
-		}
+// consoleProblems is what the doctor would say, collected here so a panel can
+// show it without shelling out.
+func consoleProblems(cfg console.Config, state ipc.ConsoleState) []string {
+	problems := []string{}
+	entries := console.FindEntries(console.SessionDirs())
+	if _, ok := console.FindGamescopeSession(entries); !ok {
+		problems = append(problems, "no gamescope session is installed")
 	}
+	if _, ok := console.FindEntryByFile(entries, cfg.DesktopSession); !ok {
+		problems = append(problems, "no desktop session to come back to")
+	}
+	if !state.Configured {
+		problems = append(problems, "no TV has been chosen")
+	}
+	if !state.Hosted {
+		problems = append(problems, "this session cannot switch; run `hyprmoncfg console setup`")
+	}
+	return problems
 }
 
-func (s *Service) CouchStart(params ipc.CouchStartParams) error {
+func (s *Service) ConsoleEnter(params ipc.ConsoleEnterParams) error {
+	if s.console == nil {
+		return errors.New("console mode is not available")
+	}
 	trigger := strings.TrimSpace(params.Trigger)
 	if trigger == "" {
 		trigger = "a request over IPC"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-	return s.couch.Start(ctx, trigger)
+	return s.console.Arm(context.Background(), trigger)
 }
 
-func (s *Service) CouchStop() error {
-	return s.couch.Stop()
+func (s *Service) ConsoleCancel() error {
+	if s.console == nil || !s.console.cancelArmed("cancelled") {
+		return errors.New("nothing was counting down")
+	}
+	return nil
 }

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/config"
-	"github.com/crmne/hyprmoncfg/internal/couch"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/ipc"
 	"github.com/crmne/hyprmoncfg/internal/lid"
@@ -1356,45 +1355,5 @@ func TestApplyBestRecoversFromABlackScreenBesideHyprlandsFallbackHead(t *testing
 	// Hyprland's invented head must never reach the generated config.
 	if strings.Contains(rendered, "FALLBACK") {
 		t.Fatalf("the synthetic head was written into the config:\n%s", rendered)
-	}
-}
-
-// A couch session owns the displays while it runs; automatic switching must
-// not write over the TV layout the user is playing on.
-func TestApplyBestDefersWhileCouchSessionIsActive(t *testing.T) {
-	env := newApplyBestTestEnv(t, `[{"id":1,"name":"eDP-1","description":"Framework Panel","make":"Framework","model":"Panel","serial":"A1","width":2880,"height":1800,"refreshRate":120,"x":100,"y":200,"scale":2,"transform":0,"disabled":false,"dpmsStatus":true,"mirrorOf":""}]`)
-	mon := hypr.Monitor{Name: "eDP-1", Description: "Framework Panel", Make: "Framework", Model: "Panel", Serial: "A1"}
-
-	if err := env.store.Save(profile.New("desk", []profile.OutputConfig{{
-		Key: mon.HardwareKey(), Name: mon.Name, Enabled: true,
-		Width: 2880, Height: 1800, Refresh: 120, X: 100, Y: 200, Scale: 2,
-	}})); err != nil {
-		t.Fatalf("save profile: %v", err)
-	}
-
-	svc := New(env.client, env.store, Config{
-		MonitorsConf: env.monitorsConfPath,
-		HyprConfig:   env.hyprlandConfigPath,
-	})
-	// The controller is the daemon's own state now, not a callback it is told
-	// about from outside.
-	svc.couch.setPhase(couch.PhasePlaying)
-
-	if err := svc.applyBest(context.Background()); err != nil {
-		t.Fatalf("applyBest returned error: %v", err)
-	}
-
-	rendered := readMonitorsConf(t, env)
-	if strings.Contains(rendered, "position = 100x200") {
-		t.Fatalf("applyBest applied a profile while a couch session is active:\n%s", rendered)
-	}
-
-	// Once the session ends, normal switching resumes.
-	svc.couch.setPhase(couch.PhaseIdle)
-	if err := svc.applyBest(context.Background()); err != nil {
-		t.Fatalf("applyBest after the session: %v", err)
-	}
-	if rendered := readMonitorsConf(t, env); !strings.Contains(rendered, "position = 100x200") {
-		t.Fatalf("automatic switching should resume once the session ends:\n%s", rendered)
 	}
 }

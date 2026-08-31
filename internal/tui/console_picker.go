@@ -10,30 +10,31 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/crmne/hyprmoncfg/internal/couch"
+	"github.com/crmne/hyprmoncfg/internal/apps"
+	"github.com/crmne/hyprmoncfg/internal/console"
 )
 
-// couchAppPickerState is the multi-select list of things a session may close.
+// consoleAppPickerState is the multi-select list of things a session may close.
 //
 // It replaces typing names into a text field. Matching is exact -- a window
 // class or a /proc comm -- so the right value is often unguessable: the
 // WhatsApp web app reports "chrome-web.whatsapp.com__-Default". Picking from
 // what is actually open is how the user gets that value without knowing it.
-type couchAppPickerState struct {
+type consoleAppPickerState struct {
 	List     list.Model
 	Chosen   map[string]bool
 	Extra    []string
-	Rendered []couch.CloseCandidate
+	Rendered []apps.CloseCandidate
 }
 
-type couchAppItem struct {
-	candidate couch.CloseCandidate
+type consoleAppItem struct {
+	candidate apps.CloseCandidate
 	chosen    bool
 }
 
-func (i couchAppItem) FilterValue() string { return i.candidate.Label + " " + i.candidate.Token }
+func (i consoleAppItem) FilterValue() string { return i.candidate.Label + " " + i.candidate.Token }
 
-func (i couchAppItem) Title() string {
+func (i consoleAppItem) Title() string {
 	mark := "[ ]"
 	if i.chosen {
 		mark = "[x]"
@@ -50,29 +51,29 @@ func (i couchAppItem) Title() string {
 	return mark + " " + label
 }
 
-func (i couchAppItem) Description() string { return "" }
+func (i consoleAppItem) Description() string { return "" }
 
-func (m *Model) openCouchAppPicker(cfg *couch.Config) tea.Cmd {
+func (m *Model) openConsoleAppPicker(cfg *console.Config) tea.Cmd {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	candidates := couch.CloseCandidates(ctx, m.engine.Client)
-	chosen := couch.MarkChosen(candidates, cfg.AppsToClose)
+	candidates := apps.CloseCandidates(ctx, m.engine.Client)
+	chosen := apps.MarkChosen(candidates, cfg.AppsToClose)
 	// Entries the picker cannot show -- an app that is simply not running and
 	// has no desktop entry -- must survive the round trip.
-	extra := couch.MissingTokens(candidates, cfg.AppsToClose)
+	extra := apps.MissingTokens(candidates, cfg.AppsToClose)
 
-	state := &couchAppPickerState{Chosen: chosen, Extra: extra, Rendered: candidates}
-	state.List = m.newCouchAppList(state)
-	m.couchPicker = state
-	m.mode = modeCouchAppPicker
+	state := &consoleAppPickerState{Chosen: chosen, Extra: extra, Rendered: candidates}
+	state.List = m.newConsoleAppList(state)
+	m.consolePicker = state
+	m.mode = modeConsoleAppPicker
 	return nil
 }
 
-func (m Model) newCouchAppList(state *couchAppPickerState) list.Model {
+func (m Model) newConsoleAppList(state *consoleAppPickerState) list.Model {
 	items := make([]list.Item, 0, len(state.Rendered))
 	for _, candidate := range state.Rendered {
-		items = append(items, couchAppItem{
+		items = append(items, consoleAppItem{
 			candidate: candidate,
 			chosen:    state.Chosen[strings.ToLower(candidate.Token)],
 		})
@@ -105,79 +106,79 @@ func (m Model) newCouchAppList(state *couchAppPickerState) list.Model {
 	return picker
 }
 
-func (m Model) updateCouchAppPickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.couchPicker == nil {
+func (m Model) updateConsoleAppPickerKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.consolePicker == nil {
 		m.mode = modeMain
 		return m, nil
 	}
 	// While filtering, keys belong to the filter box.
-	if m.couchPicker.List.FilterState() == list.Filtering {
+	if m.consolePicker.List.FilterState() == list.Filtering {
 		var cmd tea.Cmd
-		m.couchPicker.List, cmd = m.couchPicker.List.Update(msg)
+		m.consolePicker.List, cmd = m.consolePicker.List.Update(msg)
 		return m, cmd
 	}
 
 	switch msg.String() {
 	case "esc":
 		m.mode = modeMain
-		m.couchPicker = nil
+		m.consolePicker = nil
 		return m, nil
 
 	case " ", "x":
-		item, ok := m.couchPicker.List.SelectedItem().(couchAppItem)
+		item, ok := m.consolePicker.List.SelectedItem().(consoleAppItem)
 		if !ok {
 			return m, nil
 		}
 		key := strings.ToLower(item.candidate.Token)
-		m.couchPicker.Chosen[key] = !m.couchPicker.Chosen[key]
-		index := m.couchPicker.List.Index()
-		m.couchPicker.List = m.newCouchAppList(m.couchPicker)
-		m.couchPicker.List.Select(index)
+		m.consolePicker.Chosen[key] = !m.consolePicker.Chosen[key]
+		index := m.consolePicker.List.Index()
+		m.consolePicker.List = m.newConsoleAppList(m.consolePicker)
+		m.consolePicker.List.Select(index)
 		return m, nil
 
 	case "enter":
-		cfg := m.ensureCouchConfig()
-		cfg.AppsToClose = couch.SanitizeApps(m.couchPickerSelection())
-		if err := m.persistCouch(cfg); err != nil {
+		cfg := m.ensureConsoleConfig()
+		cfg.AppsToClose = apps.SanitizeApps(m.consolePickerSelection())
+		if err := m.persistConsole(cfg); err != nil {
 			m.setStatusErr(fmt.Sprintf("Could not save the close list: %v", err))
 		} else {
 			m.setStatusOK(fmt.Sprintf("Close list updated (%d apps)", len(cfg.AppsToClose)))
 		}
 		m.mode = modeMain
-		m.couchPicker = nil
+		m.consolePicker = nil
 		return m, nil
 
 	default:
 		var cmd tea.Cmd
-		m.couchPicker.List, cmd = m.couchPicker.List.Update(msg)
+		m.consolePicker.List, cmd = m.consolePicker.List.Update(msg)
 		return m, cmd
 	}
 }
 
-// couchPickerSelection reads the ticks back out, in the order they are shown,
+// consolePickerSelection reads the ticks back out, in the order they are shown,
 // and keeps the entries the picker could not offer.
-func (m Model) couchPickerSelection() []string {
-	if m.couchPicker == nil {
+func (m Model) consolePickerSelection() []string {
+	if m.consolePicker == nil {
 		return nil
 	}
-	chosen := make([]string, 0, len(m.couchPicker.Chosen))
-	for _, candidate := range m.couchPicker.Rendered {
-		if m.couchPicker.Chosen[strings.ToLower(candidate.Token)] {
+	chosen := make([]string, 0, len(m.consolePicker.Chosen))
+	for _, candidate := range m.consolePicker.Rendered {
+		if m.consolePicker.Chosen[strings.ToLower(candidate.Token)] {
 			chosen = append(chosen, candidate.Token)
 		}
 	}
-	return append(chosen, m.couchPicker.Extra...)
+	return append(chosen, m.consolePicker.Extra...)
 }
 
-func (m Model) renderCouchAppPicker() string {
-	if m.couchPicker == nil {
+func (m Model) renderConsoleAppPicker() string {
+	if m.consolePicker == nil {
 		return ""
 	}
-	selected := len(m.couchPickerSelection())
+	selected := len(m.consolePickerSelection())
 	body := []string{
 		m.styles.subtle.Render("Windows that are open right now come first; their name is what a session will match on."),
 		"",
-		m.couchPicker.List.View(),
+		m.consolePicker.List.View(),
 		"",
 		m.styles.help.Render(fmt.Sprintf("Space picks · / filters · Enter saves (%d selected) · Esc discards", selected)),
 	}

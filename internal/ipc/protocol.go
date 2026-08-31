@@ -39,43 +39,44 @@ const (
 	MethodUnmanage    = "unmanage"
 	MethodProfileAuto = "set_profile_auto"
 
-	// Couch mode. The session lives in the daemon, so the TUI, the panel and
-	// the CLI all drive it from here rather than each spawning their own
-	// detached process and racing over the same displays.
-	MethodCouchStatus = "couch.status"
-	MethodCouchStart  = "couch.start"
-	MethodCouchStop   = "couch.stop"
+	// Console mode. Entering ends the desktop session, so it is armed here
+	// rather than done outright: the daemon announces it, waits, and can be
+	// called off -- from the panel, the CLI, or by switching the pad back off.
+	MethodConsoleStatus = "console.status"
+	MethodConsoleEnter  = "console.enter"
+	MethodConsoleCancel = "console.cancel"
 )
 
-// CouchStartParams says what asked for the session, which lands in the log.
-type CouchStartParams struct {
+// ConsoleEnterParams says what asked for the session, which lands in the log.
+type ConsoleEnterParams struct {
 	Trigger string `json:"trigger,omitempty"`
 }
 
-// CouchState is the daemon's answer about the console session.
-type CouchState struct {
-	Phase       string `json:"phase"`
-	Active      bool   `json:"active"`
-	StartedAt   string `json:"started_at,omitempty"`
-	Duration    string `json:"duration,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Controllers int    `json:"controllers"`
-	Enabled     bool   `json:"enabled"`
-	Configured  bool   `json:"configured"`
-	Managed     bool   `json:"managed"`
+// ConsoleState is the daemon's answer about console mode.
+//
+// It is much smaller than the couch-mode state it replaces. There is no session
+// to report on: once the console starts, this daemon's compositor is gone and
+// the state that matters is the hosting session's, not ours.
+type ConsoleState struct {
+	// Configured is whether a TV has been chosen.
+	Configured bool `json:"configured"`
+	// Hosted is whether this session can switch at all. Without a hosting
+	// session there is no way back, so entering would strand the user.
+	Hosted bool `json:"hosted"`
+	// Ready is whether everything a console session needs is present.
+	Ready bool `json:"ready"`
+	// Arming is whether an entry has been announced and is counting down.
+	Arming      bool   `json:"arming"`
 	TVName      string `json:"tv_name,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	HDR         bool   `json:"hdr,omitempty"`
-	VRR         bool   `json:"vrr,omitempty"`
+	Trigger     bool   `json:"trigger"`
+	Controllers int    `json:"controllers"`
+	// Problems is what the doctor would say, so a panel can show it without
+	// running a command.
+	Problems []string `json:"problems,omitempty"`
 	// MissingSessionEnv names graphical-session variables the daemon still
-	// cannot see. It is empty on a healthy system; when it is not, a session
-	// started by a trigger puts the TV layout up and then launches a Steam
-	// that exits at once, silently.
+	// cannot see. It is empty on a healthy system; when it is not, anything the
+	// daemon launches starts without a session and dies silently.
 	MissingSessionEnv []string `json:"missing_session_env,omitempty"`
-	// UnavailableHooks names hooks the daemon cannot run, as the daemon sees
-	// it. Asking the CLI instead answers for the wrong process: a user shell
-	// finds the Omarchy helpers on PATH whether or not the daemon can.
-	UnavailableHooks []string `json:"unavailable_hooks,omitempty"`
 }
 
 const EventStatus = "status"
@@ -171,11 +172,12 @@ type Handler interface {
 	Unmanage() error
 	SetProfileAuto(params ProfileAutoParams) error
 
-	// CouchStatus, CouchStart and CouchStop drive the console session. The
-	// daemon owns it so it survives the TUI closing and can be reconciled if
-	// the daemon itself is killed.
-	CouchStatus() (CouchState, error)
-	CouchStart(params CouchStartParams) error
-	CouchStop() error
+	// ConsoleStatus, ConsoleEnter and ConsoleCancel drive console mode. The
+	// daemon owns the countdown so it survives whatever asked for the entry:
+	// the panel can close, the shell can exit, and the user still gets their
+	// warning and their chance to call it off.
+	ConsoleStatus() (ConsoleState, error)
+	ConsoleEnter(params ConsoleEnterParams) error
+	ConsoleCancel() error
 	Disconnect(owner string)
 }

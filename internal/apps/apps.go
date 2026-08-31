@@ -1,8 +1,9 @@
-package couch
+package apps
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,26 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 )
+
+// processAlive reports whether a pid is still there. EPERM counts: the process
+// exists, it just is not ours to signal.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	return err == nil || errors.Is(err, syscall.EPERM)
+}
+
+// Closer is the slice of a compositor client this package needs.
+//
+// Named for what it means rather than exposing a raw dispatcher: Hyprland on a
+// Lua config refuses the classic dispatch syntax outright, and deciding which
+// form to send is the client's job, not a caller's.
+type Closer interface {
+	Clients(ctx context.Context) ([]hypr.Window, error)
+	CloseWindow(ctx context.Context, address string) error
+}
 
 // DiscoveredApp holds information parsed from a .desktop file.
 type DiscoveredApp struct {
@@ -290,7 +311,7 @@ func (r CloseResult) Matched() bool {
 	return r.ClosedWindows > 0 || len(r.Signalled) > 0
 }
 
-func CloseTrackedApps(ctx context.Context, client WindowCloser, apps []string) CloseResult {
+func CloseTrackedApps(ctx context.Context, client Closer, apps []string) CloseResult {
 	targets := make(map[string]struct{}, len(apps))
 	for _, app := range SanitizeApps(apps) {
 		if _, protected := ProtectedProcesses[app]; protected {
@@ -311,7 +332,7 @@ func CloseTrackedApps(ctx context.Context, client WindowCloser, apps []string) C
 // closeWindowedApps asks Hyprland to close windows whose class or title names
 // a tracked app, then escalates to SIGTERM when a window survived the grace
 // period.
-func closeWindowedApps(ctx context.Context, client WindowCloser, targets map[string]struct{}) (int, []int) {
+func closeWindowedApps(ctx context.Context, client Closer, targets map[string]struct{}) (int, []int) {
 	windows, err := client.Clients(ctx)
 	if err != nil {
 		return 0, nil
@@ -448,7 +469,7 @@ func sigkillEscalation(pids []int) []int {
 		if pid <= 0 {
 			continue
 		}
-		if !ProcessAlive(pid) {
+		if !processAlive(pid) {
 			continue
 		}
 		if err := syscall.Kill(pid, syscall.SIGKILL); err == nil {

@@ -1,4 +1,4 @@
-package couch
+package apps
 
 import (
 	"context"
@@ -122,4 +122,15 @@ func TestCloseCandidatesWithoutAWindowSource(t *testing.T) {
 	if candidates := CloseCandidates(context.Background(), nil); candidates == nil {
 		t.Fatal("a nil source must not panic or yield nil")
 	}
+}
+
+// fakeSource stands in for the compositor: the candidate list only ever reads
+// the open windows.
+type fakeSource struct {
+	windows []hypr.Window
+	err     error
+}
+
+func (f *fakeSource) Clients(context.Context) ([]hypr.Window, error) {
+	return f.windows, f.err
 }

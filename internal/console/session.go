@@ -1,0 +1,209 @@
+package console
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// Launcher starts a compositor and returns when it has exited. It is a field so
+// the hosting loop can be exercised without starting anything.
+type Launcher func(ctx context.Context, argv []string, extraEnv []string) error
+
+// Wrapper hosts both compositors in one login session.
+type Wrapper struct {
+	// DesktopExec is the user's own compositor command, taken from the session
+	// entry they normally log into.
+	DesktopExec []string
+	// ConsoleExec is the gamescope session's own entry point. Reusing it rather
+	// than reimplementing matters: that script does environment plumbing --
+	// dbus-update-activation-environment, XDG_DESKTOP_PORTAL_DIR, reset-failed --
+	// that has to happen and is not ours to duplicate.
+	ConsoleExec []string
+	// ConsoleSessionName is what DESKTOP_SESSION should say inside the console,
+	// normally the session entry's file name without its suffix.
+	ConsoleSessionName string
+
+	StateDir      string
+	RuntimeDir    string
+	TVDescription string
+	// TVConnector is the DRM connector gamescope should drive. It reaches
+	// gamescope as OUTPUT_CONNECTOR, which its session script passes to -O.
+	TVConnector string
+
+	Systemctl Runner
+	Launch    Launcher
+	Logf      func(string, ...any)
+
+	// ShortRun is how long a compositor has to last to count as a real session,
+	// and ShortRunLimit how many consecutive short ones end the loop.
+	ShortRun      time.Duration
+	ShortRunLimit int
+}
+
+const (
+	defaultShortRun      = 15 * time.Second
+	defaultShortRunLimit = 2
+)
+
+func (w *Wrapper) logf(format string, args ...any) {
+	if w.Logf != nil {
+		w.Logf(format, args...)
+	}
+}
+
+// Run hosts compositors until nobody asks for another one.
+//
+// The loop is the whole design. Because the login manager started this and not a
+// compositor, it never sees a session end when the user switches, so there is no
+// greeter, no password prompt and nothing to reconfigure. An ordinary logout
+// still works: the compositor exits with no request pending, the loop ends, and
+// the session closes exactly as it always did.
+func (w *Wrapper) Run(ctx context.Context) error {
+	if len(w.DesktopExec) == 0 {
+		return errors.New("no desktop compositor command: there would be no way back")
+	}
+	if w.Systemctl == nil {
+		w.Systemctl = Systemctl{}
+	}
+	if w.Launch == nil {
+		w.Launch = RealLauncher
+	}
+	if w.ShortRun == 0 {
+		w.ShortRun = defaultShortRun
+	}
+	if w.ShortRunLimit == 0 {
+		w.ShortRunLimit = defaultShortRunLimit
+	}
+
+	// Mark the session so the doctor can tell a hosted session from a plain
+	// one: the compositor underneath looks identical either way.
+	if w.RuntimeDir != "" {
+		if err := markHosted(w.RuntimeDir); err != nil {
+			w.logf("console: could not mark this session as hosted: %v", err)
+		}
+		defer unmarkHosted(w.RuntimeDir)
+	}
+
+	mode := ModeDesktop
+	if requested, ok := TakeRequest(w.RuntimeDir); ok {
+		mode = requested
+	}
+
+	shortRuns := 0
+	for {
+		Sanitize(ctx, w.Systemctl)
+		// The previous session's units may still be stopping -- a display
+		// manager restart hands the new session over long before the old one
+		// has unwound -- and uwsm refuses to start on top of that.
+		SettleJobs(ctx, w.Systemctl, 20*time.Second)
+
+		argv, env, err := w.commandFor(ctx, mode)
+		if err != nil {
+			w.logf("console: cannot start the %s session: %v", mode, err)
+			if mode == ModeDesktop {
+				return err
+			}
+			// The console could not be prepared, so fall back to the desktop
+			// rather than ending the session and leaving a black screen.
+			mode = ModeDesktop
+			continue
+		}
+
+		w.logf("console: starting the %s session: %s", mode, strings.Join(argv, " "))
+		started := time.Now()
+		runErr := w.Launch(ctx, argv, env)
+		lasted := time.Since(started)
+		w.logf("console: the %s session ended after %s (%v)", mode, lasted.Round(time.Second), runErr)
+
+		// A compositor that dies instantly would otherwise be restarted forever,
+		// and the user would have no way in at all. Hand back to the login
+		// manager instead, which at least shows them something.
+		if lasted < w.ShortRun {
+			shortRuns++
+			if shortRuns >= w.ShortRunLimit {
+				w.logf("console: %d sessions ended immediately; handing back to the login manager", shortRuns)
+				break
+			}
+		} else {
+			shortRuns = 0
+		}
+
+		next, ok := TakeRequest(w.RuntimeDir)
+		if !ok {
+			// Nobody logs out *from* the console: leaving it means going home.
+			// Big Picture's own "Switch to Desktop" just stops the session's
+			// target and leaves no request behind, so treating a request-less
+			// console exit as a logout would drop the user at a greeter.
+			if mode == ModeConsole {
+				w.logf("console: the console session ended; returning to the desktop")
+				mode = ModeDesktop
+				continue
+			}
+			w.logf("console: no switch was requested; ending the login session")
+			break
+		}
+		mode = next
+	}
+
+	// Whatever happened, the desktop's audio goes back and the manager is left
+	// clean for whoever logs in next.
+	RestoreAudio(ctx, w.StateDir, w.logf)
+	Sanitize(ctx, w.Systemctl)
+	return nil
+}
+
+// commandFor prepares the machine for a mode and returns what to run.
+func (w *Wrapper) commandFor(ctx context.Context, mode Mode) ([]string, []string, error) {
+	if mode != ModeConsole {
+		RestoreAudio(ctx, w.StateDir, w.logf)
+		return w.DesktopExec, nil, nil
+	}
+	if len(w.ConsoleExec) == 0 {
+		return nil, nil, errors.New("no gamescope session is installed")
+	}
+	if w.TVDescription != "" {
+		if err := PrepareAudio(ctx, w.StateDir, w.TVDescription, w.logf); err != nil {
+			// Sound on the wrong speakers is a poor console, but it is not a
+			// reason to refuse to start one.
+			w.logf("console: audio stays where it is: %v", err)
+		}
+	}
+	// gamescope picks its output from OUTPUT_CONNECTOR. Setting it on the user
+	// manager rather than writing a drop-in keeps it transient -- no file, no
+	// daemon-reload -- and Sanitize clears it again on the way out.
+	if w.TVConnector != "" {
+		if err := w.Systemctl.Run(ctx, "set-environment", "OUTPUT_CONNECTOR="+w.TVConnector); err != nil {
+			w.logf("console: could not point gamescope at %s: %v", w.TVConnector, err)
+		}
+	}
+
+	name := w.ConsoleSessionName
+	if name == "" {
+		name = GamescopeDesktopName
+	}
+	env := []string{
+		"XDG_CURRENT_DESKTOP=" + GamescopeDesktopName,
+		"XDG_SESSION_DESKTOP=" + GamescopeDesktopName,
+		"DESKTOP_SESSION=" + name,
+	}
+	return w.ConsoleExec, env, nil
+}
+
+// RealLauncher runs a compositor and waits for it.
+func RealLauncher(ctx context.Context, argv []string, extraEnv []string) error {
+	if len(argv) == 0 {
+		return errors.New("nothing to run")
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%s: %w", argv[0], err)
+	}
+	return nil
+}

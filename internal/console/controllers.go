@@ -1,4 +1,4 @@
-package couch
+package console
 
 import (
 	"os"
@@ -6,6 +6,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	// ControllerDebounceSeconds is how long a pad has to stay gone before a
+	// disconnect counts, so a flat battery blinking off does not end a session.
+	ControllerDebounceSeconds = 10
+	// ControllerMinUsageSeconds is how long a pad has to have been used before
+	// its disconnect is allowed to mean anything.
+	ControllerMinUsageSeconds = 60
 )
 
 type ControllerTracker struct {

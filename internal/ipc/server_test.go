@@ -17,20 +17,21 @@ import (
 )
 
 type testHandler struct {
-	mu            sync.Mutex
-	document      appstatus.Document
-	preview       Transaction
-	previewErr    error
-	revertErr     error
-	managed       bool
-	profileAuto   bool
-	couch         CouchState
-	couchStarted  []string
-	couchStopped  int
-	couchStartErr error
-	disconnected  []string
-	editor        appstatus.EditorDocument
-	edited        appstatus.EditorDraft
+	mu              sync.Mutex
+	document        appstatus.Document
+	preview         Transaction
+	previewErr      error
+	revertErr       error
+	managed         bool
+	profileAuto     bool
+	console         ConsoleState
+	trigger         string
+	consoleEntered  []string
+	couchStopped    int
+	consoleEnterErr error
+	disconnected    []string
+	editor          appstatus.EditorDocument
+	edited          appstatus.EditorDraft
 }
 
 func (h *testHandler) Status() (appstatus.Document, error)            { return h.document, nil }
@@ -56,28 +57,27 @@ func (h *testHandler) Manage() error {
 	return nil
 }
 
-func (h *testHandler) CouchStatus() (CouchState, error) {
+func (h *testHandler) ConsoleStatus() (ConsoleState, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.couch, nil
+	return h.console, nil
 }
 
-func (h *testHandler) CouchStart(params CouchStartParams) error {
+func (h *testHandler) ConsoleEnter(params ConsoleEnterParams) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.couchStartErr != nil {
-		return h.couchStartErr
+	if h.consoleEnterErr != nil {
+		return h.consoleEnterErr
 	}
-	h.couchStarted = append(h.couchStarted, params.Trigger)
-	h.couch = CouchState{Phase: "playing", Active: true}
+	h.trigger = params.Trigger
+	h.console = ConsoleState{Arming: true, Hosted: true}
 	return nil
 }
 
-func (h *testHandler) CouchStop() error {
+func (h *testHandler) ConsoleCancel() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.couchStopped++
-	h.couch = CouchState{Phase: "idle"}
+	h.console = ConsoleState{Hosted: true}
 	return nil
 }
 
@@ -388,46 +388,41 @@ func TestDispatchRoutesManageAndUnmanage(t *testing.T) {
 // The console session lives in the daemon, so every surface -- TUI, panel, CLI
 // -- drives it through these three methods rather than spawning its own
 // detached process and racing the others over the same displays.
-func TestCouchMethodsRoundTrip(t *testing.T) {
+// Entering is armed through the daemon, so the countdown outlives whatever
+// asked for it -- a panel button closes its own window, and a shell command's
+// terminal goes with the desktop.
+func TestConsoleMethodsRoundTrip(t *testing.T) {
 	handler := &testHandler{}
-	_, path, _ := runTestServer(t, handler)
-	ctx := context.Background()
-	client, err := Dial(ctx, path)
+	_, path, cancel := runTestServer(t, handler)
+	defer cancel()
+	client, err := Dial(context.Background(), path)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
+	ctx := context.Background()
 
-	state, err := client.CouchStatus(ctx)
-	if err != nil {
-		t.Fatalf("CouchStatus: %v", err)
+	if _, err := client.ConsoleStatus(ctx); err != nil {
+		t.Fatalf("ConsoleStatus: %v", err)
 	}
-	if state.Active {
-		t.Fatal("a fresh daemon must not report an active session")
+	if err := client.ConsoleEnter(ctx, "the TUI"); err != nil {
+		t.Fatalf("ConsoleEnter: %v", err)
 	}
-
-	if err := client.CouchStart(ctx, "the TUI"); err != nil {
-		t.Fatalf("CouchStart: %v", err)
+	state, err2 := client.ConsoleStatus(ctx)
+	if err2 != nil {
+		t.Fatalf("ConsoleStatus: %v", err2)
 	}
-	handler.mu.Lock()
-	started := append([]string(nil), handler.couchStarted...)
-	handler.mu.Unlock()
-	if len(started) != 1 || started[0] != "the TUI" {
-		t.Fatalf("the trigger should reach the daemon, got %v", started)
+	if !state.Arming {
+		t.Fatal("entering did not arm a countdown")
 	}
-
-	if state, err = client.CouchStatus(ctx); err != nil || !state.Active {
-		t.Fatalf("expected an active session, got %+v err=%v", state, err)
+	if handler.trigger != "the TUI" {
+		t.Errorf("trigger = %q, want it carried through to the log", handler.trigger)
 	}
-
-	if err := client.CouchStop(ctx); err != nil {
-		t.Fatalf("CouchStop: %v", err)
+	if err := client.ConsoleCancel(ctx); err != nil {
+		t.Fatalf("ConsoleCancel: %v", err)
 	}
-	handler.mu.Lock()
-	stopped := handler.couchStopped
-	handler.mu.Unlock()
-	if stopped != 1 {
-		t.Fatalf("stop count = %d, want 1", stopped)
+	if state, _ := client.ConsoleStatus(ctx); state.Arming {
+		t.Fatal("cancelling left the countdown armed")
 	}
 }
 
@@ -440,24 +435,24 @@ func TestCouchStartAcceptsAnEmptyTrigger(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
-	if err := client.CouchStart(context.Background(), ""); err != nil {
-		t.Fatalf("CouchStart with no trigger: %v", err)
+	if err := client.ConsoleEnter(context.Background(), ""); err != nil {
+		t.Fatalf("ConsoleEnter with no trigger: %v", err)
 	}
 }
 
-func TestCouchStartSurfacesTheDaemonsRefusal(t *testing.T) {
-	handler := &testHandler{couchStartErr: errors.New("monitor configuration is handed back to Hyprland")}
+func TestConsoleEnterSurfacesTheDaemonsRefusal(t *testing.T) {
+	handler := &testHandler{consoleEnterErr: errors.New("this session cannot switch")}
 	_, path, _ := runTestServer(t, handler)
 	client, dialErr := Dial(context.Background(), path)
 	if dialErr != nil {
 		t.Fatalf("dial: %v", dialErr)
 	}
 	defer client.Close()
-	err := client.CouchStart(context.Background(), "the panel")
+	err := client.ConsoleEnter(context.Background(), "the panel")
 	if err == nil {
 		t.Fatal("a refusal must reach the caller")
 	}
-	if !strings.Contains(err.Error(), "handed back") {
+	if !strings.Contains(err.Error(), "cannot switch") {
 		t.Fatalf("the reason should survive the round trip, got %v", err)
 	}
 }

@@ -111,22 +111,23 @@ func (c *Client) SetProfileAuto(ctx context.Context, enabled bool) error {
 	return c.call(ctx, MethodProfileAuto, ProfileAutoParams{Enabled: enabled}, nil)
 }
 
-// CouchStatus asks the daemon about the console session.
-func (c *Client) CouchStatus(ctx context.Context) (CouchState, error) {
-	var state CouchState
-	err := c.call(ctx, MethodCouchStatus, nil, &state)
+// ConsoleStatus asks the daemon about console mode.
+func (c *Client) ConsoleStatus(ctx context.Context) (ConsoleState, error) {
+	var state ConsoleState
+	err := c.call(ctx, MethodConsoleStatus, nil, &state)
 	return state, err
 }
 
-// CouchStart enters console mode. It returns once the layout is up and Big
-// Picture has been asked for; the session continues in the daemon.
-func (c *Client) CouchStart(ctx context.Context, trigger string) error {
-	return c.call(ctx, MethodCouchStart, CouchStartParams{Trigger: trigger}, nil)
+// ConsoleEnter arms an entry: the daemon announces it, waits, and then closes
+// the desktop. It returns as soon as the countdown starts, because whatever
+// asked is about to be closed along with everything else.
+func (c *Client) ConsoleEnter(ctx context.Context, trigger string) error {
+	return c.call(ctx, MethodConsoleEnter, ConsoleEnterParams{Trigger: trigger}, nil)
 }
 
-// CouchStop ends the session and puts the desktop back.
-func (c *Client) CouchStop(ctx context.Context) error {
-	return c.call(ctx, MethodCouchStop, nil, nil)
+// ConsoleCancel calls off an entry that is counting down.
+func (c *Client) ConsoleCancel(ctx context.Context) error {
+	return c.call(ctx, MethodConsoleCancel, nil, nil)
 }
 
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {

@@ -240,19 +240,19 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		if err = decodeParams(request.Params, &params); err == nil {
 			err = s.Handler.SetProfileAuto(params)
 		}
-	case MethodCouchStatus:
-		result, err = s.Handler.CouchStatus()
-	case MethodCouchStart:
-		var params CouchStartParams
+	case MethodConsoleStatus:
+		result, err = s.Handler.ConsoleStatus()
+	case MethodConsoleEnter:
+		var params ConsoleEnterParams
 		// A trigger is informational, so an empty body is fine here.
 		if len(request.Params) > 0 {
 			err = decodeParams(request.Params, &params)
 		}
 		if err == nil {
-			err = s.Handler.CouchStart(params)
+			err = s.Handler.ConsoleEnter(params)
 		}
-	case MethodCouchStop:
-		err = s.Handler.CouchStop()
+	case MethodConsoleCancel:
+		err = s.Handler.ConsoleCancel()
 	default:
 		err = fmt.Errorf("unknown IPC method %q", request.Method)
 	}

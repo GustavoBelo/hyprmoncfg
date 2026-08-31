@@ -336,3 +336,215 @@ com eles; qualquer `hyprctl reload` limpa.
 1. Testes 4 e 5 do [TV-TEST.md](TV-TEST.md), jogando de verdade.
 2. Tag `v1.17.0-rc.1` e a pré-release.
 3. Decidir o VRR com um jogo rodando.
+
+## 8. Spike do gamescope-session (2026-08-31)
+
+Decisão de rumo: aposentar o modo dentro do Hyprland e entregar a sessão ao
+`gamescope-session` da comunidade. Antes de escrever código, um spike na
+máquina real. Sete medições; três confirmaram o desenho, quatro o derrubaram.
+
+Ambiente: Omarchy 4.0.0.alpha, Hyprland 0.56.2 sob uwsm, SDDM com autologin,
+`gamescope-session-cachyos` 1.1.6, AMD, TV Samsung em HDMI-A-1 e monitor TCL
+25G64 em DP-1.
+
+### 8.1 O que funcionou
+
+**O conector é uma variável de ambiente.** `/usr/lib/steamos/gamescope-session`
+termina em `-O "${OUTPUT_CONNECTOR:-*,eDP-1}"`. Um drop-in em
+`~/.config/systemd/user/gamescope-session.service.d/` com
+`Environment=OUTPUT_CONNECTOR=HDMI-A-1` bastou:
+
+```
+drm: Connectors:  HDMI-A-2 (disconnected) / HDMI-A-1 (connected) / DP-1 (connected)
+drm: selecting connector HDMI-A-1
+```
+
+O DP-1 ficou `enabled=disabled dpms=Off` — o gamescope conduz uma saída só. Os
+nomes DRM batem exatamente com os do Hyprland, e o `ConsoleLayout.TVName` já
+guarda `HDMI-A-1`, então o valor já existe na config.
+
+**O botão "Switch to Desktop" resolve pelo PATH.** Um shim em `~/.local/bin`
+foi executado no lugar do `/usr/bin/steamos-session-select` do pacote:
+
+```
+argv:     /home/belo/.local/bin/steamos-session-select plasma
+ppid:     steam -srt-logger-opened -steamos3 -steampal -steamdeck -gamepadui
+resolved: /home/belo/.local/bin/steamos-session-select
+```
+
+O argumento é `plasma`, não `desktop`. Como a resolução é por PATH, dá para
+interceptar sem sobrescrever arquivo de pacote — requisito de projeto público.
+O PATH da sessão vem do mesmo drop-in: o script faz `env >
+$XDG_RUNTIME_DIR/gamescope-environment` e o `steam-launcher.service` lê isso
+via `EnvironmentFile`.
+
+**O painel por jogo do Steam existe porque a sessão o declara.** As ~30
+variáveis `STEAM_GAMESCOPE_*_SUPPORTED` no topo do script são o que faz o Big
+Picture oferecer HDR, FSR, tearing e limitador. O gamescope aninhado não
+definia nenhuma — era esse o argumento para aposentá-lo, e ele se sustenta.
+
+### 8.2 O que derrubou o desenho
+
+**O modo não é nosso.** O gamescope escolheu `3840x2160@60Hz` — o preferido do
+EDID — e não os 4K120 fixados no `couch.json`. Refresh se troca pelo Steam, que
+grava em `GAMESCOPE_MODE_SAVE_FILE`. Consequência: o `ConsoleLayout` só precisa
+do conector; modo, HDR e VRR saem da nossa config.
+
+**Trocar de sessão pelo gerenciador de login é um beco sem saída.** O autologin
+do SDDM só dispara quando o *SDDM* inicia. Ao fim de uma sessão vem o greeter:
+
+```
+17:12:31  Auth: sddm-helper exited successfully     (sessão gamescope terminou)
+17:12:31  Greeter session started successfully      (greeter, não autologin)
+17:14:11  Session "gamescope-session.desktop" selected ... for VT 2
+```
+
+Com `RememberLastSession=true` o greeter vem com Gamescope pré-selecionado, pede
+senha e reentra no console. O usuário fica preso em loop. Reapontar o autologin
+via `pkexec steam-set-session` — que funciona, passwordless, e aceita qualquer
+nome de sessão — é irrelevante para a volta. E `steam-set-session` só sabe
+escrever para SDDM e plasmalogin, então nada disso serve para greetd, ly ou
+login por tty.
+
+**A troca suja o gerenciador systemd do usuário, e ninguém limpa na saída.**
+Quando a sessão gamescope morre de forma abrupta ela deixa para trás:
+
+- `graphical-session-pre.target` **ativo** → o uwsm recusa o Hyprland com
+  `A compositor or graphical-session* target is already active!` e a sessão
+  seguinte morre no mesmo segundo (`Session started true` → `[PAM] Closing
+  session` → `exited with 1`);
+- unidades em `failed`: `gamescope-session`, `gamescope-mangoapp`,
+  `gamescope-xbindkeys`, `ibus-gamescope`, `steam-notif-daemon`
+  (`steamos-manager` nem existe fora do Deck);
+- ambiente do gerenciador poluído: `XDG_CURRENT_DESKTOP=gamescope`,
+  `DESKTOP_SESSION=gamescope-session`, `XDG_DESKTOP_PORTAL_DIR` vazio,
+  `XDG_VTNR=2`, e `PATH` amputado para `/usr/local/bin:/usr/bin`.
+
+O `start-gamescope-session` limpa isso na **entrada** (`stop
+gamescope-session.target`, `stop graphical-session-pre.target`, `reset-failed`)
+justamente porque sabe do problema — mas não há equivalente na saída.
+Recuperação: parar os targets, `reset-failed`, `unset-environment` das XDG_*, e
+reiniciar o gerenciador de login.
+
+**Bluetooth.** O adaptador ficou `Powered: no` na sessão gamescope, sem controle
+possível. Medido depois: ele está `Powered: no` no Omarchy também — não é
+regressão da troca, é que nada liga o adaptador automaticamente nesta máquina.
+Mas o modo console não tem painel de Bluetooth, então precisa ligá-lo sozinho.
+
+**Inconclusivo — áudio.** O som foi parar na TV (`output:hdmi-stereo-extra1`,
+`port=hdmi-output-1`, o pin do SAMSUNG) sem o nosso hook rodar. Não dá para
+separar "o wireplumber escolheu" de "o wireplumber restaurou a escolha que nosso
+hook gravou ontem", porque ele persiste isso entre boots. Precisa de outra
+medição partindo de um padrão diferente.
+
+### 8.3 Consequência para o desenho
+
+O gerenciador de login não pode ser o mecanismo de troca. O que resta, e é mais
+portátil do que a rota original, é **uma sessão que hospeda os dois
+compositores**: o login manager (ou o tty) inicia um wrapper nosso, que roda o
+compositor do usuário ou o `start-gamescope-session`, e troca quando o de dentro
+sai. O login manager nunca vê a sessão terminar — logo, sem greeter, sem senha,
+sem `RememberLastSession`, sem autologin, sem polkit, sem root em runtime. E a
+limpeza que hoje ninguém faz passa a ter um lugar único por onde toda transição
+obrigatoriamente passa.
+
+### 8.4 O wrapper, medido
+
+Protótipo em shell: o login manager inicia um wrapper; ele roda o compositor do
+usuário ou o `start-gamescope-session`, e troca quando o de dentro sai. O pedido
+de troca é um arquivo em `$XDG_RUNTIME_DIR` com `console` ou `desktop`; nenhum
+arquivo significa logout de verdade, e o laço termina.
+
+```
+17:32:56  wrapper start mode=desktop vt=1 session=11
+17:33:17  desktop saiu rc=0 (21s)   -> switching to: desktop
+17:33:47  desktop saiu rc=0 (30s)   -> switching to: console
+17:35:31  gamescope saiu rc=0 (104s)-> switching to: desktop
+```
+
+Mesma sessão do logind (`session=11`) e mesmo VT do início ao fim, sem greeter e
+sem senha. A pergunta que decidia o desenho — se o `uwsm` aceita subir uma
+segunda vez dentro da mesma sessão depois da limpeza — está respondida: **aceita**,
+desde que `graphical-session-pre.target` esteja parado e as unidades tenham
+levado `reset-failed`. Toda transição passa obrigatoriamente por essa limpeza,
+que é o que faltava.
+
+A volta veio do próprio Big Picture: o shim registrou
+`steamos-session-select plasma` às 17:35:19 e a sessão terminou 12 s depois.
+
+Proteção contra laço infinito: dois compositores morrendo em menos de 15 s
+seguidos e o wrapper devolve a sessão ao login manager em vez de girar.
+
+### 8.5 Teste D, resolvido: o WirePlumber não move o som
+
+Com o padrão devolvido ao fone USB antes de entrar, a sonda mediu dentro da
+sessão console:
+
+```
+default-sink: ...KT_USB_Audio...analog-stereo  port=analog-output-headphones  state=RUNNING
+```
+
+O som tocou no fone, não na TV. A medição anterior parecia mostrar o contrário
+só porque o WirePlumber restaura escolhas antigas entre boots — a escolha ainda
+era do nosso hook. Portanto o mapeamento ELD→pin→perfil de card **é necessário**
+e vira preparação obrigatória do modo console, não um hook opcional.
+
+Confirmado por efeito no protótipo: `tv_key` do `couch.json` casa com
+`monitor_name=SAMSUNG` no ELD pin 1, `output:hdmi-stereo-extra1` é aplicado ao
+card, o sink aparece com `active_port=hdmi-output-1`, e a restauração devolve o
+padrão anterior. O `pactl -f json list cards` continua escrevendo
+`Invalid ASCII character` em stderr por causa das descrições acentuadas — o JSON
+é válido, basta descartar stderr; `LC_ALL=C` não resolve, porque o texto vem do
+próprio PulseAudio e não da localização do cliente.
+
+## 9. O modo console, implementado (2026-08-31)
+
+O couch mode foi removido inteiro. O que ficou no lugar é bem menor, porque a
+maior parte do que ele fazia passou a ser do gamescope e do Steam.
+
+### 9.1 Pacotes
+
+- **`internal/audio`** — ELD → pin → porta → perfil de card, extraído do hook.
+  Sobreviveu à remoção porque a lógica é sobre displays e som, não sobre couch.
+- **`internal/apps`** — descoberta e fechamento gracioso de aplicativos, mais os
+  candidatos para a lista. Ficou *mais* importante: entrar derruba o desktop.
+- **`internal/console`** — detecção portátil (`DesktopNames=gamescope`, nunca
+  nome de pacote), a limpeza do systemd, o protocolo de troca por arquivo, o
+  preparo de áudio com estado em disco, e o laço hospedeiro.
+
+### 9.2 Decisões que o spike impôs
+
+**O laço hospedeiro em vez do gerenciador de login.** Uma sessão hospeda os dois
+compositores; o login manager nunca vê a sessão terminar. Sem greeter, sem
+senha, sem `RememberLastSession`, sem autologin, sem polkit, e funciona igual em
+greetd, ly ou tty.
+
+**O pedido de troca é um arquivo**, não um socket: o processo que pede está
+prestes a ser morto pela troca que pediu.
+
+**`StopCompositor` verifica por efeito.** `hyprctl dispatch` sai 0 e não faz nada
+no parser Lua; confiar no código de retorno reportaria sucesso com o desktop
+intacto.
+
+**O preparo de áudio grava antes de mudar**, e nunca sobrescreve um registro
+existente — entrar duas vezes gravaria a TV como escolha do desktop.
+
+**A entrada é armada no daemon**, não executada por quem pediu: a contagem
+regressiva precisa sobreviver ao painel que fecha e ao terminal que morre junto
+com o desktop.
+
+**`console setup` nunca edita arquivo de sistema.** Detecta o gerenciador de
+login, escreve a entrada de sessão no diretório do usuário, e imprime a mudança
+e como desfazê-la. Só SDDM foi testado, e ele diz isso.
+
+### 9.3 O que some da configuração
+
+Modo, HDR e VRR saíram: o gamescope pega o modo preferido do conector e o Steam
+troca por jogo. `DeskDuringCouch` (`disabled`/`enabled`/`mirror`) saiu junto —
+era a origem do aviso de arranjo do Steam e da barra sumida. O `console.json`
+guarda a TV, a sessão de desktop para onde voltar, a lista de apps e o gatilho.
+
+Migração: `MigrateFromCouch` semeia a partir do `couch.json` quando não há
+`console.json`, preservando a TV e a lista de apps. O gatilho por controle
+**não** é migrado: agora ele encerra a sessão, então precisa ser escolhido de
+novo com isso em mente.

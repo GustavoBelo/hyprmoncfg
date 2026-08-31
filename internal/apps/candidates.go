@@ -1,10 +1,17 @@
-package couch
+package apps
 
 import (
 	"context"
+
+	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"sort"
 	"strings"
 )
+
+// Source is where the candidate list reads open windows from.
+type Source interface {
+	Clients(ctx context.Context) ([]hypr.Window, error)
+}
 
 // CloseCandidate is one thing the user can pick for the close list.
 //
@@ -31,7 +38,7 @@ type CloseCandidate struct {
 // actually report when the session tries to close them, so a candidate taken
 // from a live window is guaranteed to match. Installed applications fill in the
 // rest for things that are not running at the moment.
-func CloseCandidates(ctx context.Context, source WindowSource) []CloseCandidate {
+func CloseCandidates(ctx context.Context, source Source) []CloseCandidate {
 	seen := make(map[string]int)
 	candidates := make([]CloseCandidate, 0, 32)
 

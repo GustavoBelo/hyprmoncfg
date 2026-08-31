@@ -20,26 +20,26 @@ type Document struct {
 	RecommendedProfile *ProfileMatch     `json:"recommended_profile"`
 	Profiles           []ProfileSummary  `json:"profiles"`
 	Monitors           []MonitorSummary  `json:"monitors"`
-	// Couch describes console mode. It rides the status document so panels get
-	// it pushed over the connection they already hold, instead of shelling out
-	// to `hyprmoncfg couch status` on a timer.
-	Couch *Couch `json:"couch,omitempty"`
+	// Console describes console mode. It rides the status document so panels
+	// get it pushed over the connection they already hold, instead of shelling
+	// out to `hyprmoncfg console status` on a timer.
+	Console *Console `json:"console,omitempty"`
 }
 
-// Couch is what a panel needs to show and drive console mode.
-type Couch struct {
-	Enabled     bool   `json:"enabled"`
-	Configured  bool   `json:"configured"`
-	Managed     bool   `json:"managed"`
-	Active      bool   `json:"active"`
-	Phase       string `json:"phase,omitempty"`
-	Duration    string `json:"duration,omitempty"`
-	Reason      string `json:"reason,omitempty"`
-	Controllers int    `json:"controllers"`
-	TVName      string `json:"tv_name,omitempty"`
-	Mode        string `json:"mode,omitempty"`
-	HDR         bool   `json:"hdr,omitempty"`
-	VRR         bool   `json:"vrr,omitempty"`
+// Console is what a panel needs to show and drive console mode.
+//
+// There is no session to report on. Once the console starts, the compositor
+// this daemon runs under is gone and so is the panel; what a panel can usefully
+// show is whether entering would work, and why not.
+type Console struct {
+	Configured  bool     `json:"configured"`
+	Hosted      bool     `json:"hosted"`
+	Ready       bool     `json:"ready"`
+	Arming      bool     `json:"arming"`
+	Trigger     bool     `json:"trigger"`
+	Controllers int      `json:"controllers"`
+	TVName      string   `json:"tv_name,omitempty"`
+	Problems    []string `json:"problems,omitempty"`
 }
 
 type Daemon struct {
