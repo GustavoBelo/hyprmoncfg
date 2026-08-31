@@ -28,6 +28,10 @@ type Wrapper struct {
 	// normally the session entry's file name without its suffix.
 	ConsoleSessionName string
 
+	// Boot says where a fresh login starts. A pending request always wins over
+	// it, so `console enter` is not fighting a preference.
+	Boot BootMode
+
 	StateDir      string
 	RuntimeDir    string
 	TVDescription string
@@ -89,10 +93,10 @@ func (w *Wrapper) Run(ctx context.Context) error {
 		defer unmarkHosted(w.RuntimeDir)
 	}
 
-	mode := ModeDesktop
-	if requested, ok := TakeRequest(w.RuntimeDir); ok {
-		mode = requested
-	}
+	requested, hasRequest := TakeRequest(w.RuntimeDir)
+	last, hasLast := ReadLastMode(w.StateDir)
+	mode := BootModeFor(w.Boot, requested, hasRequest, last, hasLast)
+	w.logf("console: starting in %s mode (boot=%s, last=%s)", mode, orDefault(string(w.Boot), string(BootDesktop)), orDefault(string(last), "none"))
 
 	shortRuns := 0
 	for {
@@ -114,6 +118,9 @@ func (w *Wrapper) Run(ctx context.Context) error {
 			continue
 		}
 
+		// Recorded before launching, not after: a machine switched off while
+		// playing has to come back playing, and there is no "after" then.
+		WriteLastMode(w.StateDir, mode)
 		w.logf("console: starting the %s session: %s", mode, strings.Join(argv, " "))
 		started := time.Now()
 		runErr := w.Launch(ctx, argv, env)
@@ -192,6 +199,13 @@ func (w *Wrapper) commandFor(ctx context.Context, mode Mode) ([]string, []string
 		"DESKTOP_SESSION=" + name,
 	}
 	return w.ConsoleExec, env, nil
+}
+
+func orDefault(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 // RealLauncher runs a compositor and waits for it.

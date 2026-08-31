@@ -39,6 +39,7 @@ func newConsoleCmd(configDir *string) *cobra.Command {
 		newConsoleLeaveCmd(),
 		newConsoleCancelCmd(),
 		newConsoleTriggerCmd(configDir),
+		newConsoleBootCmd(configDir),
 	)
 	silenceUsageTree(cmd)
 	return cmd
@@ -115,6 +116,7 @@ func newConsoleSessionCmd(configDir *string) *cobra.Command {
 				RuntimeDir:    runtimeDir,
 				TVDescription: cfg.TVDescription,
 				TVConnector:   cfg.TVName,
+				Boot:          cfg.Boot,
 				Logf:          logf,
 			}
 			if hasGamescope {
@@ -207,6 +209,7 @@ func newConsoleStatusCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			fmt.Printf("Starts in:       %s\n", cfg.Boot)
 			fmt.Printf("TV display:      %s\n", orNone(cfg.TVName))
 			fmt.Printf("Desktop session: %s\n", orNone(cfg.DesktopSession))
 			fmt.Printf("Apps to close:   %s\n", orNone(strings.Join(cfg.AppsToClose, ", ")))
@@ -502,6 +505,56 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 			} else {
 				fmt.Println("Controllers no longer start a console session.")
 			}
+			return nil
+		},
+	}
+}
+
+// newConsoleBootCmd chooses where a fresh login lands.
+//
+// A console that boots to a desktop with an icon on it is not really a console.
+// But the desktop stays the default, because somebody who installs this to play
+// on the TV occasionally should not have their computer stop presenting one.
+func newConsoleBootCmd(configDir *string) *cobra.Command {
+	return &cobra.Command{
+		Use:       "boot [desktop|console|last]",
+		Short:     "Choose where the machine lands when it starts",
+		Args:      cobra.MaximumNArgs(1),
+		ValidArgs: []string{"desktop", "console", "last"},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			base, err := config.EnsureBaseDir(*configDir)
+			if err != nil {
+				return err
+			}
+			cfg, err := console.LoadConfig(base)
+			if err != nil {
+				return err
+			}
+			if len(args) == 0 {
+				fmt.Printf("Starts in: %s\n", cfg.Boot)
+				fmt.Println("\n  desktop  always the desktop")
+				fmt.Println("  console  always the console, the way a games machine does")
+				fmt.Println("  last     wherever the last session ended")
+				return nil
+			}
+			mode := console.BootMode(args[0])
+			if !mode.Valid() {
+				return fmt.Errorf("unknown boot mode %q: use desktop, console or last", args[0])
+			}
+			cfg.Boot = mode
+			if err := console.SaveConfig(base, cfg); err != nil {
+				return err
+			}
+			switch mode {
+			case console.BootConsole:
+				fmt.Println("The machine will start in console mode.")
+				fmt.Println("Leave it from Big Picture: Steam -> Power -> Switch to Desktop.")
+			case console.BootLast:
+				fmt.Println("The machine will start wherever the last session ended.")
+			default:
+				fmt.Println("The machine will start at the desktop.")
+			}
+			fmt.Println("\nIf the console cannot start, the desktop comes up instead.")
 			return nil
 		},
 	}

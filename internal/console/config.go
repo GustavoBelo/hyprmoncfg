@@ -33,6 +33,9 @@ type Config struct {
 	// takes the desktop down, so anything with unsaved work has to be given the
 	// chance to save it first.
 	AppsToClose []string `json:"apps_to_close,omitempty"`
+	// Boot says where a fresh login starts: at the desktop, in the console, or
+	// wherever the last session ended. Empty means the desktop.
+	Boot BootMode `json:"boot,omitempty"`
 	// EnterOnControllerConnect turns the machine into a console when a pad is
 	// switched on. Off by default: it now ends the desktop session, which is
 	// not something to start doing because a controller woke up.
@@ -78,6 +81,9 @@ func (c *Config) Normalize() {
 	c.TVName = strings.TrimSpace(c.TVName)
 	c.TVDescription = strings.TrimSpace(c.TVDescription)
 	c.DesktopSession = strings.TrimSpace(c.DesktopSession)
+	if !c.Boot.Valid() {
+		c.Boot = BootDesktop
+	}
 }
 
 // Configured reports whether a TV has been chosen.

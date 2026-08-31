@@ -25,6 +25,7 @@ type consoleField int
 
 const (
 	consoleFieldTV consoleField = iota
+	consoleFieldBoot
 	consoleFieldDesktopSession
 	consoleFieldTrigger
 	consoleFieldCloseApps
@@ -41,6 +42,7 @@ type consoleRow struct {
 func (m Model) consoleRows(cfg console.Config) []consoleRow {
 	rows := []consoleRow{
 		{field: consoleFieldTV},
+		{field: consoleFieldBoot},
 		{field: consoleFieldDesktopSession},
 		{field: consoleFieldTrigger},
 		{field: consoleFieldCloseApps},
@@ -175,6 +177,9 @@ func (m Model) adjustConsoleField(cfg *console.Config, dir int) (tea.Model, tea.
 				cfg.TVDescription = mon.Description
 			}
 		}
+	case consoleFieldBoot:
+		modes := []string{string(console.BootDesktop), string(console.BootConsole), string(console.BootLast)}
+		cfg.Boot = console.BootMode(cycleValue(modes, string(cfg.Boot), dir))
 	case consoleFieldDesktopSession:
 		files := plainSessionFiles()
 		if len(files) == 0 {
@@ -260,6 +265,8 @@ func (m Model) consoleSettingsLines() []string {
 		switch row.field {
 		case consoleFieldTV:
 			lines = append(lines, m.consoleSettingLine(selected, "Plays on", orNotSet(cfg.TVName)))
+		case consoleFieldBoot:
+			lines = append(lines, m.consoleSettingLine(selected, "Starts in", string(cfg.Boot)))
 		case consoleFieldDesktopSession:
 			lines = append(lines, m.consoleSettingLine(selected, "Comes back to", orNotSet(cfg.DesktopSession)))
 		case consoleFieldTrigger:

@@ -89,6 +89,25 @@ controller off again calls it off, and so does `hyprmoncfg console cancel`.
 
 It is off by default.
 
+## Where the machine starts
+
+By default it starts at the desktop, exactly as it did before console mode
+existed, and the console is something you ask for.
+
+```bash
+hyprmoncfg console boot last      # wherever the last session ended
+hyprmoncfg console boot console   # always the console, like a games machine
+hyprmoncfg console boot desktop   # always the desktop (the default)
+```
+
+`last` is the one to pick if you want it to feel like a console without giving
+up the desktop: shut down playing and it boots playing, shut down working and it
+boots working.
+
+In every case, if the console cannot start the desktop comes up instead, and two
+sessions that end immediately hand the machine back to the login manager rather
+than looping.
+
 ## Closing applications first
 
 Entering takes the desktop down with everything on it. Anything you list is
