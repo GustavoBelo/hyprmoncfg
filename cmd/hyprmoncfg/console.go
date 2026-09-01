@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -277,6 +278,9 @@ func newConsoleDoctorCmd(configDir *string) *cobra.Command {
 			if cfg.TVDescription == "" {
 				fmt.Printf("warn  the TV has no description recorded, so sound will stay where it is\n")
 			}
+			if note := bootLoginNote(ctx, cfg.Boot); note != "" {
+				fmt.Printf("warn  %s\n", note)
+			}
 
 			if !ready {
 				return fmt.Errorf("console mode is not ready")
@@ -545,6 +549,9 @@ func newConsoleBootCmd(configDir *string) *cobra.Command {
 			if err := console.SaveConfig(base, cfg); err != nil {
 				return err
 			}
+			if note := bootLoginNote(cmd.Context(), mode); note != "" {
+				fmt.Printf("\nNote: %s\n", note)
+			}
 			switch mode {
 			case console.BootConsole:
 				fmt.Println("The machine will start in console mode.")
@@ -662,6 +669,28 @@ func consoleLogger(stateDir string) func(string, ...any) {
 		line := fmt.Sprintf(time.Now().Format(time.RFC3339)+" "+format+"\n", args...)
 		fmt.Fprint(os.Stderr, line)
 		_, _ = file.WriteString(line)
+	}
+}
+
+// bootLoginNote warns when the machine will stop for a password on its way to a
+// console.
+//
+// The greeter comes up on whatever display it uses -- normally the desk monitor --
+// while the person waiting is on the sofa. The machine still works; it just is
+// not a console, and that is worth hearing before choosing rather than after
+// the first boot.
+func bootLoginNote(ctx context.Context, boot console.BootMode) string {
+	if boot != console.BootConsole && boot != console.BootLast {
+		return ""
+	}
+	lm := console.DetectLoginManager(ctx, console.Systemctl{})
+	switch console.HasAutologin(lm) {
+	case console.AutologinOff:
+		return "the login manager will ask for a password before the console starts;\n      turn its autologin on if you want the machine to come up on the TV"
+	case console.AutologinUnknown:
+		return fmt.Sprintf("cannot tell whether %s logs in automatically; if it does not, it will\n      ask for a password on its own display before the console starts", lm.Kind)
+	default:
+		return ""
 	}
 }
 

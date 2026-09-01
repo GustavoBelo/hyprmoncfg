@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -193,3 +194,85 @@ func markHosted(runtimeDir string) error {
 }
 
 func unmarkHosted(runtimeDir string) { _ = os.Remove(filepath.Join(runtimeDir, hostedMarker)) }
+
+// Autologin says whether the login manager logs the user in without asking.
+//
+// It matters for BootConsole and BootLast: a machine that boots into the console
+// but stops at a greeter first asks for a password on whatever display the
+// greeter uses -- normally the desk monitor -- while the person waiting is on the
+// sofa. That is not a broken machine, but it is not a console either, and the
+// user should hear it before they choose.
+type Autologin int
+
+const (
+	// AutologinUnknown is the honest answer for a login manager whose
+	// configuration this does not know how to read. Saying nothing beats
+	// warning wrongly.
+	AutologinUnknown Autologin = iota
+	AutologinOn
+	AutologinOff
+)
+
+// autologinRoots are where SDDM reads its configuration, later files winning.
+var autologinRoots = []string{"/etc/sddm.conf", "/etc/sddm.conf.d"}
+
+// HasAutologin reports whether the login manager will skip its greeter.
+func HasAutologin(lm LoginManager) Autologin {
+	if lm.Kind != LoginSDDM {
+		// A machine with no display manager at all has nothing to ask.
+		if lm.Kind == LoginNone {
+			return AutologinOn
+		}
+		return AutologinUnknown
+	}
+	files := []string{}
+	for _, root := range autologinRoots {
+		info, err := os.Stat(root)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			files = append(files, root)
+			continue
+		}
+		found, _ := filepath.Glob(filepath.Join(root, "*.conf"))
+		sort.Strings(found)
+		files = append(files, found...)
+	}
+
+	user := ""
+	for _, path := range files {
+		if value, ok := iniValue(path, "Autologin", "User"); ok {
+			user = value
+		}
+	}
+	if strings.TrimSpace(user) == "" {
+		return AutologinOff
+	}
+	return AutologinOn
+}
+
+// iniValue reads one key from one section of an ini-shaped file. Later keys in
+// the same section win, which is how the file itself is read.
+func iniValue(path, section, key string) (string, bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	in := false
+	value, found := "", false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "[") {
+			in = strings.EqualFold(line, "["+section+"]")
+			continue
+		}
+		if !in || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if k, v, ok := strings.Cut(line, "="); ok && strings.EqualFold(strings.TrimSpace(k), key) {
+			value, found = strings.TrimSpace(v), true
+		}
+	}
+	return value, found
+}

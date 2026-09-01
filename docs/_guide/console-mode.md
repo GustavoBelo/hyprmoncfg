@@ -104,6 +104,25 @@ hyprmoncfg console boot desktop   # always the desktop (the default)
 up the desktop: shut down playing and it boots playing, shut down working and it
 boots working.
 
+### What still asks for a password
+
+Starting in the console does not skip anything your machine already asks for on
+the way up, and it cannot:
+
+- **A disk passphrase**, if the disk is encrypted. It comes long before any of
+  this, needs a keyboard, and appears wherever your firmware puts it.
+- **The login manager**, unless it logs you in automatically. Its greeter comes
+  up on its own display -- normally the desk monitor -- and only after you have
+  typed the password does the machine hand over to the TV. A console that stops
+  at a desk to ask for a password is not really a console, so if you want the
+  machine to come up on the TV, turn autologin on in your login manager.
+
+`hyprmoncfg console doctor` says so when it can tell. It reads SDDM's
+configuration; for other login managers it says it cannot tell rather than
+guessing.
+
+A Steam Deck has neither of these, which is why it feels the way it does.
+
 In every case, if the console cannot start the desktop comes up instead, and two
 sessions that end immediately hand the machine back to the login manager rather
 than looping.
@@ -136,6 +155,11 @@ and back on the way out.
 preferred mode, and Steam changes it per game from its own settings. A
 resolution recorded by hyprmoncfg would be a second, disagreeing source of
 truth.
+
+**A controller is not required to enter.** The controller trigger is one way in
+among several, and it is off by default. Booting into the console, the launcher
+entry, the panel button and `console enter` all work with no controller
+connected -- Big Picture is navigable with a keyboard and mouse.
 
 **Bluetooth is Steam's.** In a gamescope session Steam manages the Bluetooth
 adapter itself and applies its own stored setting -- which starts off. If your

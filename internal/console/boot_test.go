@@ -106,3 +106,51 @@ func TestWrapperStartsInTheConsoleWhenToldTo(t *testing.T) {
 		t.Fatalf("launched %v, want the console first", launched)
 	}
 }
+
+// A machine set to boot into the console but stopping at a greeter first asks
+// for a password on the desk monitor while the person waiting is on the sofa.
+// Worth saying before they choose, so the doctor has to be able to tell.
+func TestHasAutologinReadsSDDMWithLaterFilesWinning(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir+"/10-base.conf", "[Autologin]\nUser=someone\nSession=x.desktop\n")
+	// Ordinary SDDM layering: a later file clears what an earlier one set.
+	write(t, dir+"/99-later.conf", "[Autologin]\nUser=\n")
+
+	old := autologinRoots
+	autologinRoots = []string{dir}
+	defer func() { autologinRoots = old }()
+
+	if got := HasAutologin(LoginManager{Kind: LoginSDDM}); got != AutologinOff {
+		t.Fatalf("HasAutologin = %v, want the later file to win", got)
+	}
+
+	write(t, dir+"/99-later.conf", "[Autologin]\nUser=belo\n")
+	if got := HasAutologin(LoginManager{Kind: LoginSDDM}); got != AutologinOn {
+		t.Fatalf("HasAutologin = %v, want autologin on", got)
+	}
+}
+
+// A key outside the [Autologin] section is not an autologin.
+func TestHasAutologinIgnoresOtherSections(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir+"/10.conf", "[General]\nUser=belo\n\n[Autologin]\nSession=x.desktop\n")
+	old := autologinRoots
+	autologinRoots = []string{dir}
+	defer func() { autologinRoots = old }()
+
+	if got := HasAutologin(LoginManager{Kind: LoginSDDM}); got != AutologinOff {
+		t.Fatalf("HasAutologin = %v, want off", got)
+	}
+}
+
+// Saying nothing beats warning wrongly: greetd, ly and the rest keep their
+// answer somewhere this does not know how to read.
+func TestHasAutologinAdmitsWhatItCannotRead(t *testing.T) {
+	if got := HasAutologin(LoginManager{Kind: LoginGreetd}); got != AutologinUnknown {
+		t.Errorf("greetd = %v, want unknown", got)
+	}
+	// No display manager means nothing asks anything.
+	if got := HasAutologin(LoginManager{Kind: LoginNone}); got != AutologinOn {
+		t.Errorf("no display manager = %v, want on", got)
+	}
+}
