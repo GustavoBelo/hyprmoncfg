@@ -156,7 +156,15 @@ func (m Model) updateConsoleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.adjustConsoleField(&cfg, 1)
 	case "e":
 		return m, m.openConsoleAppPicker(&cfg)
+	case "s":
+		return m.saveConsole()
+	case "r", "esc":
+		return m.discardConsole()
 	case "enter":
+		if m.consoleDirty {
+			m.setStatusErr("Save your changes first, or press r to discard them.")
+			return m, nil
+		}
 		return m.startConsole()
 	}
 	return m, nil
@@ -198,9 +206,36 @@ func (m Model) adjustConsoleField(cfg *console.Config, dir int) (tea.Model, tea.
 	default:
 		return m, nil
 	}
-	if err := m.persistConsole(*cfg); err != nil {
-		m.setStatusErr(err.Error())
+	m.consoleConfig = cfg
+	m.consoleDirty = true
+	return m, nil
+}
+
+// saveConsole writes the draft. Nothing else does, which is what makes the
+// arrow keys safe to explore with.
+func (m Model) saveConsole() (tea.Model, tea.Cmd) {
+	if !m.consoleDirty {
+		m.setStatusOK("Nothing to save.")
+		return m, nil
 	}
+	cfg := m.ensureConsoleConfig()
+	if err := m.persistConsole(cfg); err != nil {
+		m.setStatusErr(err.Error())
+		return m, nil
+	}
+	m.consoleDirty = false
+	m.setStatusOK("Console settings saved.")
+	return m, nil
+}
+
+// discardConsole throws the draft away and goes back to what is on disk.
+func (m Model) discardConsole() (tea.Model, tea.Cmd) {
+	if !m.consoleDirty {
+		return m, nil
+	}
+	m.consoleConfig = nil
+	m.consoleDirty = false
+	m.setStatusOK("Changes discarded.")
 	return m, nil
 }
 
@@ -268,7 +303,10 @@ func (m Model) consoleSettingsLines() []string {
 		case consoleFieldBoot:
 			lines = append(lines, m.consoleSettingLine(selected, "Starts in", string(cfg.Boot)))
 		case consoleFieldDesktopSession:
-			lines = append(lines, m.consoleSettingLine(selected, "Comes back to", orNotSet(cfg.DesktopSession)))
+			// The .desktop suffix is noise here and pushes the value onto a
+			// second line in a narrow pane.
+			lines = append(lines, m.consoleSettingLine(selected, "Comes back to",
+				orNotSet(strings.TrimSuffix(cfg.DesktopSession, ".desktop"))))
 		case consoleFieldTrigger:
 			lines = append(lines, m.consoleToggleLine(selected, "Start on controller", cfg.EnterOnControllerConnect))
 		case consoleFieldCloseApps:
@@ -320,6 +358,12 @@ func (m Model) renderConsoleStatusPane(width int, height int) string {
 	innerW := max(1, width-style.GetHorizontalFrameSize())
 	lines := []string{}
 
+	if m.consoleDirty {
+		lines = append(lines,
+			m.styles.warning.Render("Unsaved changes."),
+			m.styles.subtle.Render("s saves them, r puts them back."),
+			"")
+	}
 	if m.consoleHosted {
 		lines = append(lines, m.styles.statusOK.Render("This session can switch."))
 	} else {

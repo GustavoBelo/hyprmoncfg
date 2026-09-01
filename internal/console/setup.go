@@ -75,7 +75,8 @@ Comment=Hosts the desktop and the gamescope console session in one login session
 Exec=%s
 DesktopNames=%s
 Type=Application
-`, name, wrapperCommand, names)
+%s=true
+`, name, wrapperCommand, names, HostingMarker)
 }
 
 // HostsConsole reports whether a session entry is a hosting session -- ours or
@@ -86,6 +87,9 @@ Type=Application
 // hosting entry itself. Recording that would make the wrapper host itself, and
 // the user would never reach a desktop.
 func HostsConsole(e Entry) bool {
+	if e.Hosting {
+		return true
+	}
 	for i, arg := range e.Exec {
 		if arg == "console" && i+1 < len(e.Exec) && e.Exec[i+1] == "session" {
 			return true

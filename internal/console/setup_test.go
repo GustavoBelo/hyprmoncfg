@@ -58,3 +58,22 @@ func indexOf(h, n string) int {
 	}
 	return -1
 }
+
+// Reading the Exec line is not enough: a hosting entry may point at a wrapper
+// script, and then it looks like an ordinary session and offers itself as
+// somewhere to come back to -- which would host itself forever.
+func TestHostsConsoleTrustsTheMarkerWhateverTheCommand(t *testing.T) {
+	viaScript := Entry{Exec: []string{"/home/u/.local/share/some/wrapper.sh"}, Hosting: true}
+	if !HostsConsole(viaScript) {
+		t.Error("a marked entry was not recognised as hosting")
+	}
+	if HostsConsole(Entry{Exec: []string{"/home/u/.local/share/some/wrapper.sh"}}) {
+		t.Error("an unmarked script was mistaken for a hosting entry")
+	}
+}
+
+func TestEntryContentCarriesTheMarker(t *testing.T) {
+	if !contains(EntryContent("X", "hyprmoncfg console session", nil), HostingMarker+"=true") {
+		t.Error("the generated entry does not mark itself as hosting")
+	}
+}

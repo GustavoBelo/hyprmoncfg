@@ -29,6 +29,7 @@ type testHandler struct {
 	consoleEntered  []string
 	couchStopped    int
 	consoleEnterErr error
+	configured      ConsoleConfigureParams
 	disconnected    []string
 	editor          appstatus.EditorDocument
 	edited          appstatus.EditorDraft
@@ -71,6 +72,19 @@ func (h *testHandler) ConsoleEnter(params ConsoleEnterParams) error {
 	}
 	h.trigger = params.Trigger
 	h.console = ConsoleState{Arming: true, Hosted: true}
+	return nil
+}
+
+func (h *testHandler) ConsoleConfigure(params ConsoleConfigureParams) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.configured = params
+	if params.TVName != nil {
+		h.console.TVName = *params.TVName
+	}
+	if params.Trigger != nil {
+		h.console.Trigger = *params.Trigger
+	}
 	return nil
 }
 
@@ -388,6 +402,37 @@ func TestDispatchRoutesManageAndUnmanage(t *testing.T) {
 // The console session lives in the daemon, so every surface -- TUI, panel, CLI
 // -- drives it through these three methods rather than spawning its own
 // detached process and racing the others over the same displays.
+// A panel that knows about three settings must not clear a fourth it has never
+// heard of, so an edit carries only what it means to change.
+func TestConsoleConfigureChangesOnlyWhatItSends(t *testing.T) {
+	handler := &testHandler{console: ConsoleState{TVName: "HDMI-A-1", Trigger: true, Boot: "last"}}
+	_, path, cancel := runTestServer(t, handler)
+	defer cancel()
+	client, err := Dial(context.Background(), path)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	off := false
+	if err := client.ConsoleConfigure(context.Background(), ConsoleConfigureParams{Trigger: &off}); err != nil {
+		t.Fatalf("ConsoleConfigure: %v", err)
+	}
+	state, err := client.ConsoleStatus(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Trigger {
+		t.Error("the trigger was not turned off")
+	}
+	if state.TVName != "HDMI-A-1" || state.Boot != "last" {
+		t.Errorf("an unsent field was changed: %+v", state)
+	}
+	if handler.configured.TVName != nil || handler.configured.Boot != nil {
+		t.Error("fields the caller did not set arrived as non-nil")
+	}
+}
+
 // Entering is armed through the daemon, so the countdown outlives whatever
 // asked for it -- a panel button closes its own window, and a shell command's
 // terminal goes with the desktop.

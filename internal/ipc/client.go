@@ -125,6 +125,11 @@ func (c *Client) ConsoleEnter(ctx context.Context, trigger string) error {
 	return c.call(ctx, MethodConsoleEnter, ConsoleEnterParams{Trigger: trigger}, nil)
 }
 
+// ConsoleConfigure edits console mode. Only the fields that are set change.
+func (c *Client) ConsoleConfigure(ctx context.Context, params ConsoleConfigureParams) error {
+	return c.call(ctx, MethodConsoleConfigure, params, nil)
+}
+
 // ConsoleCancel calls off an entry that is counting down.
 func (c *Client) ConsoleCancel(ctx context.Context) error {
 	return c.call(ctx, MethodConsoleCancel, nil, nil)

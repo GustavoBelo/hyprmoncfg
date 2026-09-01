@@ -45,6 +45,9 @@ const (
 	MethodConsoleStatus = "console.status"
 	MethodConsoleEnter  = "console.enter"
 	MethodConsoleCancel = "console.cancel"
+	// MethodConsoleConfigure edits console mode from a panel, so the settings
+	// are not reachable only from a terminal.
+	MethodConsoleConfigure = "console.configure"
 )
 
 // ConsoleEnterParams says what asked for the session, which lands in the log.
@@ -77,6 +80,39 @@ type ConsoleState struct {
 	// cannot see. It is empty on a healthy system; when it is not, anything the
 	// daemon launches starts without a session and dies silently.
 	MissingSessionEnv []string `json:"missing_session_env,omitempty"`
+
+	// The rest is what an editor needs: the current settings, and the choices
+	// they can be set to. A panel should not have to know which connectors
+	// exist or which session entries are installed.
+	Boot           string   `json:"boot,omitempty"`
+	DesktopSession string   `json:"desktop_session,omitempty"`
+	AppsToClose    []string `json:"apps_to_close,omitempty"`
+	// Displays are the connectors a console session could play on, newest read
+	// from the compositor rather than remembered.
+	Displays []ConsoleDisplay `json:"displays,omitempty"`
+	// DesktopSessions are the session entries that could be returned to. A
+	// hosting session is never among them: it would host itself.
+	DesktopSessions []string `json:"desktop_sessions,omitempty"`
+	// BootModes are the accepted values for Boot, so the panel does not carry
+	// its own copy of a list that lives in Go.
+	BootModes []string `json:"boot_modes,omitempty"`
+}
+
+// ConsoleDisplay is one display a console session could play on.
+type ConsoleDisplay struct {
+	Connector   string `json:"connector"`
+	Description string `json:"description,omitempty"`
+}
+
+// ConsoleConfigureParams edits console mode. Every field is optional: a panel
+// changing one setting should not have to send back the others, and a field it
+// does not know about must not be cleared by its silence.
+type ConsoleConfigureParams struct {
+	TVName         *string  `json:"tv_name,omitempty"`
+	Boot           *string  `json:"boot,omitempty"`
+	DesktopSession *string  `json:"desktop_session,omitempty"`
+	Trigger        *bool    `json:"trigger,omitempty"`
+	AppsToClose    []string `json:"apps_to_close,omitempty"`
 }
 
 const EventStatus = "status"
@@ -179,5 +215,6 @@ type Handler interface {
 	ConsoleStatus() (ConsoleState, error)
 	ConsoleEnter(params ConsoleEnterParams) error
 	ConsoleCancel() error
+	ConsoleConfigure(params ConsoleConfigureParams) error
 	Disconnect(owner string)
 }

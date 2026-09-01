@@ -27,6 +27,10 @@ import (
 // what identifies it, never a package name or a file path.
 const GamescopeDesktopName = "gamescope"
 
+// HostingMarker is the key `console setup` writes into the session entry it
+// generates, so a hosting session can be recognised however it is launched.
+const HostingMarker = "X-Hyprmoncfg-Hosting"
+
 // Entry is one session entry offered to the login manager.
 type Entry struct {
 	Path string
@@ -36,6 +40,11 @@ type Entry struct {
 	Exec []string
 	// DesktopNames is the DesktopNames= list, lowercased.
 	DesktopNames []string
+	// Hosting is set by the marker `console setup` writes. Reading the Exec
+	// line is not enough on its own: a hosting entry may point at a wrapper
+	// script rather than at us directly, and then it looks like an ordinary
+	// session and offers itself as somewhere to come back to.
+	Hosting bool
 }
 
 // File is the entry's basename, which is how a login manager names a session.
@@ -108,6 +117,8 @@ func ReadEntry(path string) (Entry, error) {
 			entry.Name = strings.TrimSpace(value)
 		case "Exec":
 			entry.Exec = ParseExec(value)
+		case HostingMarker:
+			entry.Hosting = strings.EqualFold(strings.TrimSpace(value), "true")
 		case "DesktopNames":
 			for _, name := range strings.Split(value, ";") {
 				if name = strings.ToLower(strings.TrimSpace(name)); name != "" {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
+	"github.com/crmne/hyprmoncfg/internal/apps"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
@@ -82,6 +83,13 @@ func (s *Service) Status() (appstatus.Document, error) {
 			Controllers: state.Controllers,
 			TVName:      state.TVName,
 			Problems:    state.Problems,
+
+			Boot:            state.Boot,
+			DesktopSession:  state.DesktopSession,
+			AppsToClose:     state.AppsToClose,
+			DesktopSessions: state.DesktopSessions,
+			BootModes:       state.BootModes,
+			Displays:        consoleDisplays(state.Displays),
 		}
 	}
 
@@ -540,9 +548,37 @@ func (s *Service) ConsoleStatus() (ipc.ConsoleState, error) {
 	if s.console != nil {
 		state.Arming = s.console.Arming()
 	}
+	state.Boot = string(cfg.Boot)
+	state.DesktopSession = cfg.DesktopSession
+	state.AppsToClose = cfg.AppsToClose
+	state.BootModes = []string{string(console.BootDesktop), string(console.BootConsole), string(console.BootLast)}
+	entries := console.FindEntries(console.SessionDirs())
+	for _, e := range entries {
+		// A hosting session is never something to come back to: it would host
+		// itself and the user would never reach a desktop.
+		if !console.HostsConsole(e) {
+			state.DesktopSessions = append(state.DesktopSessions, e.File())
+		}
+	}
+	if monitors, err := s.client.Monitors(context.Background()); err == nil {
+		for _, m := range monitors {
+			state.Displays = append(state.Displays, ipc.ConsoleDisplay{Connector: m.Name, Description: m.Description})
+		}
+	}
 	state.Problems = consoleProblems(cfg, state)
 	state.Ready = len(state.Problems) == 0
 	return state, nil
+}
+
+// consoleDisplays converts the IPC shape to the status document's, which are
+// separate types on purpose: the document is a published schema and the IPC
+// reply is not.
+func consoleDisplays(in []ipc.ConsoleDisplay) []appstatus.ConsoleDisplay {
+	out := make([]appstatus.ConsoleDisplay, 0, len(in))
+	for _, d := range in {
+		out = append(out, appstatus.ConsoleDisplay{Connector: d.Connector, Description: d.Description})
+	}
+	return out
 }
 
 // consoleProblems is what the doctor would say, collected here so a panel can
@@ -574,6 +610,62 @@ func (s *Service) ConsoleEnter(params ipc.ConsoleEnterParams) error {
 		trigger = "a request over IPC"
 	}
 	return s.console.Arm(context.Background(), trigger)
+}
+
+// ConsoleConfigure edits console mode from a panel. Only the fields that were
+// sent change: a client that knows about three settings must not clear a fourth
+// it has never heard of.
+func (s *Service) ConsoleConfigure(params ipc.ConsoleConfigureParams) error {
+	base, err := config.EnsureBaseDir(s.cfg.ConfigDir)
+	if err != nil {
+		return err
+	}
+	cfg, err := console.LoadConfig(base)
+	if err != nil {
+		return err
+	}
+	if params.TVName != nil {
+		monitors, err := s.client.Monitors(context.Background())
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, m := range monitors {
+			if m.Name == *params.TVName {
+				// The identity is taken from the live display, not from the
+				// name alone: the EDID key is what survives a replug into a
+				// different connector, and the description is what finds the
+				// display's audio.
+				cfg.TVName, cfg.TVKey, cfg.TVDescription = m.Name, m.HardwareKey(), m.Description
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("no connected display is called %q", *params.TVName)
+		}
+	}
+	if params.Boot != nil {
+		mode := console.BootMode(*params.Boot)
+		if !mode.Valid() {
+			return fmt.Errorf("unknown boot mode %q", *params.Boot)
+		}
+		cfg.Boot = mode
+	}
+	if params.DesktopSession != nil {
+		cfg.DesktopSession = *params.DesktopSession
+	}
+	if params.Trigger != nil {
+		cfg.EnterOnControllerConnect = *params.Trigger
+	}
+	if params.AppsToClose != nil {
+		cfg.AppsToClose = apps.SanitizeApps(params.AppsToClose)
+	}
+	if err := console.SaveConfig(base, cfg); err != nil {
+		return err
+	}
+	s.signalChange()
+	return nil
 }
 
 func (s *Service) ConsoleCancel() error {

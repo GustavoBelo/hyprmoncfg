@@ -40,6 +40,22 @@ type Console struct {
 	Controllers int      `json:"controllers"`
 	TVName      string   `json:"tv_name,omitempty"`
 	Problems    []string `json:"problems,omitempty"`
+
+	// The rest is what an editor needs: the current settings and the choices
+	// they can be set to, so a panel can offer them without knowing which
+	// connectors exist or which session entries are installed.
+	Boot            string           `json:"boot,omitempty"`
+	DesktopSession  string           `json:"desktop_session,omitempty"`
+	AppsToClose     []string         `json:"apps_to_close,omitempty"`
+	Displays        []ConsoleDisplay `json:"displays,omitempty"`
+	DesktopSessions []string         `json:"desktop_sessions,omitempty"`
+	BootModes       []string         `json:"boot_modes,omitempty"`
+}
+
+// ConsoleDisplay is one display a console session could play on.
+type ConsoleDisplay struct {
+	Connector   string `json:"connector"`
+	Description string `json:"description,omitempty"`
 }
 
 type Daemon struct {

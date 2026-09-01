@@ -299,6 +299,7 @@ type Model struct {
 	consoleConfig   *console.Config
 	consoleHosted   bool
 	consoleReady    bool
+	consoleDirty    bool
 	consoleSelected int
 
 	pending       *pendingApply
@@ -430,7 +431,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.workspaceRules = msg.workspaceRules
 		m.workspaces = msg.workspaces
 		m.lidState = msg.lidState
-		m.consoleConfig = msg.consoleConfig
+		// A refresh must not overwrite something the user is in the middle of
+		// editing; the draft is theirs until they save or discard it.
+		if !m.consoleDirty {
+			m.consoleConfig = msg.consoleConfig
+		}
 		m.consoleHosted = msg.consoleHosted
 		m.consoleReady = msg.consoleReady
 

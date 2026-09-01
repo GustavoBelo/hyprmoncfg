@@ -253,6 +253,11 @@ func (s *Server) dispatch(owner string, client *serverClient, request Request) R
 		}
 	case MethodConsoleCancel:
 		err = s.Handler.ConsoleCancel()
+	case MethodConsoleConfigure:
+		var params ConsoleConfigureParams
+		if err = decodeParams(request.Params, &params); err == nil {
+			err = s.Handler.ConsoleConfigure(params)
+		}
 	default:
 		err = fmt.Errorf("unknown IPC method %q", request.Method)
 	}
