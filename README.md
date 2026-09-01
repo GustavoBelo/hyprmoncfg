@@ -225,8 +225,13 @@ hyprmoncfg console trigger on     # a controller switching on starts a session
 
 Come back from Big Picture: **Steam → Power → Switch to Desktop**.
 
-Entering closes the desktop, so it is announced and can be called off — twenty
-seconds and a notification for the automatic paths, five for the command.
+Entering closes the desktop, so every way in announces itself first and can be
+called off — **click the notification** and the desktop stays. Servers that draw
+action buttons get a **Cancel** button too; most, Omarchy's own included, draw
+none, so the click on the body is the answer that always works. Ten seconds when
+you asked for it, twenty when a controller did, because that one is as often an
+accident as an intention. `hyprmoncfg console cancel` also stops it, and so does
+switching the controller back off.
 
 ### Worth knowing
 

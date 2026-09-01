@@ -8,10 +8,11 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/console"
+	"github.com/crmne/hyprmoncfg/internal/notify"
 )
 
-// consoleController turns a controller being switched on into a console
-// session.
+// consoleController turns a request -- a controller switched on, a button, a
+// command -- into a console session.
 //
 // It is deliberately harder to fire than the couch-mode trigger it replaces.
 // Back then entering rearranged some displays; now it ends the desktop session
@@ -24,16 +25,17 @@ type consoleController struct {
 	// controllers is the last count seen, so only the edge from none to some
 	// counts. Polling a level would re-enter a second after every exit.
 	controllers int
-	// armed is the pending entry, cancelled by unplugging the pad again or by
-	// `hyprmoncfg console cancel`.
+	// armed is the pending entry, cancelled by unplugging the pad again, by the
+	// button on the notification, or by `hyprmoncfg console cancel`.
 	armed  bool
 	cancel context.CancelFunc
+	// calledOff is who stopped the pending entry, recorded before the context
+	// is cancelled so the countdown can say so on its way out.
+	calledOff string
+	// byController is whether the pending entry was started by a controller,
+	// and so whether switching one off should call it off again.
+	byController bool
 }
-
-// consoleGrace is how long the user has to change their mind. It is generous on
-// purpose: the notification is the only warning, and the cost of missing it is
-// a desktop closed out from under them.
-const consoleGrace = 20 * time.Second
 
 func newConsoleController(svc *Service) *consoleController {
 	return &consoleController{svc: svc, controllers: console.ConnectedControllers()}
@@ -47,11 +49,14 @@ func (c *consoleController) observeControllers(ctx context.Context) {
 	c.mu.Lock()
 	previous := c.controllers
 	c.controllers = now
-	armed := c.armed
+	byController := c.armed && c.byController
 	c.mu.Unlock()
 
-	// Unplugging again while the countdown runs is the cheapest way to say no.
-	if now == 0 && armed {
+	// Switching the pad off again is the cheapest way to say no -- but only to
+	// an entry the pad started. A machine with no controller sits at zero for
+	// ever, so a level test here called off every countdown within one poll,
+	// blaming a controller that was never there.
+	if byController && isConsoleDisconnectEdge(previous, now) {
 		c.cancelArmed("the controller was disconnected")
 		return
 	}
@@ -77,7 +82,7 @@ func (c *consoleController) observeControllers(ctx context.Context) {
 		c.svc.cfg.Logf("console: a controller connected, but this session is not hosted; not entering")
 		return
 	}
-	c.arm(ctx)
+	c.arm(ctx, "A controller connected", console.TriggerGrace, true)
 }
 
 // isConsoleConnectEdge reports the transition from no controllers to some.
@@ -87,6 +92,11 @@ func (c *consoleController) observeControllers(ctx context.Context) {
 // the user straight back into it, over and over, because the pad was still on.
 func isConsoleConnectEdge(previous, now int) bool {
 	return previous == 0 && now > 0
+}
+
+// isConsoleDisconnectEdge reports the transition from some controllers to none.
+func isConsoleDisconnectEdge(previous, now int) bool {
+	return previous > 0 && now == 0
 }
 
 // Arming reports whether an entry has been announced and is counting down.
@@ -99,24 +109,43 @@ func (c *consoleController) Arming() bool {
 // Arm announces an entry and starts the countdown. It returns straight away:
 // whatever asked is about to be closed along with the rest of the desktop, so
 // there is nothing useful to wait for.
-func (c *consoleController) Arm(ctx context.Context, trigger string) error {
+//
+// Nothing leads the announcement here. The trigger names who asked, which the
+// log wants and the user already knows -- they are the one who asked.
+func (c *consoleController) Arm(ctx context.Context, trigger string, grace time.Duration) error {
 	c.svc.cfg.Logf("console: entry requested by %s", trigger)
-	c.arm(ctx)
+	c.arm(ctx, "", consoleGrace(grace), false)
 	return nil
 }
 
-func (c *consoleController) arm(ctx context.Context) {
+// consoleGrace is how long the user gets. Zero means the caller had no opinion,
+// which is the usual case: a panel that hard-coded a countdown would disagree
+// with the daemon the day either of them changed its mind.
+func consoleGrace(requested time.Duration) time.Duration {
+	if requested <= 0 {
+		return console.DefaultGrace
+	}
+	return requested
+}
+
+// arm counts down out here, in the daemon, because the countdown has to outlive
+// whatever asked for it: a panel button closes its own window, and a command's
+// terminal goes with the desktop.
+//
+// announce leads the notification when there is something worth saying about
+// why this is happening; it is empty when the user asked outright. byController
+// says whether switching a pad off should call this entry off again.
+func (c *consoleController) arm(ctx context.Context, announce string, grace time.Duration, byController bool) {
 	c.mu.Lock()
 	if c.armed {
 		c.mu.Unlock()
 		return
 	}
 	armCtx, cancel := context.WithCancel(ctx)
-	c.armed, c.cancel = true, cancel
+	c.armed, c.cancel, c.calledOff, c.byController = true, cancel, "", byController
 	c.mu.Unlock()
 
-	c.svc.cfg.Logf("console: a controller connected; entering console mode in %s", consoleGrace)
-	notify("Console mode", "A controller connected. Entering console mode in 20 seconds.")
+	c.svc.cfg.Logf("console: entering console mode in %s unless it is called off", grace)
 
 	go func() {
 		defer func() {
@@ -124,58 +153,55 @@ func (c *consoleController) arm(ctx context.Context) {
 			c.armed, c.cancel = false, nil
 			c.mu.Unlock()
 		}()
-		deadline := time.After(consoleGrace)
-		poll := time.NewTicker(time.Second)
-		defer poll.Stop()
-		for waiting := true; waiting; {
-			select {
-			case <-armCtx.Done():
-				return
-			case <-poll.C:
-				if runtimeDir, err := console.RuntimeDir(); err == nil && console.TakeCancel(runtimeDir) {
-					c.svc.cfg.Logf("console: entry cancelled")
-					notify("Console mode", "Entering console mode was cancelled.")
-					return
-				}
-			case <-deadline:
-				waiting = false
-			}
+
+		notifier := notify.Dial()
+		defer notifier.Close()
+
+		runtimeDir, _ := console.RuntimeDir()
+		if err := console.Countdown(armCtx, console.CountdownOpts{
+			Grace:      grace,
+			Trigger:    announce,
+			RuntimeDir: runtimeDir,
+			Notifier:   notifier,
+			Logf:       c.svc.cfg.Logf,
+			Reason:     c.calledOffReason,
+		}); err != nil {
+			return
 		}
+
 		self, err := exec.LookPath("hyprmoncfg")
 		if err != nil {
 			c.svc.cfg.Logf("console: cannot enter, hyprmoncfg is not on PATH: %v", err)
 			return
 		}
 		// --yes because the countdown has already happened, out here, where the
-		// user could see it.
+		// user could see it. It is also what keeps this from being a loop:
+		// `console enter` without it comes straight back to this daemon.
 		if out, err := exec.CommandContext(armCtx, self, "console", "enter", "--yes").CombinedOutput(); err != nil {
 			c.svc.cfg.Logf("console: entering failed: %v: %s", err, out)
 		}
 	}()
 }
 
+// cancelArmed stops a pending entry. The countdown does the saying-so, because
+// it owns the notification and can replace it rather than stack a second one on
+// top.
 func (c *consoleController) cancelArmed(why string) bool {
 	c.mu.Lock()
 	cancel, armed := c.cancel, c.armed
+	if armed && cancel != nil {
+		c.calledOff = why
+	}
 	c.mu.Unlock()
 	if !armed || cancel == nil {
 		return false
 	}
 	cancel()
-	c.svc.cfg.Logf("console: entry %s", why)
-	notify("Console mode", "Entering console mode was "+why+".")
 	return true
 }
 
-// notify tells the user something is about to happen to their session. It is
-// best effort: a machine with no notification daemon still gets the log line,
-// and the daemon has no business failing over a missing helper.
-func notify(title, body string) {
-	path, err := exec.LookPath("notify-send")
-	if err != nil {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_ = exec.CommandContext(ctx, path, "-a", "hyprmoncfg", title, body).Run()
+func (c *consoleController) calledOffReason() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.calledOff
 }

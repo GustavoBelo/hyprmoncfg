@@ -4,10 +4,11 @@ Version=1.0
 Name=Console Mode
 GenericName=Steam Big Picture on the TV
 Comment=Close the desktop and hand the machine to Steam's gamescope session
-# In a terminal on purpose: entering closes the desktop session, and the
-# countdown that says so -- and the Ctrl-C that stops it -- have to be visible.
+# No terminal: the countdown announces itself as a notification with a Cancel
+# button on it, which is visible wherever this is launched from -- and is the
+# whole point, because this is the entry somebody clicks by mistake.
 Exec=hyprmoncfg console enter
-Terminal=true
+Terminal=false
 Categories=Game;Settings;
 Keywords=Steam;Big Picture;gamescope;console;TV;couch;
 Icon=input-gaming

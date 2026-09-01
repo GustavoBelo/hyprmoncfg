@@ -243,11 +243,11 @@ func (m Model) startConsole() (tea.Model, tea.Cmd) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := client.ConsoleEnter(ctx, "the TUI"); err != nil {
+	if err := client.ConsoleEnter(ctx, "the TUI", 0); err != nil {
 		m.setStatusErr(err.Error())
 		return m, nil
 	}
-	m.setStatusOK("Console mode starting. `hyprmoncfg console cancel` stops it.")
+	m.setStatusOK("Console mode starting. Click the notification to call it off.")
 	return m, nil
 }
 

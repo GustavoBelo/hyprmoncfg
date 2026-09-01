@@ -53,6 +53,13 @@ const (
 // ConsoleEnterParams says what asked for the session, which lands in the log.
 type ConsoleEnterParams struct {
 	Trigger string `json:"trigger,omitempty"`
+	// GraceMS overrides how long the countdown runs before the desktop closes.
+	// Zero means the daemon's own default, which is longer for an entry nobody
+	// asked for than for one that was asked for outright.
+	//
+	// Optional, so a client that has never heard of it -- or a daemon that has
+	// not -- still agrees with the other end about what happens.
+	GraceMS int `json:"grace_ms,omitempty"`
 }
 
 // ConsoleState is the daemon's answer about console mode.

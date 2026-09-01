@@ -607,7 +607,7 @@ func (s *Service) ConsoleEnter(params ipc.ConsoleEnterParams) error {
 	if trigger == "" {
 		trigger = "a request over IPC"
 	}
-	return s.console.Arm(context.Background(), trigger)
+	return s.console.Arm(context.Background(), trigger, time.Duration(params.GraceMS)*time.Millisecond)
 }
 
 // ConsoleConfigure edits console mode from a panel. Only the fields that were

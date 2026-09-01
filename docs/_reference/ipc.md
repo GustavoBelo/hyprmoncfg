@@ -47,8 +47,20 @@ Errors replace `result` with an object containing a stable `code`, a human-reada
 | `save` | full `profile` | none |
 | `delete` | `name` | none |
 | `set_profile_auto` | `enabled` boolean | none |
+| `console.status` | none | Console-mode state: whether it is configured, hosted, ready, and whether an entry is counting down |
+| `console.enter` | optional `trigger` string and `grace_ms` integer | none |
+| `console.cancel` | none | none |
+| `console.configure` | any of the console settings; only the fields that are sent change | none |
 
 A transaction contains an opaque `id`, the effective profile, and an RFC 3339 `deadline`.
+
+## Entering console mode
+
+Entering ends the desktop session, so `console.enter` does not do it: it arms it. The daemon announces the entry as a notification carrying a Cancel button, counts down, and only then closes the desktop. The countdown lives in the daemon because it has to outlive whoever asked — a panel button closes its own window, and a command's terminal goes with the desktop.
+
+`trigger` names who asked and lands in the log. `grace_ms` overrides how long the countdown runs; leave it out, and the daemon uses ten seconds for an entry that was asked for and twenty for one a controller started on its own. Both fields are optional, so a client that has never heard of them still agrees with the daemon about what will happen.
+
+`console.cancel` calls off a countdown that is running, and reports an error when there is none. It is one of three ways in: the notification's button, this method, and the `hyprmoncfg-cancel-entry` file in `$XDG_RUNTIME_DIR`, which is what `hyprmoncfg console cancel` writes so that a process with no socket can still say no.
 
 ## Safe preview lifecycle
 

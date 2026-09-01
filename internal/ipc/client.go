@@ -121,8 +121,13 @@ func (c *Client) ConsoleStatus(ctx context.Context) (ConsoleState, error) {
 // ConsoleEnter arms an entry: the daemon announces it, waits, and then closes
 // the desktop. It returns as soon as the countdown starts, because whatever
 // asked is about to be closed along with everything else.
-func (c *Client) ConsoleEnter(ctx context.Context, trigger string) error {
-	return c.call(ctx, MethodConsoleEnter, ConsoleEnterParams{Trigger: trigger}, nil)
+//
+// A zero grace leaves the length of the countdown to the daemon.
+func (c *Client) ConsoleEnter(ctx context.Context, trigger string, grace time.Duration) error {
+	return c.call(ctx, MethodConsoleEnter, ConsoleEnterParams{
+		Trigger: trigger,
+		GraceMS: int(grace.Milliseconds()),
+	}, nil)
 }
 
 // ConsoleConfigure edits console mode. Only the fields that are set change.

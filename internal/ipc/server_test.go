@@ -26,6 +26,7 @@ type testHandler struct {
 	profileAuto     bool
 	console         ConsoleState
 	trigger         string
+	graceMS         int
 	consoleEntered  []string
 	couchStopped    int
 	consoleEnterErr error
@@ -71,6 +72,7 @@ func (h *testHandler) ConsoleEnter(params ConsoleEnterParams) error {
 		return h.consoleEnterErr
 	}
 	h.trigger = params.Trigger
+	h.graceMS = params.GraceMS
 	h.console = ConsoleState{Arming: true, Hosted: true}
 	return nil
 }
@@ -450,7 +452,7 @@ func TestConsoleMethodsRoundTrip(t *testing.T) {
 	if _, err := client.ConsoleStatus(ctx); err != nil {
 		t.Fatalf("ConsoleStatus: %v", err)
 	}
-	if err := client.ConsoleEnter(ctx, "the TUI"); err != nil {
+	if err := client.ConsoleEnter(ctx, "the TUI", 0); err != nil {
 		t.Fatalf("ConsoleEnter: %v", err)
 	}
 	state, err2 := client.ConsoleStatus(ctx)
@@ -471,6 +473,38 @@ func TestConsoleMethodsRoundTrip(t *testing.T) {
 	}
 }
 
+// A caller that wants a different countdown says so, and a caller that does not
+// leaves the length to the daemon.
+func TestConsoleEnterCarriesTheGrace(t *testing.T) {
+	handler := &testHandler{}
+	_, path, _ := runTestServer(t, handler)
+	client, err := Dial(context.Background(), path)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer client.Close()
+
+	if err := client.ConsoleEnter(context.Background(), "the command line", 3*time.Second); err != nil {
+		t.Fatalf("ConsoleEnter: %v", err)
+	}
+	handler.mu.Lock()
+	got := handler.graceMS
+	handler.mu.Unlock()
+	if got != 3000 {
+		t.Errorf("grace_ms = %d, want 3000", got)
+	}
+
+	if err := client.ConsoleEnter(context.Background(), "the command line", 0); err != nil {
+		t.Fatalf("ConsoleEnter: %v", err)
+	}
+	handler.mu.Lock()
+	got = handler.graceMS
+	handler.mu.Unlock()
+	if got != 0 {
+		t.Errorf("grace_ms = %d, want the daemon left to decide", got)
+	}
+}
+
 // Starting without a body is valid: the trigger is informational.
 func TestCouchStartAcceptsAnEmptyTrigger(t *testing.T) {
 	handler := &testHandler{}
@@ -480,7 +514,7 @@ func TestCouchStartAcceptsAnEmptyTrigger(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
-	if err := client.ConsoleEnter(context.Background(), ""); err != nil {
+	if err := client.ConsoleEnter(context.Background(), "", 0); err != nil {
 		t.Fatalf("ConsoleEnter with no trigger: %v", err)
 	}
 }
@@ -493,7 +527,7 @@ func TestConsoleEnterSurfacesTheDaemonsRefusal(t *testing.T) {
 		t.Fatalf("dial: %v", dialErr)
 	}
 	defer client.Close()
-	err := client.ConsoleEnter(context.Background(), "the panel")
+	err := client.ConsoleEnter(context.Background(), "the panel", 0)
 	if err == nil {
 		t.Fatal("a refusal must reach the caller")
 	}

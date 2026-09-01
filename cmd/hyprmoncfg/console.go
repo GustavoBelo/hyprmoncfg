@@ -14,6 +14,8 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/console"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
+	"github.com/crmne/hyprmoncfg/internal/ipc"
+	"github.com/crmne/hyprmoncfg/internal/notify"
 )
 
 func newConsoleCmd(configDir *string) *cobra.Command {
@@ -155,31 +157,80 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 				return fmt.Errorf("no TV has been chosen; run `hyprmoncfg console doctor`")
 			}
 
-			if !yes {
-				fmt.Printf("Entering console mode closes your desktop session.\n")
-				fmt.Printf("Everything open will be closed. Continuing in %s -- Ctrl-C to stop.\n", wait)
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(wait):
-				}
+			// --yes is the one path that never announces anything, and it has
+			// to stay that way: it is what the daemon runs once its own
+			// countdown has finished, and routing it back would be a loop.
+			if yes {
+				return enterNow(ctx, runtimeDir)
 			}
 
-			if err := console.Request(runtimeDir, console.ModeConsole); err != nil {
+			// The countdown belongs in the daemon, which outlives this process
+			// -- and this process is about to be closed along with the rest of
+			// the desktop.
+			if enterViaDaemon(ctx, wait) {
+				fmt.Printf("Entering console mode closes your desktop session.\n")
+				fmt.Printf("Click the notification to cancel; `hyprmoncfg console cancel` stops it too.\n")
+				return nil
+			}
+
+			// No daemon to hand it to, so count down here. The announcement is
+			// the same, button and all: this process lives long enough to own
+			// it, and the launcher entry has no terminal to print to.
+			if wait <= 0 {
+				wait = console.DefaultGrace
+			}
+			notifier := notify.Dial()
+			defer notifier.Close()
+
+			fmt.Printf("Entering console mode closes your desktop session.\n")
+			fmt.Printf("Everything open will be closed. Continuing in %s -- Ctrl-C to stop.\n", wait)
+			if err := console.Countdown(ctx, console.CountdownOpts{
+				Grace:      wait,
+				RuntimeDir: runtimeDir,
+				Notifier:   notifier,
+				Logf:       func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) },
+			}); err != nil {
 				return err
 			}
-			if err := console.StopCompositor(ctx, runtimeDir); err != nil {
-				// The request would otherwise fire at the next logout, which is
-				// not what anyone asked for.
-				console.ClearRequest(runtimeDir)
-				return err
-			}
-			return nil
+			return enterNow(ctx, runtimeDir)
 		},
 	}
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "do not wait before closing the desktop")
-	cmd.Flags().DurationVar(&wait, "wait", 5*time.Second, "how long to wait before closing the desktop")
+	cmd.Flags().DurationVar(&wait, "wait", 0, "how long to wait before closing the desktop (0 uses the standard countdown)")
 	return cmd
+}
+
+// enterNow is the point of no return. The request outlives this process on
+// purpose -- the wrapper reads it only once the compositor has gone -- and
+// stopping the compositor takes the desktop with it.
+func enterNow(ctx context.Context, runtimeDir string) error {
+	if err := console.Request(runtimeDir, console.ModeConsole); err != nil {
+		return err
+	}
+	if err := console.StopCompositor(ctx, runtimeDir); err != nil {
+		// The request would otherwise fire at the next logout, which is not
+		// what anyone asked for.
+		console.ClearRequest(runtimeDir)
+		return err
+	}
+	return nil
+}
+
+// enterViaDaemon reports whether a running daemon took the request. A grace of
+// zero leaves the length of the countdown to the daemon.
+func enterViaDaemon(ctx context.Context, grace time.Duration) bool {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return false
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	client, err := ipc.Dial(dialCtx, path)
+	if err != nil {
+		return false
+	}
+	defer client.Close()
+	return client.ConsoleEnter(dialCtx, "the command line", grace) == nil
 }
 
 func newConsoleStatusCmd(configDir *string) *cobra.Command {
@@ -440,12 +491,16 @@ func newConsoleLeaveCmd() *cobra.Command {
 	}
 }
 
-// newConsoleCancelCmd calls off an automatic entry that has been announced but
-// not happened yet.
+// newConsoleCancelCmd calls off an entry that has been announced but not
+// happened yet.
+//
+// The notification's own Cancel button is the usual way. This is the one that
+// works over ssh, from a script, and on a desktop whose notification server
+// cannot take an answer back.
 func newConsoleCancelCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "cancel",
-		Short: "Call off an automatic entry that is counting down",
+		Short: "Call off an entry that is counting down",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			runtimeDir, err := console.RuntimeDir()
@@ -455,7 +510,7 @@ func newConsoleCancelCmd() *cobra.Command {
 			if err := console.RequestCancel(runtimeDir); err != nil {
 				return err
 			}
-			fmt.Println("The desktop will stay. Switch the controller off and on to arm it again.")
+			fmt.Println("The desktop will stay.")
 			return nil
 		},
 	}
@@ -490,7 +545,9 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 			}
 			if cfg.EnterOnControllerConnect {
 				fmt.Println("Switching a controller on will now close your desktop session.")
-				fmt.Println("You get 20 seconds and a notification; `hyprmoncfg console cancel` stops it.")
+				fmt.Println("You get 20 seconds and a notification you can click to call it off;")
+				fmt.Println("switching the controller back off stops it too, and so does")
+				fmt.Println("`hyprmoncfg console cancel`.")
 			} else {
 				fmt.Println("Controllers no longer start a console session.")
 			}

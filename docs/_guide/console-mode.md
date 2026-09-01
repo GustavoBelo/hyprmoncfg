@@ -63,12 +63,35 @@ hyprmoncfg console doctor
 hyprmoncfg console enter
 ```
 
-It warns you, waits five seconds so you can press Ctrl-C, and hands over.
-Ending the desktop session closes what was open in it, the same way logging out
-does. To come back, use Big Picture's
-own **Steam → Power → Switch to Desktop**.
+It warns you and waits ten seconds before handing over. Ending the desktop
+session closes what was open in it, the same way logging out does. To come
+back, use Big Picture's own **Steam → Power → Switch to Desktop**.
 
 There is also a **Console Mode** entry in your application launcher.
+
+### Changing your mind
+
+The warning is a notification that says to click it, and clicking anywhere on it
+calls the entry off. The desktop stays, and the notification says so.
+
+Clicking the body is the answer that always works. Notification servers that
+draw action buttons show a **Cancel** button as well, but most draw none --
+mako, dunst and Omarchy's own quickshell among them -- and nothing in the
+protocol lets a program find out which kind it is talking to. So the message
+asks for the click, and the button is a bonus where there is one.
+
+That matters most for the launcher entry, which is the one you can click by
+mistake. Every way in gets the same notification, so there is nowhere you can
+start this from and be unable to stop it.
+
+If your notification server cannot take an answer back, the notification says to
+run this instead:
+
+```bash
+hyprmoncfg console cancel
+```
+
+which works during any countdown, from anywhere.
 
 ### A keyboard shortcut
 
@@ -85,8 +108,10 @@ hyprmoncfg console trigger on
 ```
 
 Switching a controller on then starts a console session. Because that closes
-your desktop, it announces itself and waits twenty seconds; switching the
-controller off again calls it off, and so does `hyprmoncfg console cancel`.
+your desktop, it announces itself and waits twenty seconds -- twice as long as
+an entry you asked for, since a controller switching itself on is as often an
+accident as an intention. Clicking the notification calls it off, and so does
+switching the controller off again, or `hyprmoncfg console cancel`.
 
 It is off by default.
 
