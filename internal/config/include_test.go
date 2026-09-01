@@ -32,7 +32,7 @@ func TestIncludeLineStaysShortWhenTheConfigHomeIsTheUsualOne(t *testing.T) {
 	t.Setenv("HOME", "/home/someone")
 
 	lua := IncludeLine(HyprConfigLua, "/home/someone/.config/hypr/hyprmoncfg-monitors.lua")
-	if lua != `dofile(os.getenv("HOME") .. "/.config/hypr/hyprmoncfg-monitors.lua")` {
+	if lua != `do local path = os.getenv("HOME") .. "/.config/hypr/hyprmoncfg-monitors.lua"; local file = io.open(path, "r"); if file then file:close(); dofile(path) end end` {
 		t.Fatalf("expected the short form, got %q", lua)
 	}
 }
@@ -60,8 +60,18 @@ func TestIncludeLineResolvesTheHomeAtLoadTime(t *testing.T) {
 
 	// A target the user pointed somewhere else has to be named outright.
 	outside := IncludeLine(HyprConfigLua, "/etc/hypr/custom.lua")
-	if outside != `dofile("/etc/hypr/custom.lua")` {
+	if outside != `do local path = "/etc/hypr/custom.lua"; local file = io.open(path, "r"); if file then file:close(); dofile(path) end end` {
 		t.Fatalf("outside include = %q", outside)
+	}
+}
+
+func TestVerifyLoadedLastRejectsAMissingGeneratedConfig(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "hyprmoncfg-monitors.lua")
+	path := writeConfig(t, IncludeLine(HyprConfigLua, target)+"\n")
+
+	err := VerifyLoadedLast(path, HyprConfigLua, target)
+	if err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected the missing generated file to fail verification, got %v", err)
 	}
 }
 

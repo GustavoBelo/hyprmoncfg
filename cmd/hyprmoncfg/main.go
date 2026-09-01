@@ -427,6 +427,12 @@ func runDoctor(cmd *cobra.Command, monitorsConf string, hyprConfig string, fix b
 	}
 
 	line := config.IncludeLine(resolved.Format, resolved.MonitorsPath)
+	if err := config.VerifyGeneratedMonitors(resolved.MonitorsPath); err != nil {
+		fmt.Fprintf(out, "PROBLEM  %v.\n", err)
+		fmt.Fprintln(out, "         Hyprland has no generated hyprmoncfg monitor rules to load.")
+		fmt.Fprintln(out, "         Save and apply a profile to recreate the file.")
+		return nil
+	}
 	if err := config.VerifyLoadedLast(resolved.RootPath, resolved.Format, resolved.MonitorsPath); err == nil {
 		fmt.Fprintf(out, "OK  %s loads %s last\n", resolved.RootPath, resolved.MonitorsPath)
 		return nil
