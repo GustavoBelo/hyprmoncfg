@@ -5,12 +5,17 @@ After=graphical-session.target
 # because a session without uwsm never reaches graphical-session.target, and a
 # daemon that never starts is worse than one that lingers.
 PartOf=graphical-session.target
+# A restart storm must not be able to leave the machine with no daemon at all.
+# Losing it takes the Omarchy panel and the TUI's console button with it, and
+# the absence is silent: everything just stops answering.
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
 ExecStart=%h/.local/bin/hyprmoncfgd
 Restart=on-failure
-RestartSec=2
+RestartSec=5
 # Signal the daemon alone, not everything in its cgroup. On the way out it puts
 # the desktop back by running hyprctl and pactl; with the default control-group
 # kill those children are terminated mid-restore, and the session's layout and
@@ -19,4 +24,8 @@ KillMode=mixed
 TimeoutStopSec=20
 
 [Install]
+# Both, deliberately. default.target starts it on a session that never reaches
+# graphical-session.target; graphical-session.target starts it again after a
+# session switch, which PartOf= stops it for and nothing else would restart.
 WantedBy=default.target
+WantedBy=graphical-session.target

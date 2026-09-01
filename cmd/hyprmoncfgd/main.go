@@ -25,6 +25,11 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/writerlock"
 )
 
+// writerLockWait is how long a starting daemon waits for a departing one to let
+// go. Generous on purpose: the cost of waiting is a late start, and the cost of
+// giving up is no daemon at all.
+const writerLockWait = 30 * time.Second
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
@@ -99,7 +104,16 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ownership, err := writerlock.TryAcquire()
+			// Wait for the lock rather than refusing it. A session switch stops
+			// the outgoing daemon and starts a new one at almost the same
+			// moment, so the lock is briefly held by a process that is on its
+			// way out. Failing instantly turned that overlap into four restarts
+			// in two seconds, systemd's start limit, and a daemon that stayed
+			// dead until someone noticed -- taking the panel and the TUI's
+			// console button with it.
+			lockCtx, cancelLock := context.WithTimeout(ctx, writerLockWait)
+			ownership, err := writerlock.Acquire(lockCtx, 250*time.Millisecond)
+			cancelLock()
 			if err != nil {
 				return fmt.Errorf("claim monitor writer ownership: %w", err)
 			}
