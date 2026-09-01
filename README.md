@@ -6,11 +6,10 @@
 </picture>
 
 <strong>Create multi-monitor layouts for Hyprland.</strong><br>
-Arrange visually. Save each setup. Switch automatically on hotplug and lid events.
+Arrange visually. Save each setup. Switch automatically on hotplug and lid events.<br>
+<strong>Then hand the whole machine to Steam on the TV, and take it back.</strong>
 
-[![GitHub Release](https://img.shields.io/github/v/release/crmne/hyprmoncfg)](https://github.com/crmne/hyprmoncfg/releases)
-[![AUR](https://img.shields.io/aur/version/hyprmoncfg)](https://aur.archlinux.org/packages/hyprmoncfg)
-[![CI](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml/badge.svg)](https://github.com/crmne/hyprmoncfg/actions/workflows/ci.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/GustavoBelo/hyprmoncfg)](https://github.com/GustavoBelo/hyprmoncfg/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 <a href="https://terminaltrove.com/hyprmoncfg/">
@@ -24,6 +23,16 @@ Arrange visually. Save each setup. Switch automatically on hotplug and lid event
 </div>
 
 ---
+
+> [!NOTE]
+> **This is a fork of [crmne/hyprmoncfg](https://github.com/crmne/hyprmoncfg) that adds Console Mode.**
+>
+> Everything upstream does, this does — the layout editor, the profiles, the
+> daemon — because it tracks upstream and sends fixes back there. What it adds
+> is one thing: a machine that is a desktop when you are at the desk and a games
+> console when you are on the sofa, without being two machines.
+>
+> If you do not play games on a television, use [upstream](https://github.com/crmne/hyprmoncfg). It is the same tool without a feature you will not open, and it ships through the AUR.
 
 hyprmoncfg is a visual multi-monitor layout editor and automatic profile switcher for Hyprland. Drag displays into place, save each setup as a hardware-aware profile, and let the daemon apply the right one when monitors or your laptop lid change.
 
@@ -41,8 +50,23 @@ hyprmoncfg is a visual multi-monitor layout editor and automatic profile switche
 - **Include-chain verification** -- refuse to write generated monitor config that Hyprland is not reading
 - **Hyprland 0.55 Lua config support** -- write Lua automatically when `hyprland.lua` is active, while preserving legacy `.conf` setups
 - **One hard runtime dependency** -- Hyprland; UPower is optional for immediate lid events
+- **Console Mode** *(this fork)* -- hand the machine to Steam's gamescope session on the TV, and get the desktop back when you leave Big Picture
 
 ## Install
+
+This fork is not packaged anywhere. Console Mode only exists here, so build it:
+
+```bash
+git clone https://github.com/GustavoBelo/hyprmoncfg.git
+cd hyprmoncfg
+go build -o bin/hyprmoncfg  ./cmd/hyprmoncfg
+go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
+install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
+install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
+```
+
+<details>
+<summary>Packages for upstream hyprmoncfg — everything below except Console Mode</summary>
 
 Arch Linux:
 
@@ -82,7 +106,7 @@ sudo xbps-install -S
 sudo xbps-install -S hyprland hyprmoncfg
 ```
 
-Build from source:
+Build upstream from source:
 
 ```bash
 git clone https://github.com/crmne/hyprmoncfg.git
@@ -92,6 +116,8 @@ go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
 install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
+
+</details>
 
 Distro packagers should use [PACKAGING.md](PACKAGING.md).
 
@@ -143,17 +169,97 @@ On Omarchy versions that launch `omarchy-hyprland-monitor-watch`, `hyprmoncfgd` 
 
 When the daemon is running, it is the canonical monitor-config writer. The TUI, CLI, and desktop integrations use its versioned Unix-socket IPC; when it is absent, the TUI and CLI keep working through the same core engine in direct mode. A profile selected interactively stays selected until the next monitor hotplug or lid change, when automatic matching resumes.
 
+## Console Mode
+
+The reason this fork exists. Console Mode closes your desktop and starts Steam's
+gamescope session on the TV; leaving Big Picture brings the desktop back, with
+sound where you left it.
+
+It is not Big Picture in a window. gamescope becomes the compositor and owns the
+display, which is where per-game HDR, VRR, FSR, tearing and the frame limiter
+come from — Steam only offers those controls when the session it runs in declares
+them, and only a real gamescope session does. The price is that your desktop is
+gone while you play. That is the trade: a console instead of a game in a window.
+
+### What you need
+
+- **gamescope**, and a **gamescope session** package. On Arch and CachyOS that is
+  `gamescope-session-cachyos`; other distributions package the same thing under
+  other names. Console Mode looks for a session entry declaring
+  `DesktopNames=gamescope`, never for a package name.
+- **Steam**, logged in.
+- The hosting session installed once — see below.
+
+### Setting it up
+
+```bash
+hyprmoncfg console tv            # list displays
+hyprmoncfg console tv HDMI-A-1   # choose the TV
+hyprmoncfg console setup         # prints exactly what to change
+hyprmoncfg console doctor        # says what is still missing
+```
+
+Switching works by *hosting*: your login manager starts one session that runs
+your desktop compositor and swaps it for the gamescope session on request. The
+login manager never sees the session end, so there is no greeter, no password
+and no autologin to rewrite — and the same code works with SDDM, greetd, ly, or
+no display manager at all.
+
+That means the login manager has to start `hyprmoncfg console session` instead
+of your compositor directly. It is the one step that needs root, it is done
+once, and `console setup` prints the exact change and how to undo it. It never
+edits a system file itself: only SDDM has been tested, and getting this wrong
+leaves a machine that will not present a desktop.
+
+### Using it
+
+Click **Console Mode** in the panel or the app launcher, press `Enter` on the
+Console page of the TUI, or:
+
+```bash
+hyprmoncfg console enter          # warns, waits, hands over
+hyprmoncfg console leave          # ends the session from outside it
+hyprmoncfg console boot last      # start wherever you left off
+hyprmoncfg console trigger on     # a controller switching on starts a session
+```
+
+Come back from Big Picture: **Steam → Power → Switch to Desktop**.
+
+Entering closes the desktop, so it is announced and can be called off — twenty
+seconds and a notification for the automatic paths, five for the command.
+
+### Worth knowing
+
+- **Resolution and refresh are not set here.** gamescope takes the connector's
+  preferred mode and Steam changes it per game, so a value recorded here would
+  be a second source of truth disagreeing with the one in charge.
+- **Bluetooth belongs to Steam.** In a gamescope session Steam manages the
+  adapter and applies its own stored setting, which starts off. If a controller
+  will not connect, turn Bluetooth on once in Steam's Quick Access Menu.
+- **The Quick Access Menu** opens with the Steam button plus **A** (Cross on a
+  PlayStation pad). Steam's own chord configuration leaves B/Circle unbound.
+- **Only SDDM has been tested.** The hosting session is designed for any login
+  manager or none, but greetd, ly, GDM and tty logins have not been tried.
+
+Full walkthrough in the [Console Mode guide](docs/_guide/console-mode.md).
+
 ## Omarchy Quattro panel
 
-On Omarchy Quattro, [hyprmoncfg: Multi-Monitor Manager for Omarchy](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) lets you create multi-monitor layouts for Hyprland in a visual editor and switch them automatically on hotplug and lid events. The panel shows your live layout and active profile right in the bar:
+On Omarchy Quattro, the panel is a full display manager in the bar: the layout
+editor, saved profiles, the workspace planner, per-display brightness, and
+keyboard control that mirrors the TUI. This fork's panel adds a Console page —
+choose the TV, decide where the machine starts, and hand it over, without a
+terminal.
 
 ![hyprmoncfg panel for Omarchy Quattro](https://raw.githubusercontent.com/crmne/omarchy-hyprmoncfg/main/preview.png)
 
-Get it from the [Omarchy Plugins marketplace](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg), or install it directly:
+Install this fork's panel, which is the only one that carries Console Mode:
 
 ```bash
-omarchy plugin add https://github.com/crmne/omarchy-hyprmoncfg.git --enable
+omarchy plugin add https://github.com/GustavoBelo/omarchy-hyprmoncfg.git --enable
 ```
+
+The upstream panel is on the [Omarchy Plugins marketplace](https://omarchyplugins.com/plugin.html?id=crmne.hyprmoncfg) and is everything above except the Console page.
 
 If hyprmoncfg is not installed yet, open the panel and choose **Install hyprmoncfg**. It installs the stable AUR package, starts the daemon, and opens the layout editor so you can arrange and save your first profile. See the [Omarchy Quattro panel guide](https://hyprmoncfg.dev/omarchy/) for the full workflow.
 
@@ -227,7 +333,12 @@ You don't commit the generated `~/.config/hypr/hyprmoncfg-monitors.{conf,lua}`. 
 
 ## Docs
 
-Full documentation at **[hyprmoncfg.dev](https://hyprmoncfg.dev)**.
+Everything upstream is documented at **[hyprmoncfg.dev](https://hyprmoncfg.dev)**,
+and applies here unchanged.
+
+Console Mode is only in this fork, so its documentation lives in the repository:
+the [Console Mode guide](docs/_guide/console-mode.md) for the workflow, and
+[commands](docs/_reference/commands.md) for the full command list.
 
 ## Development
 
@@ -259,6 +370,21 @@ Regenerate only screenshots:
 ./scripts/capture_screenshots.sh
 ```
 
+## This fork
+
+hyprmoncfg is [Carmine Paolino's](https://github.com/crmne/hyprmoncfg). This fork
+exists for one feature and tries to stay a fork rather than drift into a
+different program: it merges upstream, keeps its design and its idioms, and
+sends fixes back — the `cm = auto` profile-matching fix found while building
+Console Mode went upstream as a pull request, not into a private patch.
+
+Console Mode is the whole difference. It was built by measuring, not by
+reasoning: the plan it started from was thrown away after a day on the real
+machine proved that switching sessions through a display manager cannot work,
+that nothing cleans the systemd user manager on the way out of a gamescope
+session, and that WirePlumber does not move sound to the TV on its own. What is
+in `PLAN.md` is the record of what each of those cost to find.
+
 ## License
 
-MIT
+MIT — upstream's licence, kept.
