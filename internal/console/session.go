@@ -52,6 +52,10 @@ type Wrapper struct {
 const (
 	defaultShortRun      = 15 * time.Second
 	defaultShortRunLimit = 2
+	// connectorWait is how long to give a display to present itself. Booting
+	// straight into the console reaches this six seconds after the driver
+	// loaded, which is well before a television has finished waking up.
+	connectorWait = 20 * time.Second
 )
 
 func (w *Wrapper) logf(format string, args ...any) {
@@ -180,6 +184,13 @@ func (w *Wrapper) commandFor(ctx context.Context, mode Mode) ([]string, []string
 			w.logf("console: audio stays where it is: %v", err)
 		}
 	}
+	// gamescope enumerates connectors once and never looks again, so handing it
+	// the machine before the displays have presented themselves leaves it
+	// running with nothing selected and no way to recover.
+	if w.TVConnector != "" {
+		AwaitConnector(ctx, w.TVConnector, connectorWait, w.logf)
+	}
+
 	// gamescope picks its output from OUTPUT_CONNECTOR. Setting it on the user
 	// manager rather than writing a drop-in keeps it transient -- no file, no
 	// daemon-reload -- and Sanitize clears it again on the way out.

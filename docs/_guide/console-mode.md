@@ -127,6 +127,13 @@ In every case, if the console cannot start the desktop comes up instead, and two
 sessions that end immediately hand the machine back to the login manager rather
 than looping.
 
+Booting into the console waits for the TV to present itself first. gamescope
+enumerates connectors once and never looks again, so starting it before the
+displays are ready leaves it running with nothing selected -- a black screen that
+only a physical replug recovers from. The wait is up to twenty seconds; after
+that it starts anyway, because a television that is switched off never becomes
+ready and refusing to start would be worse.
+
 ## Closing applications first
 
 Entering takes the desktop down with everything on it. Anything you list is
