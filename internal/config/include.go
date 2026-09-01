@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -152,7 +153,9 @@ func isHyprmoncfgInclude(line string, format HyprConfigFormat) bool {
 		return false
 	}
 	if format == HyprConfigLua {
-		return strings.HasPrefix(trimmed, "dofile(") || strings.HasPrefix(trimmed, "require(")
+		return strings.HasPrefix(trimmed, "dofile(") ||
+			strings.HasPrefix(trimmed, "require(") ||
+			(strings.HasPrefix(trimmed, "do local ") && strings.Contains(trimmed, "dofile("))
 	}
 	return strings.HasPrefix(trimmed, "source")
 }
@@ -189,17 +192,23 @@ func IncludeLine(format HyprConfigFormat, targetPath string) string {
 
 	relative, ok := configHomeRelative(targetPath)
 	if !ok {
-		return fmt.Sprintf("dofile(%s)", luaQuote(targetPath))
+		return guardedLuaInclude(luaQuote(targetPath))
 	}
 	// Spelling out XDG_CONFIG_HOME only earns its noise when it is actually
 	// set. Everywhere else the config home is ~/.config, and the short form
 	// says the same thing.
 	if os.Getenv("XDG_CONFIG_HOME") == "" {
-		return fmt.Sprintf(`dofile(os.getenv("HOME") .. %s)`, luaQuote("/.config/"+relative))
+		return guardedLuaInclude(fmt.Sprintf(`os.getenv("HOME") .. %s`, luaQuote("/.config/"+relative)))
 	}
+	return guardedLuaInclude(fmt.Sprintf(
+		`(os.getenv("XDG_CONFIG_HOME") or os.getenv("HOME") .. "/.config") .. %s`,
+		luaQuote("/"+relative)))
+}
+
+func guardedLuaInclude(pathExpression string) string {
 	return fmt.Sprintf(
-		`dofile((os.getenv("XDG_CONFIG_HOME") or os.getenv("HOME") .. "/.config") .. %s)`,
-		luaQuote("/"+relative),
+		`do local path = %s; local file = io.open(path, "r"); if file then file:close(); dofile(path) end end`,
+		pathExpression,
 	)
 }
 
@@ -277,6 +286,9 @@ func RetireLegacyMonitorsFile(format HyprConfigFormat, currentPath string) (stri
 // config, and does so after everything else. Anything loaded later could
 // override the applied layout.
 func VerifyLoadedLast(rootPath string, format HyprConfigFormat, targetPath string) error {
+	if err := VerifyGeneratedMonitors(targetPath); err != nil {
+		return err
+	}
 	content, err := os.ReadFile(rootPath)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", rootPath, err)
@@ -294,4 +306,27 @@ func VerifyLoadedLast(rootPath string, format HyprConfigFormat, targetPath strin
 		return fmt.Errorf("%s does not load %s last; add `%s` at its end", rootPath, targetPath, IncludeLine(format, targetPath))
 	}
 	return fmt.Errorf("%s does not load %s; add `%s` at its end", rootPath, targetPath, IncludeLine(format, targetPath))
+}
+
+// VerifyGeneratedMonitors rejects an include whose target is missing or cannot
+// be read. The Lua include is defensive, but a missing generated file still
+// means Hyprland has no hyprmoncfg monitor rules to load.
+func VerifyGeneratedMonitors(targetPath string) error {
+	file, err := os.Open(targetPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("generated monitor config %s does not exist: %w", targetPath, err)
+		}
+		return fmt.Errorf("generated monitor config %s is not readable: %w", targetPath, err)
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect generated monitor config %s: %w", targetPath, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("generated monitor config %s is not a regular file", targetPath)
+	}
+	return nil
 }
