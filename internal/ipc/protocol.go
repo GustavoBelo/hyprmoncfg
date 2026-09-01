@@ -84,9 +84,8 @@ type ConsoleState struct {
 	// The rest is what an editor needs: the current settings, and the choices
 	// they can be set to. A panel should not have to know which connectors
 	// exist or which session entries are installed.
-	Boot           string   `json:"boot,omitempty"`
-	DesktopSession string   `json:"desktop_session,omitempty"`
-	AppsToClose    []string `json:"apps_to_close,omitempty"`
+	Boot           string `json:"boot,omitempty"`
+	DesktopSession string `json:"desktop_session,omitempty"`
 	// Displays are the connectors a console session could play on, newest read
 	// from the compositor rather than remembered.
 	Displays []ConsoleDisplay `json:"displays,omitempty"`
@@ -108,11 +107,10 @@ type ConsoleDisplay struct {
 // changing one setting should not have to send back the others, and a field it
 // does not know about must not be cleared by its silence.
 type ConsoleConfigureParams struct {
-	TVName         *string  `json:"tv_name,omitempty"`
-	Boot           *string  `json:"boot,omitempty"`
-	DesktopSession *string  `json:"desktop_session,omitempty"`
-	Trigger        *bool    `json:"trigger,omitempty"`
-	AppsToClose    []string `json:"apps_to_close,omitempty"`
+	TVName         *string `json:"tv_name,omitempty"`
+	Boot           *string `json:"boot,omitempty"`
+	DesktopSession *string `json:"desktop_session,omitempty"`
+	Trigger        *bool   `json:"trigger,omitempty"`
 }
 
 const EventStatus = "status"

@@ -28,29 +28,20 @@ const (
 	consoleFieldBoot
 	consoleFieldDesktopSession
 	consoleFieldTrigger
-	consoleFieldCloseApps
-	consoleFieldApp
 )
 
-// consoleRow is one visible row: a field, plus which app it refers to when the
-// field is consoleFieldApp.
+// consoleRow is one visible row.
 type consoleRow struct {
 	field consoleField
-	index int
 }
 
-func (m Model) consoleRows(cfg console.Config) []consoleRow {
-	rows := []consoleRow{
+func (m Model) consoleRows(console.Config) []consoleRow {
+	return []consoleRow{
 		{field: consoleFieldTV},
 		{field: consoleFieldBoot},
 		{field: consoleFieldDesktopSession},
 		{field: consoleFieldTrigger},
-		{field: consoleFieldCloseApps},
 	}
-	for i := range cfg.AppsToClose {
-		rows = append(rows, consoleRow{field: consoleFieldApp, index: i})
-	}
-	return rows
 }
 
 func (m Model) consoleRowAt(cfg console.Config, index int) consoleRow {
@@ -154,8 +145,6 @@ func (m Model) updateConsoleKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.adjustConsoleField(&cfg, -1)
 	case "right", "l":
 		return m.adjustConsoleField(&cfg, 1)
-	case "e":
-		return m, m.openConsoleAppPicker(&cfg)
 	case "s":
 		return m.saveConsole()
 	case "r", "esc":
@@ -196,13 +185,6 @@ func (m Model) adjustConsoleField(cfg *console.Config, dir int) (tea.Model, tea.
 		cfg.DesktopSession = cycleValue(files, cfg.DesktopSession, dir)
 	case consoleFieldTrigger:
 		cfg.EnterOnControllerConnect = !cfg.EnterOnControllerConnect
-	case consoleFieldApp:
-		if row.index < len(cfg.AppsToClose) {
-			cfg.AppsToClose = append(cfg.AppsToClose[:row.index], cfg.AppsToClose[row.index+1:]...)
-			if m.consoleSelected >= len(m.consoleRows(*cfg)) {
-				m.consoleSelected = max(0, len(m.consoleRows(*cfg))-1)
-			}
-		}
 	default:
 		return m, nil
 	}
@@ -309,14 +291,6 @@ func (m Model) consoleSettingsLines() []string {
 				orNotSet(strings.TrimSuffix(cfg.DesktopSession, ".desktop"))))
 		case consoleFieldTrigger:
 			lines = append(lines, m.consoleToggleLine(selected, "Start on controller", cfg.EnterOnControllerConnect))
-		case consoleFieldCloseApps:
-			lines = append(lines, "")
-			label := fmt.Sprintf("Close first (%d)", len(cfg.AppsToClose))
-			lines = append(lines, m.consoleSettingLine(selected, label, "press e"))
-		case consoleFieldApp:
-			if row.index < len(cfg.AppsToClose) {
-				lines = append(lines, m.consoleAppLine(selected, row.index, cfg.AppsToClose[row.index]))
-			}
 		}
 	}
 	return lines
@@ -339,18 +313,6 @@ func (m Model) consoleToggleLine(selected bool, label string, on bool) string {
 		value = m.styles.statusOK.Render("on")
 	}
 	return m.consoleSettingLine(selected, label, value)
-}
-
-func (m Model) consoleAppLine(selected bool, index int, app string) string {
-	prefix := "  "
-	label := app
-	if selected {
-		prefix = m.styles.statusOK.Render("> ")
-		label = m.styles.focused.Render(label)
-	} else {
-		label = m.styles.value.Render(label)
-	}
-	return fmt.Sprintf("%s%s %s", prefix, m.styles.subtle.Render(fmt.Sprintf("%d.", index+1)), label)
 }
 
 func (m Model) renderConsoleStatusPane(width int, height int) string {

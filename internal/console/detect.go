@@ -191,6 +191,17 @@ func FindGamescopeSession(entries []Entry) (Entry, bool) {
 	return Entry{}, false
 }
 
+// IsGamescopeSession reports whether an entry is the console itself, which is
+// never somewhere to come back to.
+func IsGamescopeSession(e Entry) bool {
+	for _, name := range e.DesktopNames {
+		if name == GamescopeDesktopName {
+			return true
+		}
+	}
+	return false
+}
+
 // FindEntryByFile returns the entry with the given file name, which is how a
 // login manager's configuration refers to a session.
 func FindEntryByFile(entries []Entry, file string) (Entry, bool) {

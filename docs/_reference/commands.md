@@ -27,7 +27,6 @@ Running `hyprmoncfg` with no arguments opens the TUI.
 | `hyprmoncfg console session` | Host the desktop and the console in one login session (run by the login manager) |
 | `hyprmoncfg console enter` | Close the desktop and start the console session |
 | `hyprmoncfg console tv [connector]` | Choose the display the console plays on, or list the candidates |
-| `hyprmoncfg console apps list\|add\|remove` | Choose what to close before the desktop goes away |
 | `hyprmoncfg console boot [desktop\|console\|last]` | Choose where the machine lands when it starts |
 | `hyprmoncfg console leave` | End the console session and bring the desktop back |
 | `hyprmoncfg console trigger [on\|off]` | Enter console mode when a controller is switched on |

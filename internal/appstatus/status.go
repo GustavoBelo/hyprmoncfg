@@ -46,7 +46,6 @@ type Console struct {
 	// connectors exist or which session entries are installed.
 	Boot            string           `json:"boot,omitempty"`
 	DesktopSession  string           `json:"desktop_session,omitempty"`
-	AppsToClose     []string         `json:"apps_to_close,omitempty"`
 	Displays        []ConsoleDisplay `json:"displays,omitempty"`
 	DesktopSessions []string         `json:"desktop_sessions,omitempty"`
 	BootModes       []string         `json:"boot_modes,omitempty"`

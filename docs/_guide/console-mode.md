@@ -63,8 +63,9 @@ hyprmoncfg console doctor
 hyprmoncfg console enter
 ```
 
-It warns you, waits five seconds so you can press Ctrl-C, closes the
-applications you have tracked, and hands over. To come back, use Big Picture's
+It warns you, waits five seconds so you can press Ctrl-C, and hands over.
+Ending the desktop session closes what was open in it, the same way logging out
+does. To come back, use Big Picture's
 own **Steam → Power → Switch to Desktop**.
 
 There is also a **Console Mode** entry in your application launcher.
@@ -133,20 +134,6 @@ displays are ready leaves it running with nothing selected -- a black screen tha
 only a physical replug recovers from. The wait is up to twenty seconds; after
 that it starts anyway, because a television that is switched off never becomes
 ready and refusing to start would be worse.
-
-## Closing applications first
-
-Entering takes the desktop down with everything on it. Anything you list is
-asked to close gracefully first, while there is still a compositor for it to put
-a save dialog on:
-
-```bash
-hyprmoncfg console apps list          # what is running, and what is tracked
-hyprmoncfg console apps add obsidian
-```
-
-Matching is exact -- a window class or a `/proc` comm, never a title substring --
-which is why the list is picked from what is running rather than typed.
 
 ## Sound
 

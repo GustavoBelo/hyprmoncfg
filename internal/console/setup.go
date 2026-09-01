@@ -86,8 +86,13 @@ Type=Application
 // to ask which session is running, and inside a hosted session the answer is the
 // hosting entry itself. Recording that would make the wrapper host itself, and
 // the user would never reach a desktop.
+// HostingEntryFile is the name `console setup` writes. Recognising it is a
+// safety net for entries generated before the marker existed: they point at a
+// wrapper script, so neither the marker nor the Exec line gives them away.
+const HostingEntryFile = "hyprmoncfg-session.desktop"
+
 func HostsConsole(e Entry) bool {
-	if e.Hosting {
+	if e.Hosting || e.File() == HostingEntryFile {
 		return true
 	}
 	for i, arg := range e.Exec {

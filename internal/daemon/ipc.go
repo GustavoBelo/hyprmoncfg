@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
-	"github.com/crmne/hyprmoncfg/internal/apps"
 	"github.com/crmne/hyprmoncfg/internal/appstatus"
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
 	"github.com/crmne/hyprmoncfg/internal/config"
@@ -86,7 +85,6 @@ func (s *Service) Status() (appstatus.Document, error) {
 
 			Boot:            state.Boot,
 			DesktopSession:  state.DesktopSession,
-			AppsToClose:     state.AppsToClose,
 			DesktopSessions: state.DesktopSessions,
 			BootModes:       state.BootModes,
 			Displays:        consoleDisplays(state.Displays),
@@ -550,13 +548,13 @@ func (s *Service) ConsoleStatus() (ipc.ConsoleState, error) {
 	}
 	state.Boot = string(cfg.Boot)
 	state.DesktopSession = cfg.DesktopSession
-	state.AppsToClose = cfg.AppsToClose
 	state.BootModes = []string{string(console.BootDesktop), string(console.BootConsole), string(console.BootLast)}
 	entries := console.FindEntries(console.SessionDirs())
 	for _, e := range entries {
-		// A hosting session is never something to come back to: it would host
-		// itself and the user would never reach a desktop.
-		if !console.HostsConsole(e) {
+		// Neither a hosting session nor the console itself is somewhere to come
+		// back to: the first would host itself, and the second is what you are
+		// coming back from.
+		if !console.HostsConsole(e) && !console.IsGamescopeSession(e) {
 			state.DesktopSessions = append(state.DesktopSessions, e.File())
 		}
 	}
@@ -657,9 +655,6 @@ func (s *Service) ConsoleConfigure(params ipc.ConsoleConfigureParams) error {
 	}
 	if params.Trigger != nil {
 		cfg.EnterOnControllerConnect = *params.Trigger
-	}
-	if params.AppsToClose != nil {
-		cfg.AppsToClose = apps.SanitizeApps(params.AppsToClose)
 	}
 	if err := console.SaveConfig(base, cfg); err != nil {
 		return err

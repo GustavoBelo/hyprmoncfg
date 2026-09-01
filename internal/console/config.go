@@ -29,10 +29,6 @@ type Config struct {
 	TVDescription string `json:"tv_description,omitempty"`
 	// DesktopSession is the session entry to come back to, by file name.
 	DesktopSession string `json:"desktop_session,omitempty"`
-	// AppsToClose are closed gracefully before the desktop goes away. Entering
-	// takes the desktop down, so anything with unsaved work has to be given the
-	// chance to save it first.
-	AppsToClose []string `json:"apps_to_close,omitempty"`
 	// Boot says where a fresh login starts: at the desktop, in the console, or
 	// wherever the last session ended. Empty means the desktop.
 	Boot BootMode `json:"boot,omitempty"`
@@ -106,8 +102,7 @@ func MigrateFromCouch(baseDir string) (Config, bool) {
 			TVKey  string `json:"tv_key"`
 			TVName string `json:"tv_name"`
 		} `json:"layout"`
-		AppsToClose              []string `json:"apps_to_close"`
-		EnterOnControllerConnect bool     `json:"enter_on_controller_connect"`
+		EnterOnControllerConnect bool `json:"enter_on_controller_connect"`
 	}
 	if json.Unmarshal(data, &old) != nil {
 		return Config{}, false
@@ -116,10 +111,9 @@ func MigrateFromCouch(baseDir string) (Config, bool) {
 		return Config{}, false
 	}
 	return Config{
-		Enabled:     old.Enabled,
-		TVKey:       old.Layout.TVKey,
-		TVName:      old.Layout.TVName,
-		AppsToClose: old.AppsToClose,
+		Enabled: old.Enabled,
+		TVKey:   old.Layout.TVKey,
+		TVName:  old.Layout.TVName,
 		// Deliberately not carried over: entering now ends the desktop session,
 		// so this has to be chosen again with that in mind.
 		EnterOnControllerConnect: false,

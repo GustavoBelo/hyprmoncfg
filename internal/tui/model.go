@@ -38,7 +38,6 @@ const (
 	modeModePicker
 	modeNumericInput
 	modeProfileExecInput
-	modeConsoleAppPicker
 	modeKeybindings
 )
 
@@ -310,7 +309,6 @@ type Model struct {
 	picker        *modePickerState
 	input         *numericInputState
 	execInput     *profileExecInputState
-	consolePicker *consoleAppPickerState
 	drag          *canvasDragState
 	toast         *toastState
 	snap          *snapHintState
@@ -643,8 +641,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateNumericInputKeys(msg)
 		case modeProfileExecInput:
 			return m.updateProfileExecInputKeys(msg)
-		case modeConsoleAppPicker:
-			return m.updateConsoleAppPickerKeys(msg)
 		case modeKeybindings:
 			if msg.String() == "ctrl+c" {
 				return m, tea.Quit
@@ -1026,8 +1022,6 @@ func (m Model) View() string {
 		return m.renderModalScreen(m.renderNumericInput())
 	case modeProfileExecInput:
 		return m.renderModalScreen(m.renderProfileExecInput())
-	case modeConsoleAppPicker:
-		return m.renderModalScreen(m.renderConsoleAppPicker())
 	case modeKeybindings:
 		return m.renderModalScreen(m.renderKeybindings())
 	default:

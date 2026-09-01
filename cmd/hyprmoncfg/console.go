@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/crmne/hyprmoncfg/internal/apps"
 	"github.com/crmne/hyprmoncfg/internal/config"
 	"github.com/crmne/hyprmoncfg/internal/console"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
@@ -36,7 +35,6 @@ func newConsoleCmd(configDir *string) *cobra.Command {
 		newConsoleDoctorCmd(configDir),
 		newConsoleSetupCmd(configDir),
 		newConsoleTVCmd(configDir),
-		newConsoleAppsCmd(configDir),
 		newConsoleLeaveCmd(),
 		newConsoleCancelCmd(),
 		newConsoleTriggerCmd(configDir),
@@ -167,18 +165,6 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 				}
 			}
 
-			// Entering takes the desktop down with everything on it, so
-			// anything the user tracked gets asked to close first -- while
-			// there is still a compositor for it to put a save dialog on.
-			if len(cfg.AppsToClose) > 0 {
-				client, err := hypr.NewClient()
-				if err != nil {
-					return err
-				}
-				result := apps.CloseTrackedApps(ctx, client, cfg.AppsToClose)
-				fmt.Println(apps.DescribeCloseResult(result, cfg.AppsToClose))
-			}
-
 			if err := console.Request(runtimeDir, console.ModeConsole); err != nil {
 				return err
 			}
@@ -213,7 +199,6 @@ func newConsoleStatusCmd(configDir *string) *cobra.Command {
 			fmt.Printf("Starts in:       %s\n", cfg.Boot)
 			fmt.Printf("TV display:      %s\n", orNone(cfg.TVName))
 			fmt.Printf("Desktop session: %s\n", orNone(cfg.DesktopSession))
-			fmt.Printf("Apps to close:   %s\n", orNone(strings.Join(cfg.AppsToClose, ", ")))
 			if runtimeDir, err := console.RuntimeDir(); err == nil {
 				fmt.Printf("Hosted session:  %s\n", yesNo(console.Hosted(runtimeDir)))
 			}
@@ -565,96 +550,6 @@ func newConsoleBootCmd(configDir *string) *cobra.Command {
 			return nil
 		},
 	}
-}
-
-// newConsoleAppsCmd manages what gets closed before the desktop goes away.
-//
-// Matching is exact -- a window class or a /proc comm, never a title substring --
-// which makes the right value hard to guess by hand, so the list is picked from
-// what is actually running rather than typed.
-func newConsoleAppsCmd(configDir *string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "apps",
-		Short: "Choose what to close before the desktop goes away",
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "list",
-		Short: "Show what is tracked, and what could be",
-		Args:  cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			ctx := cmd.Context()
-			base, err := config.EnsureBaseDir(*configDir)
-			if err != nil {
-				return err
-			}
-			cfg, err := console.LoadConfig(base)
-			if err != nil {
-				return err
-			}
-			client, err := hypr.NewClient()
-			if err != nil {
-				return err
-			}
-			candidates := apps.CloseCandidates(ctx, client)
-			chosen := apps.MarkChosen(candidates, cfg.AppsToClose)
-			for _, c := range candidates {
-				mark := "  "
-				if chosen[c.Token] {
-					mark = "* "
-				}
-				fmt.Printf("%s%-40s %s\n", mark, c.Token, c.Label)
-			}
-			if missing := apps.MissingTokens(candidates, cfg.AppsToClose); len(missing) > 0 {
-				fmt.Printf("\ntracked but not running: %s\n", strings.Join(missing, ", "))
-			}
-			return nil
-		},
-	})
-
-	cmd.AddCommand(&cobra.Command{
-		Use:   "add <token>...",
-		Short: "Track an application",
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return editApps(*configDir, args, true) },
-	})
-	cmd.AddCommand(&cobra.Command{
-		Use:   "remove <token>...",
-		Short: "Stop tracking an application",
-		Args:  cobra.MinimumNArgs(1),
-		RunE:  func(cmd *cobra.Command, args []string) error { return editApps(*configDir, args, false) },
-	})
-	return cmd
-}
-
-func editApps(configDir string, tokens []string, add bool) error {
-	base, err := config.EnsureBaseDir(configDir)
-	if err != nil {
-		return err
-	}
-	cfg, err := console.LoadConfig(base)
-	if err != nil {
-		return err
-	}
-	keep := map[string]bool{}
-	for _, a := range cfg.AppsToClose {
-		keep[a] = true
-	}
-	for _, t := range tokens {
-		keep[t] = add
-	}
-	cfg.AppsToClose = nil
-	for token, on := range keep {
-		if on {
-			cfg.AppsToClose = append(cfg.AppsToClose, token)
-		}
-	}
-	cfg.AppsToClose = apps.SanitizeApps(cfg.AppsToClose)
-	if err := console.SaveConfig(base, cfg); err != nil {
-		return err
-	}
-	fmt.Printf("Now closing before the console starts: %s\n", orNone(strings.Join(cfg.AppsToClose, ", ")))
-	return nil
 }
 
 // consoleLogger writes the hosting session's log where it can be read after the

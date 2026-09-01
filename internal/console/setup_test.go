@@ -77,3 +77,27 @@ func TestEntryContentCarriesTheMarker(t *testing.T) {
 		t.Error("the generated entry does not mark itself as hosting")
 	}
 }
+
+// Entries generated before the marker existed point at a wrapper script, so
+// neither the marker nor the Exec line gives them away. The name we write is
+// the last thing left to recognise them by.
+func TestHostsConsoleRecognisesTheNameSetupWrites(t *testing.T) {
+	old := Entry{Path: "/usr/local/share/wayland-sessions/" + HostingEntryFile,
+		Exec: []string{"/home/u/.local/share/spike/session-wrapper.sh"}}
+	if !HostsConsole(old) {
+		t.Error("an entry with our own file name was not recognised as hosting")
+	}
+	if HostsConsole(Entry{Path: "/usr/share/wayland-sessions/omarchy.desktop", Exec: []string{"uwsm", "start"}}) {
+		t.Error("an ordinary session was mistaken for a hosting one")
+	}
+}
+
+// Coming back to the console is coming back to what you are leaving.
+func TestIsGamescopeSession(t *testing.T) {
+	if !IsGamescopeSession(Entry{DesktopNames: []string{"gamescope"}}) {
+		t.Error("the gamescope session was not recognised")
+	}
+	if IsGamescopeSession(Entry{DesktopNames: []string{"hyprland"}}) {
+		t.Error("an ordinary session was mistaken for the console")
+	}
+}
