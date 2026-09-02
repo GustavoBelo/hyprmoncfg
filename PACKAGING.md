@@ -47,7 +47,7 @@ Build time:
 Packagers should set build metadata through `internal/buildinfo`:
 
 ```sh
-version=1.15.1
+version=1.17.0
 commit="$(git rev-parse --short HEAD)"
 build_date="$(date -u +%FT%TZ)"
 ldflags="-s -w"
@@ -63,7 +63,7 @@ go test ./...
 For offline builds with a Go module cache tarball:
 
 ```sh
-tar -xf hyprmoncfg-1.15.1-deps.tar.xz
+tar -xf hyprmoncfg-1.17.0-deps.tar.xz
 GOMODCACHE="$PWD/go-mod" GOPROXY=off CGO_ENABLED=0 go build -trimpath -mod=readonly ./cmd/hyprmoncfg
 ```
 
@@ -99,20 +99,20 @@ the daemon startup path.
 
 ## Package Status
 
-Current status as of 2026-08-26:
+Current status as of 2026-09-02:
 
 | Channel | Status | Notes |
 |---|---|---|
-| Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) is published at 1.16.0. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
-| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10908334](https://copr.fedorainfracloud.org/coprs/build/10908334) publishes 1.16.0 for Fedora 44, 45, and rawhide on `x86_64` and `aarch64`. |
-| Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The all-green [1.16.0 update](https://github.com/NixOS/nixpkgs/pull/552223) is under review. |
-| Gentoo GURU | Published | [`gui-apps/hyprmoncfg` 1.16.0](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg) is submitted on the required GURU `dev` branch in hardware-OpenPGP-signed, DCO-compliant commit [`77ae43f7`](https://github.com/gentoo/guru/commit/77ae43f7ad). |
+| Arch AUR | Published | Stable [`hyprmoncfg`](https://aur.archlinux.org/packages/hyprmoncfg) and binary [`hyprmoncfg-bin`](https://aur.archlinux.org/packages/hyprmoncfg-bin) are published at 1.17.0. VCS [`hyprmoncfg-git`](https://aur.archlinux.org/packages/hyprmoncfg-git) continues to track `main`. |
+| Fedora COPR | Published | [`paolino/hyprmoncfg`](https://copr.fedorainfracloud.org/coprs/paolino/hyprmoncfg/) build [10939280](https://copr.fedorainfracloud.org/coprs/build/10939280) publishes 1.17.0 for Fedora 44, 45, and rawhide on `x86_64` and `aarch64`. |
+| Nixpkgs | Open PR | The source lives at `pkgs/by-name/hy/hyprmoncfg`; the package is available as `pkgs.hyprmoncfg` and `nixpkgs#hyprmoncfg`. The [1.17.0 update](https://github.com/NixOS/nixpkgs/pull/552223) is under review and builds locally with the package's full test suite. |
+| Gentoo GURU | Published | [`gui-apps/hyprmoncfg` 1.17.0](https://github.com/gentoo/guru/tree/dev/gui-apps/hyprmoncfg) is submitted on the required GURU `dev` branch in a hardware-OpenPGP-signed, DCO-compliant commit. |
 | Void Linux official | Blocked | A local `hyprmoncfg` template exists, but official submission is not useful while Hyprland is not in Void. Multiple Hyprland package requests and PRs have been closed upstream, and the current Void maintainer stance is that Hyprland is not planned. |
-| Void Blackhole-vl | Unofficial | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void. Its independently maintained [1.12.0 update](https://github.com/Event-Horizon-VL/blackhole-vl/pull/261) is merged, and the maintainer has been notified about 1.16.0; later versions follow that maintainer's own cadence. |
-| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) targets 1.16.0; no package is in the Alpine package index yet. |
-| Debian and Ubuntu | Sponsor-ready | The [`debian/sid` branch and upstream tags are published on Salsa](https://salsa.debian.org/crmne/hyprmoncfg), and a Debian sid root-container build of 1.16.0 passes the full test suite. Its source package is hardware-OpenPGP-signed and checksum-verified; official inclusion still needs Debian policy review and the sponsor/upload flow. |
-| openSUSE OBS | Published | [`home:paolino/hyprmoncfg`](https://build.opensuse.org/package/show/home:paolino/hyprmoncfg) revision 3 successfully builds and publishes 1.15.1 for openSUSE Tumbleweed on `x86_64`. |
-| SlackBuilds.org | Staged | The 1.16.0 SlackBuild payload is ready for manual submission after validation on a fully patched Slackware 15.0 system. |
+| Void Blackhole-vl | Open PR | [Blackhole-vl](https://github.com/Event-Horizon-VL/blackhole-vl) publishes `hyprland` and `hyprmoncfg` packages outside official Void. [PR 283](https://github.com/Event-Horizon-VL/blackhole-vl/pull/283) updates its package to 1.17.0. |
+| Alpine aports | Open MR | [`alpine/aports!103051`](https://gitlab.alpinelinux.org/alpine/aports/-/merge_requests/103051) targets 1.17.0 with a successful pipeline; no package is in the Alpine package index yet. |
+| Debian and Ubuntu | Sponsor-ready | The 1.17.0 [`debian/sid` branch and upstream tags are published on Salsa](https://salsa.debian.org/crmne/hyprmoncfg), and the full Go test suite passes from that packaging branch. Official inclusion still needs Debian policy review and the sponsor/upload flow. |
+| openSUSE OBS | Published | [`home:paolino/hyprmoncfg`](https://build.opensuse.org/package/show/home:paolino/hyprmoncfg) revision 3 publishes 1.15.1 for openSUSE Tumbleweed on `x86_64`; the validated 1.17.0 payload is staged for the next OBS commit. |
+| SlackBuilds.org | Staged | The 1.17.0 SlackBuild payload is ready for manual submission after validation on a fully patched Slackware 15.0 system. |
 
 Distro-specific recipes should remain in the distro package repository or the
 external packaging workspace until they are accepted upstream. Keep this
