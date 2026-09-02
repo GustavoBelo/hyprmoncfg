@@ -125,7 +125,12 @@ func (w *Wrapper) Run(ctx context.Context) error {
 				return err
 			}
 			// The console could not be prepared, so fall back to the desktop
-			// rather than ending the session and leaving a black screen.
+			// rather than ending the session and leaving a black screen. The
+			// desktop the user gets back is empty, and nothing here can tell
+			// them why: the notification server went with the compositor. Leave
+			// word for the daemon, which starts with the desktop that is about
+			// to come up, and let it do the telling.
+			RecordFailure(w.StateDir, err.Error())
 			mode = ModeDesktop
 			continue
 		}

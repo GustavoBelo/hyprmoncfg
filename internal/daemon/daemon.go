@@ -308,6 +308,9 @@ func (s *Service) Run(ctx context.Context) error {
 			// Controller hotplug has no Hyprland event, so it is polled --
 			// cheaply, straight from sysfs, and only while idle.
 			if s.console != nil {
+				// A console that failed to start left word for whoever came
+				// back, because it could not tell anyone itself.
+				s.console.reportPastFailure(ctx)
 				s.console.observeControllers(ctx)
 			}
 		case <-eventRetry:

@@ -268,3 +268,47 @@ func TestRunProceedsWhenNoCompositorIsRunning(t *testing.T) {
 		t.Error("nothing was launched")
 	}
 }
+
+// The desktop comes back empty and nothing on screen says why: the compositor
+// was already stopped, so the notification server went with it. The wrapper
+// leaves the reason for the daemon that starts with the desktop it is about to
+// bring up.
+func TestRunLeavesWordWhenTheConsoleCannotStart(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+	w.Boot = BootConsole
+	// What a machine with no gamescope-session package looks like.
+	w.ConsoleExec = nil
+
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatalf("Run = %v, want the fallback to the desktop", err)
+	}
+
+	reason, ok := TakeFailure(w.StateDir)
+	if !ok {
+		t.Fatal("the wrapper fell back to the desktop and left no reason")
+	}
+	if !strings.Contains(reason, "gamescope") {
+		t.Errorf("reason = %q, want it to name what was missing", reason)
+	}
+	// The point of falling back at all: the user gets a desktop, not a black
+	// screen.
+	if len(launched) == 0 || !strings.Contains(strings.Join(launched, " "), "desktop-compositor") {
+		t.Errorf("launched %v, want the desktop to have come back", launched)
+	}
+}
+
+// A session that worked must leave nothing behind, or the daemon announces a
+// failure that did not happen.
+func TestRunLeavesNoWordWhenNothingFailed(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if reason, ok := TakeFailure(w.StateDir); ok {
+		t.Errorf("a working session recorded %q", reason)
+	}
+}

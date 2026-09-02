@@ -42,6 +42,40 @@ func newConsoleController(svc *Service) *consoleController {
 	return &consoleController{svc: svc, controllers: console.ConnectedControllers()}
 }
 
+// reportPastFailure announces a console session that could not start.
+//
+// The wrapper cannot say this itself. By the time it knows, it has already
+// stopped the desktop compositor and taken the notification server with it, so
+// it writes the reason down instead. This runs from the daemon's poll, inside
+// the desktop that came back, which is the first moment there is anyone to tell
+// -- and the user is sitting in front of a desktop with everything they had open
+// gone, wondering what happened.
+func (c *consoleController) reportPastFailure(ctx context.Context) {
+	stateDir, err := console.StateDir()
+	if err != nil {
+		return
+	}
+	reason, ok := console.TakeFailure(stateDir)
+	if !ok {
+		return
+	}
+	c.svc.cfg.Logf("console: the last entry failed: %s", reason)
+
+	notifier := notify.Dial()
+	defer notifier.Close()
+	showCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if _, err := notifier.Show(showCtx, notify.Notification{
+		Summary:  "Console mode",
+		Body:     "Console mode could not start, so the desktop came back. " + reason,
+		Icon:     "input-gaming",
+		Timeout:  15 * time.Second,
+		Critical: true,
+	}); err != nil {
+		c.svc.cfg.Logf("console: could not report the last failure: %v", err)
+	}
+}
+
 // observeControllers is called from the daemon's idle poll. Controller hotplug
 // raises no Hyprland event, so there is nothing to subscribe to.
 func (c *consoleController) observeControllers(ctx context.Context) {

@@ -89,7 +89,7 @@ func newConsoleSessionCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			stateDir, err := consoleStateDir()
+			stateDir, err := console.StateDir()
 			if err != nil {
 				return err
 			}
@@ -653,15 +653,6 @@ func bootLoginNote(ctx context.Context, boot console.BootMode) string {
 	default:
 		return ""
 	}
-}
-
-func consoleStateDir() (string, error) {
-	dir, err := os.UserCacheDir()
-	if err != nil {
-		return "", err
-	}
-	dir = filepath.Join(dir, "hyprmoncfg")
-	return dir, os.MkdirAll(dir, 0o755)
 }
 
 // plainEntryFiles lists the sessions that are candidates to come back to, which
