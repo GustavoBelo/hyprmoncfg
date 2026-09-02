@@ -156,17 +156,38 @@ const cancelFile = "hyprmoncfg-cancel-entry"
 
 func CancelPath(runtimeDir string) string { return filepath.Join(runtimeDir, cancelFile) }
 
+// cancelMaxAge is how long a stand-down stays meaningful.
+//
+// A countdown polls for the file every second, so one that a live countdown was
+// going to consume is never more than a moment old. Anything older was written
+// when nothing was counting down -- `hyprmoncfg console cancel` typed at a shell
+// with no entry pending -- and honouring it later would call off the next
+// legitimate entry, silently, without anyone having asked.
+const cancelMaxAge = 30 * time.Second
+
 // RequestCancel asks a pending automatic entry to stand down.
 func RequestCancel(runtimeDir string) error {
 	return os.WriteFile(CancelPath(runtimeDir), []byte("1\n"), 0o600)
 }
 
 // TakeCancel reports whether a stand-down was asked for, and clears it.
+//
+// A stale file is cleared and ignored rather than left alone, so the trap
+// disarms itself instead of waiting for the next entry to walk into it.
 func TakeCancel(runtimeDir string) bool {
 	path := CancelPath(runtimeDir)
-	if _, err := os.Stat(path); err != nil {
+	info, err := os.Stat(path)
+	if err != nil {
 		return false
 	}
 	_ = os.Remove(path)
-	return true
+	return time.Since(info.ModTime()) <= cancelMaxAge
 }
+
+// DropCancel clears a stand-down without acting on it.
+//
+// A countdown calls this before it announces anything. Without it, a cancel
+// written seconds earlier -- while nothing was pending -- would call off an
+// entry that had not even been announced yet, and the user would see a countdown
+// vanish for no stated reason.
+func DropCancel(runtimeDir string) { _ = os.Remove(CancelPath(runtimeDir)) }

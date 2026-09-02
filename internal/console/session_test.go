@@ -2,6 +2,8 @@ package console
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -209,5 +211,60 @@ func TestConsoleExitWithNoRequestReturnsToTheDesktop(t *testing.T) {
 	want := []string{"start-gamescope-session", "desktop-compositor"}
 	if strings.Join(launched, ",") != strings.Join(want, ",") {
 		t.Fatalf("launched %v, want the console to hand back to the desktop", launched)
+	}
+}
+
+// pretendCompositorRunning plants the socket a live Hyprland instance holds,
+// which is what compositorRunning looks for.
+func pretendCompositorRunning(t *testing.T, runtimeDir string) {
+	t.Helper()
+	dir := filepath.Join(runtimeDir, "hypr", "abc123_1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".socket.sock"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The login manager starts this before any compositor exists. Typed inside a
+// desktop, the first thing the loop does is Sanitize -- `systemctl --user stop
+// graphical-session.target` -- which takes that desktop's services down with it,
+// without asking. The command's help said it would not work; this makes it true.
+func TestRunRefusesInsideALiveSession(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+	pretendCompositorRunning(t, w.RuntimeDir)
+
+	err := w.Run(context.Background())
+	if err == nil {
+		t.Fatal("running inside a live session was allowed")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("err = %v, want it to name the running compositor", err)
+	}
+	if !strings.Contains(err.Error(), "console enter") {
+		t.Errorf("err = %v, want it to point at the command that does work", err)
+	}
+	// The refusal has to come before anything is torn down or started.
+	if len(launched) != 0 {
+		t.Errorf("launched %v despite refusing", launched)
+	}
+	if sc, ok := w.Systemctl.(*fakeRunner); ok && sc.called("stop graphical-session.target") {
+		t.Error("the live session's services were stopped anyway")
+	}
+}
+
+// The ordinary path -- started by the login manager, nothing running yet -- must
+// still work, or the refusal has cost more than it saved.
+func TestRunProceedsWhenNoCompositorIsRunning(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatalf("Run = %v, want a normal start", err)
+	}
+	if len(launched) == 0 {
+		t.Error("nothing was launched")
 	}
 }

@@ -123,12 +123,19 @@ func TestCountdownSurvivesTheNotificationBeingDismissed(t *testing.T) {
 	}
 }
 
+// A cancel written while the countdown is running is the one that counts. It
+// arrives after the announcement, which is the only moment at which the user can
+// have seen what they are calling off.
 func TestCountdownStopsWhenTheCancelFileAppears(t *testing.T) {
 	dir := t.TempDir()
-	if err := RequestCancel(dir); err != nil {
-		t.Fatalf("RequestCancel: %v", err)
-	}
 	n := &fakeNotifier{actions: true}
+
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		if err := RequestCancel(dir); err != nil {
+			panic(err)
+		}
+	}()
 
 	err := Countdown(context.Background(), CountdownOpts{
 		Grace:      time.Minute,
@@ -142,6 +149,26 @@ func TestCountdownStopsWhenTheCancelFileAppears(t *testing.T) {
 	// off the next entry too.
 	if TakeCancel(dir) {
 		t.Error("the cancel file was left behind")
+	}
+}
+
+// `hyprmoncfg console cancel` typed while nothing is pending used to leave a
+// file that called off the next entry, silently, seconds or hours later. The
+// countdown drains it before announcing, so what the user sees start is what
+// they get.
+func TestCountdownIgnoresACancelLeftFromBefore(t *testing.T) {
+	dir := t.TempDir()
+	if err := RequestCancel(dir); err != nil {
+		t.Fatalf("RequestCancel: %v", err)
+	}
+
+	err := Countdown(context.Background(), CountdownOpts{
+		Grace:      30 * time.Millisecond,
+		RuntimeDir: dir,
+		Notifier:   &fakeNotifier{actions: true},
+	})
+	if err != nil {
+		t.Fatalf("Countdown = %v, want a stale cancel to be ignored", err)
 	}
 }
 

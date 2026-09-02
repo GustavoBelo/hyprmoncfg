@@ -68,6 +68,14 @@ func Countdown(ctx context.Context, opts CountdownOpts) error {
 		logf = func(string, ...any) {}
 	}
 
+	// Only a stand-down asked for after the announcement means anything. One
+	// left lying around from before -- `console cancel` typed while nothing was
+	// pending -- would call this off within a second of announcing it, and the
+	// user would watch the countdown disappear without being told why.
+	if opts.RuntimeDir != "" {
+		DropCancel(opts.RuntimeDir)
+	}
+
 	var handle notify.Handle
 	if opts.Notifier != nil {
 		shown, err := opts.Notifier.Show(ctx, armedNotification(opts.Trigger, opts.Grace, opts.Notifier.Actions()))

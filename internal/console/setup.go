@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -191,9 +192,47 @@ func CurrentDesktopSession(ctx context.Context, sc Runner) string {
 //
 // The wrapper marks its own session rather than being guessed at: the compositor
 // underneath looks identical either way.
+//
+// The marker's mere existence is not enough. A wrapper killed with SIGKILL never
+// runs its deferred cleanup, so the file survives in XDG_RUNTIME_DIR until the
+// last logout -- and every `console enter` after that believes it can switch,
+// ends the desktop, and finds no wrapper to bring it back. So the PID is read
+// and confirmed to still be a wrapper before the answer is yes.
 func Hosted(runtimeDir string) bool {
-	_, err := os.Stat(filepath.Join(runtimeDir, hostedMarker))
-	return err == nil
+	data, err := os.ReadFile(filepath.Join(runtimeDir, hostedMarker))
+	if err != nil {
+		return false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		// A marker with no readable PID predates this check. Refusing is the
+		// safe direction: a wrong "no" costs a `console setup` and a login, a
+		// wrong "yes" costs the desktop with everything open on it.
+		return false
+	}
+	return wrapperAlive(pid)
+}
+
+// procRoot is a variable so tests can point it at a fixture.
+var procRoot = "/proc"
+
+// wrapperAlive reports whether pid is still a `console session` wrapper.
+//
+// Existence alone would be wrong: runtime directories outlive processes and PIDs
+// are reused, so the marker of a wrapper killed hours ago can name whatever
+// process happens to hold that number now. The command line is what settles it.
+func wrapperAlive(pid int) bool {
+	data, err := os.ReadFile(filepath.Join(procRoot, strconv.Itoa(pid), "cmdline"))
+	if err != nil {
+		return false
+	}
+	args := strings.Split(strings.TrimSuffix(string(data), "\x00"), "\x00")
+	for i, arg := range args {
+		if arg == "console" && i+1 < len(args) && args[i+1] == "session" {
+			return true
+		}
+	}
+	return false
 }
 
 const hostedMarker = "hyprmoncfg-hosted"

@@ -75,6 +75,14 @@ func (w *Wrapper) Run(ctx context.Context) error {
 	if len(w.DesktopExec) == 0 {
 		return errors.New("no desktop compositor command: there would be no way back")
 	}
+	// The login manager starts this before any compositor exists. Finding one
+	// already running means somebody typed the command inside their own desktop,
+	// and the first thing the loop does is Sanitize, which stops
+	// graphical-session.target and takes that desktop's services down with it.
+	// The command's help says it will not work; refusing is what makes that true.
+	if w.RuntimeDir != "" && compositorRunning(w.RuntimeDir) {
+		return errors.New("a compositor is already running: `console session` is what the login manager starts, not something to run inside a session it would tear down.\nTo switch now, use `hyprmoncfg console enter`")
+	}
 	if w.Systemctl == nil {
 		w.Systemctl = Systemctl{}
 	}

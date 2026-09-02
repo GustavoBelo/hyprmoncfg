@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 )
 
 // A request has to be cleared when it is acted on. One that survived would
@@ -114,4 +115,57 @@ func TestCancelIsSeenOnceAndOnlyOnce(t *testing.T) {
 	if TakeCancel(dir) {
 		t.Fatal("the stand-down fired twice; the next entry would be cancelled too")
 	}
+}
+
+// `hyprmoncfg console cancel` typed with nothing pending used to leave a file
+// that sat in the runtime directory until the next entry -- minutes or hours
+// later -- and called it off within a second, silently, blaming nobody.
+func TestTakeCancelIgnoresAStaleRequest(t *testing.T) {
+	dir := t.TempDir()
+	if err := RequestCancel(dir); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-cancelMaxAge - time.Minute)
+	if err := os.Chtimes(CancelPath(dir), old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if TakeCancel(dir) {
+		t.Error("a stale cancel called off an entry nobody had asked it to")
+	}
+	// Clearing it anyway is what disarms the trap, rather than leaving it for
+	// the entry after this one.
+	if _, err := os.Stat(CancelPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("the stale cancel was left behind: %v", err)
+	}
+}
+
+// A cancel written while a countdown is running is the one that counts, and it
+// still has to work.
+func TestTakeCancelHonoursAFreshRequest(t *testing.T) {
+	dir := t.TempDir()
+	if err := RequestCancel(dir); err != nil {
+		t.Fatal(err)
+	}
+	if !TakeCancel(dir) {
+		t.Fatal("a cancel written just now was ignored")
+	}
+	if TakeCancel(dir) {
+		t.Error("the cancel survived being acted on")
+	}
+}
+
+// DropCancel is what a countdown calls before announcing anything, so a file
+// left from before cannot call off an entry the user has not yet seen.
+func TestDropCancelClearsWithoutActingOnIt(t *testing.T) {
+	dir := t.TempDir()
+	if err := RequestCancel(dir); err != nil {
+		t.Fatal(err)
+	}
+	DropCancel(dir)
+	if TakeCancel(dir) {
+		t.Error("the dropped cancel was still there")
+	}
+	// Dropping nothing is not an error: every countdown does it.
+	DropCancel(t.TempDir())
 }
