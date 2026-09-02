@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -150,11 +149,15 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !console.Hosted(runtimeDir) {
-				return fmt.Errorf("this session is not hosted by `hyprmoncfg console session`, so there would be no way back.\nRun `hyprmoncfg console setup` and log in again")
-			}
-			if !cfg.Configured() {
-				return fmt.Errorf("no TV has been chosen; run `hyprmoncfg console doctor`")
+			// Everything the session needs, checked before anything is closed.
+			// This used to gate on the hosting marker and a chosen display only,
+			// so a machine with no gamescope announced a countdown, ended the
+			// desktop with everything open on it, failed inside the wrapper, and
+			// came back to an empty desktop with nothing said anywhere the user
+			// would look.
+			entries := console.FindEntries(console.SessionDirs())
+			if unmet := console.Unmet(console.Requirements(ctx, cfg, console.Systemctl{}, entries, console.ConfigPath(base))); len(unmet) > 0 {
+				return fmt.Errorf("console mode is not ready, so the desktop stays:\n  - %s\nRun `hyprmoncfg console doctor` for the whole list", strings.Join(unmet, "\n  - "))
 			}
 
 			// --yes is the one path that never announces anything, and it has
@@ -273,39 +276,17 @@ func newConsoleDoctorCmd(configDir *string) *cobra.Command {
 			sc := console.Systemctl{}
 			ready := true
 
-			check := func(ok bool, good, bad string) {
-				if ok {
-					fmt.Printf("ok    %s\n", good)
-					return
-				}
-				fmt.Printf("PROBLEM %s\n", bad)
-				ready = false
-			}
-
+			// The same list the panel shows and every entry path refuses with.
+			// Keeping it in one place is what stops the doctor from passing a
+			// machine the daemon would refuse, or the other way round.
 			entries := console.FindEntries(console.SessionDirs())
-			gamescope, hasGamescope := console.FindGamescopeSession(entries)
-			check(hasGamescope,
-				fmt.Sprintf("the gamescope session is installed (%s)", gamescope.File()),
-				"no gamescope session is installed; install a gamescope-session package")
-			check(console.TargetKnown(ctx, sc),
-				"systemd can resolve gamescope-session.target",
-				"systemd cannot resolve gamescope-session.target")
-			check(have("gamescope"), "gamescope is installed", "gamescope is not installed")
-			check(have("steam"), "Steam is installed", "Steam is not installed")
-
-			_, hasDesktop := console.FindEntryByFile(entries, cfg.DesktopSession)
-			check(hasDesktop,
-				fmt.Sprintf("the desktop session to come back to is %s", cfg.DesktopSession),
-				"no desktop session to come back to; set desktop_session in "+console.ConfigPath(base))
-
-			check(cfg.Configured(),
-				fmt.Sprintf("the TV is %s", cfg.TVName),
-				"no TV has been chosen")
-
-			if runtimeDir, err := console.RuntimeDir(); err == nil {
-				check(console.Hosted(runtimeDir),
-					"this session is hosted, so switching will work",
-					"this session is not hosted; run `hyprmoncfg console setup` and log in again")
+			for _, req := range console.Requirements(ctx, cfg, sc, entries, console.ConfigPath(base)) {
+				if req.OK {
+					fmt.Printf("ok    %s\n", req.Have)
+					continue
+				}
+				fmt.Printf("PROBLEM %s\n", req.Want)
+				ready = false
 			}
 
 			if dirty, why := console.Dirty(ctx, sc); dirty {
@@ -392,11 +373,6 @@ func newConsoleSetupCmd(configDir *string) *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func have(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
 
 // newConsoleTVCmd chooses which display the console plays on, recording all
@@ -503,9 +479,18 @@ func newConsoleCancelCmd() *cobra.Command {
 		Short: "Call off an entry that is counting down",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			ctx := cmd.Context()
 			runtimeDir, err := console.RuntimeDir()
 			if err != nil {
 				return err
+			}
+			// Saying "the desktop will stay" when nothing was counting down is
+			// worse than useless: it reads as having stopped something, and the
+			// file left behind used to call off the *next* entry, silently, up
+			// to half a minute later. Ask the daemon what is actually pending.
+			if armed, known := entryIsArmed(ctx); known && !armed {
+				fmt.Println("Nothing is counting down, so there was nothing to call off.")
+				return nil
 			}
 			if err := console.RequestCancel(runtimeDir); err != nil {
 				return err
@@ -514,6 +499,30 @@ func newConsoleCancelCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// entryIsArmed asks the daemon whether an entry is counting down right now.
+//
+// The second return says whether the answer is worth anything: with no daemon
+// there is nobody to ask, and the honest move is to leave the cancel behind for
+// a countdown running in some other process rather than claim there is none.
+func entryIsArmed(ctx context.Context) (armed, known bool) {
+	path, err := ipc.SocketPath()
+	if err != nil {
+		return false, false
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	client, err := ipc.Dial(dialCtx, path)
+	if err != nil {
+		return false, false
+	}
+	defer client.Close()
+	state, err := client.ConsoleStatus(dialCtx)
+	if err != nil {
+		return false, false
+	}
+	return state.Arming, true
 }
 
 // newConsoleTriggerCmd turns the controller trigger on and off.

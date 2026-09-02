@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,14 +73,15 @@ func (c *consoleController) observeControllers(ctx context.Context) {
 	if err != nil || !cfg.EnterOnControllerConnect || !cfg.Configured() {
 		return
 	}
-	runtimeDir, err := console.RuntimeDir()
-	if err != nil {
+	if _, err := console.RuntimeDir(); err != nil {
 		return
 	}
-	// Without a hosting session there is no way back, so entering would strand
-	// the user rather than move them.
-	if !console.Hosted(runtimeDir) {
-		c.svc.cfg.Logf("console: a controller connected, but this session is not hosted; not entering")
+	// Nothing about this was asked for out loud: a pad was switched on. So the
+	// bar is the whole list, not just the hosting marker -- without a way back
+	// or without gamescope, entering strands the user rather than moving them.
+	entries := console.FindEntries(console.SessionDirs())
+	if unmet := console.Unmet(console.Requirements(ctx, cfg, console.Systemctl{}, entries, console.ConfigPath(base))); len(unmet) > 0 {
+		c.svc.cfg.Logf("console: a controller connected, but console mode is not ready (%s); not entering", strings.Join(unmet, "; "))
 		return
 	}
 	c.arm(ctx, "A controller connected", console.TriggerGrace, true)
@@ -172,6 +174,7 @@ func (c *consoleController) arm(ctx context.Context, announce string, grace time
 		self, err := exec.LookPath("hyprmoncfg")
 		if err != nil {
 			c.svc.cfg.Logf("console: cannot enter, hyprmoncfg is not on PATH: %v", err)
+			c.sayItFailed(armCtx, notifier, "hyprmoncfg is not on PATH")
 			return
 		}
 		// --yes because the countdown has already happened, out here, where the
@@ -179,8 +182,50 @@ func (c *consoleController) arm(ctx context.Context, announce string, grace time
 		// `console enter` without it comes straight back to this daemon.
 		if out, err := exec.CommandContext(armCtx, self, "console", "enter", "--yes").CombinedOutput(); err != nil {
 			c.svc.cfg.Logf("console: entering failed: %v: %s", err, out)
+			c.sayItFailed(armCtx, notifier, firstLine(string(out)))
 		}
 	}()
+}
+
+// sayItFailed tells the user that the console did not start.
+//
+// The announcement promised the desktop was about to close, so silence after a
+// failure reads as "it worked" -- and if the desktop did close before the
+// failure, the user has just lost everything that was open on it and has been
+// given no reason. The log line this replaces lived in a file nobody has a
+// reason to know about.
+func (c *consoleController) sayItFailed(ctx context.Context, notifier notify.Notifier, why string) {
+	if notifier == nil {
+		return
+	}
+	body := "Console mode could not start, so the desktop stays."
+	if why = strings.TrimSpace(why); why != "" {
+		body += " " + why
+	}
+	// A fresh context: the usual way to get here is a cancelled one, and a
+	// cancelled context sends no D-Bus call.
+	showCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if _, err := notifier.Show(showCtx, notify.Notification{
+		Summary:  "Console mode",
+		Body:     body,
+		Icon:     "input-gaming",
+		Timeout:  10 * time.Second,
+		Critical: true,
+	}); err != nil {
+		c.svc.cfg.Logf("console: could not report the failure: %v", err)
+	}
+}
+
+// firstLine keeps a notification to the sentence that matters: command output
+// carries usage text and stack-shaped detail that a popup cannot hold.
+func firstLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			return line
+		}
+	}
+	return ""
 }
 
 // cancelArmed stops a pending entry. The countdown does the saying-so, because

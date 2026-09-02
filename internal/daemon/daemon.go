@@ -11,6 +11,7 @@ import (
 
 	"github.com/crmne/hyprmoncfg/internal/apply"
 	"github.com/crmne/hyprmoncfg/internal/config"
+	"github.com/crmne/hyprmoncfg/internal/console"
 	"github.com/crmne/hyprmoncfg/internal/hypr"
 	"github.com/crmne/hyprmoncfg/internal/lid"
 	"github.com/crmne/hyprmoncfg/internal/profile"
@@ -56,6 +57,11 @@ type Service struct {
 	lidSupported  bool
 
 	console *consoleController
+	// consoleReqs memoises the requirement check, which shells out to systemctl
+	// and walks PATH; Status() broadcasts far more often than any of it changes.
+	consoleReqMu sync.Mutex
+	consoleReqs  []console.Requirement
+	consoleReqAt time.Time
 
 	readLid      func(context.Context) (lid.State, error)
 	watchLid     func(context.Context, time.Duration) (<-chan lid.State, <-chan error)

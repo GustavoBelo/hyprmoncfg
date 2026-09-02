@@ -563,7 +563,7 @@ func (s *Service) ConsoleStatus() (ipc.ConsoleState, error) {
 			state.Displays = append(state.Displays, ipc.ConsoleDisplay{Connector: m.Name, Description: m.Description})
 		}
 	}
-	state.Problems = consoleProblems(cfg, state)
+	state.Problems = s.consoleProblems(context.Background(), cfg, state, entries, console.ConfigPath(base))
 	state.Ready = len(state.Problems) == 0
 	return state, nil
 }
@@ -581,27 +581,54 @@ func consoleDisplays(in []ipc.ConsoleDisplay) []appstatus.ConsoleDisplay {
 
 // consoleProblems is what the doctor would say, collected here so a panel can
 // show it without shelling out.
-func consoleProblems(cfg console.Config, state ipc.ConsoleState) []string {
-	problems := []string{}
-	entries := console.FindEntries(console.SessionDirs())
-	if _, ok := console.FindGamescopeSession(entries); !ok {
-		problems = append(problems, "no gamescope session is installed")
-	}
-	if _, ok := console.FindEntryByFile(entries, cfg.DesktopSession); !ok {
-		problems = append(problems, "no desktop session to come back to")
-	}
-	if !state.Configured {
-		problems = append(problems, "no TV has been chosen")
-	}
-	if !state.Hosted {
-		problems = append(problems, "this session cannot switch; run `hyprmoncfg console setup`")
+//
+// It is the doctor's own list now, not a hand-copied subset of it. The subset
+// never checked for gamescope, Steam or gamescope-session.target, so a panel
+// could report a machine ready that `console doctor` refused, and the button it
+// drew led straight to a closed desktop.
+func (s *Service) consoleProblems(ctx context.Context, cfg console.Config, state ipc.ConsoleState, entries []console.Entry, configPath string) []string {
+	problems := console.Unmet(s.consoleRequirements(ctx, cfg, entries, configPath))
+	// The daemon is what launches Steam and the helper scripts when a trigger
+	// fires. Without a graphical session environment those exit immediately
+	// saying nothing useful, so the condition belongs on the list rather than
+	// being computed and dropped, which is what happened to it before.
+	if len(state.MissingSessionEnv) > 0 {
+		problems = append(problems, "the daemon has no graphical session environment ("+
+			strings.Join(state.MissingSessionEnv, ", ")+"); restart hyprmoncfgd from inside the session")
 	}
 	return problems
+}
+
+// consoleRequirementsTTL is how long a requirement check is reused.
+//
+// Status() broadcasts on every monitor event and to every connected panel, and
+// the checks behind this run systemctl and walk PATH. None of their answers
+// change on that timescale -- a package is not installed and uninstalled between
+// two hotplugs -- so re-running them per broadcast would be pure overhead. It is
+// short enough that `pacman -S gamescope` is reflected while the user is still
+// looking at the panel.
+const consoleRequirementsTTL = 30 * time.Second
+
+func (s *Service) consoleRequirements(ctx context.Context, cfg console.Config, entries []console.Entry, configPath string) []console.Requirement {
+	s.consoleReqMu.Lock()
+	defer s.consoleReqMu.Unlock()
+	if s.consoleReqs != nil && time.Since(s.consoleReqAt) < consoleRequirementsTTL {
+		return s.consoleReqs
+	}
+	s.consoleReqs = console.Requirements(ctx, cfg, console.Systemctl{}, entries, configPath)
+	s.consoleReqAt = time.Now()
+	return s.consoleReqs
 }
 
 func (s *Service) ConsoleEnter(params ipc.ConsoleEnterParams) error {
 	if s.console == nil {
 		return errors.New("console mode is not available")
+	}
+	// ConsoleStatus already worked out whether this machine can do it. Arming
+	// without asking is how a panel button ended a desktop on a machine whose
+	// own status document said it was not ready.
+	if state, err := s.ConsoleStatus(); err == nil && !state.Ready {
+		return fmt.Errorf("console mode is not ready, so the desktop stays: %s", strings.Join(state.Problems, "; "))
 	}
 	trigger := strings.TrimSpace(params.Trigger)
 	if trigger == "" {
