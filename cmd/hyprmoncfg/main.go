@@ -205,8 +205,8 @@ func newProfilesCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			// The console layout is generated and owned by couch mode; it is
-			// managed on tab 4, not from the profile list.
+			// Generated profiles are not the user's to pick. Nothing generates
+			// them now, but couch mode's leftovers are still on disk.
 			profiles = profile.SelectableProfiles(profiles)
 			if len(profiles) == 0 {
 				fmt.Println("No saved profiles")

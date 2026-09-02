@@ -102,9 +102,10 @@ func (s *Service) EditorState() (appstatus.EditorDocument, error) {
 	if err != nil {
 		return appstatus.EditorDocument{}, err
 	}
-	// The console layout is generated under constraints that a freehand edit
-	// would defeat -- the TV always on, scale 1, transform 0, a mode from the
-	// display's own list. It is edited on the Couch tab or nowhere.
+	// Generated profiles are not offered for the user to apply. Nothing
+	// generates them any more, but the ones couch mode left on disk are still
+	// there, and at least one of them names no monitors at all -- applying it
+	// would turn every display off.
 	profiles = profile.SelectableProfiles(profiles)
 	monitors, err := s.client.Monitors(ctx)
 	if err != nil {
@@ -533,6 +534,23 @@ func (s *Service) ConsoleStatus() (ipc.ConsoleState, error) {
 	if err != nil {
 		return ipc.ConsoleState{}, err
 	}
+	// Nothing below is worth doing on a machine that has never configured
+	// console mode, and Status() runs this on every monitor event and for every
+	// connected panel. The guard used to sit after all of it -- readdir of
+	// /sys/class/input plus a read per device, a glob and parse of every
+	// .desktop in three directories, and a `hyprctl monitors` round trip -- and
+	// then throw the answer away.
+	if !cfg.Configured() {
+		// Ready and Problems still have to be answerable: ConsoleEnter refuses
+		// by naming them, and an empty list would refuse without saying why.
+		return ipc.ConsoleState{
+			Boot:           string(cfg.Boot),
+			DesktopSession: cfg.DesktopSession,
+			BootModes:      []string{string(console.BootDesktop), string(console.BootConsole), string(console.BootLast)},
+			Problems:       []string{"no display has been chosen; run `hyprmoncfg console tv`"},
+		}, nil
+	}
+
 	state := ipc.ConsoleState{
 		Configured:        cfg.Configured(),
 		TVName:            cfg.TVName,

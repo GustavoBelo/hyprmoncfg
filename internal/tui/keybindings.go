@@ -66,12 +66,23 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 				{"← →", "Adjust it, or reorder monitors"},
 			},
 		})
+	case tabConsole:
+		groups = append(groups, keyGroup{
+			title: "Console",
+			bindings: []keyBinding{
+				{"↑ ↓", "Select a setting"},
+				{"← →", "Change it"},
+				{"s", "Save the settings"},
+				{"r, Esc", "Discard the changes"},
+				{"Enter", "Start the console session (this closes the desktop)"},
+			},
+		})
 	}
 
 	return append(groups, keyGroup{
 		title: "Anywhere",
 		bindings: []keyBinding{
-			{"1 2 3", "Switch tabs"},
+			{"1 2 3 4", "Switch tabs (4 is Console, when it is available)"},
 			{"a", "Apply the current draft or selected profile"},
 			{"s", "Save the current draft as a profile"},
 			{"r", "Reset from live Hyprland state"},

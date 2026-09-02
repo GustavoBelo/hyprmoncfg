@@ -71,6 +71,7 @@ type refreshMsg struct {
 	workspaces      []hypr.WorkspaceState
 	lidState        lid.State
 	consoleConfig   *console.Config
+	consoleSessions []string
 	consoleHosted   bool
 	consoleReady    bool
 	daemonOK        bool
@@ -295,7 +296,16 @@ type Model struct {
 	inspectorTab    inspectorTab
 	selectedProfile int
 
-	consoleConfig   *console.Config
+	consoleConfig *console.Config
+	// consoleSaved is what is actually on disk, which consoleConfig stops being
+	// the moment the user edits a row. Sending a change through the daemon means
+	// sending only what changed, and that needs a baseline the draft has not
+	// already overwritten.
+	consoleSaved *console.Config
+	// consoleSessions is the list of sessions to come back to, refreshed with
+	// everything else. It used to be globbed and parsed out of three directories
+	// on every left/right keypress on the Console tab.
+	consoleSessions []string
 	consoleHosted   bool
 	consoleReady    bool
 	consoleDirty    bool
@@ -433,7 +443,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// editing; the draft is theirs until they save or discard it.
 		if !m.consoleDirty {
 			m.consoleConfig = msg.consoleConfig
+			m.consoleSaved = msg.consoleConfig
 		}
+		m.consoleSessions = msg.consoleSessions
 		m.consoleHosted = msg.consoleHosted
 		m.consoleReady = msg.consoleReady
 
@@ -451,6 +463,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.background {
 			m.status = ""
 		}
+		return m, nil
+
+	case consoleSavedMsg:
+		if msg.err != nil {
+			m.setStatusErr(msg.err.Error())
+			return m, nil
+		}
+		stored := msg.cfg
+		m.consoleConfig, m.consoleSaved = &stored, &stored
+		m.consoleDirty = false
+		m.setStatusOK(msg.ok)
 		return m, nil
 
 	case saveMsg:
@@ -2555,6 +2578,12 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 		}
 		entries := console.FindEntries(console.SessionDirs())
 		_, consoleReady := console.FindGamescopeSession(entries)
+		consoleSessions := []string{}
+		for _, e := range entries {
+			if !console.HostsConsole(e) {
+				consoleSessions = append(consoleSessions, e.File())
+			}
+		}
 
 		return refreshMsg{
 			monitors:        monitors,
@@ -2563,6 +2592,7 @@ func (m Model) refreshCmd(background bool) tea.Cmd {
 			workspaces:      workspaces,
 			lidState:        lidState,
 			consoleConfig:   consoleConfig,
+			consoleSessions: consoleSessions,
 			consoleHosted:   consoleHosted,
 			consoleReady:    consoleReady,
 			daemonOK:        daemonOK,
