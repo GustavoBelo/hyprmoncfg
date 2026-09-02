@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
 type keyBinding struct {
@@ -59,11 +61,18 @@ func (m Model) keyGroupsFor(tab mainTab) []keyGroup {
 			},
 		})
 	case tabWorkspaces:
+		adjustAction := "Adjust it, or reorder monitors"
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			adjustAction = "Adjust it, or assign a workspace to a monitor"
+		}
 		groups = append(groups, keyGroup{
 			title: "Workspaces",
 			bindings: []keyBinding{
-				{"↑ ↓", "Select a setting or monitor"},
-				{"← →", "Adjust it, or reorder monitors"},
+				{"↑ ↓", "Select a setting, workspace, or monitor"},
+				{"PgUp PgDn", "Move one visible page"},
+				{"Home End", "Jump to the first or last row"},
+				{"← →", adjustAction},
+				{"Enter", "Type an exact workspace or group count"},
 			},
 		})
 	}

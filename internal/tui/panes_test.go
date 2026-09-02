@@ -503,7 +503,7 @@ func TestQuestionMarkShowsTheKeysForTheCurrentTab(t *testing.T) {
 	}
 
 	view := ansi.Strip(got.View())
-	requireContains(t, view, "Keys", "Workspaces", "Adjust it", "Anywhere", "Switch tabs")
+	requireContains(t, view, "Keys", "Workspaces", "Adjust it", "PgUp PgDn", "Home End", "Anywhere", "Switch tabs")
 	if strings.Contains(view, "Snap beside") {
 		t.Fatalf("expected only the current tab's keys, got:\n%s", view)
 	}

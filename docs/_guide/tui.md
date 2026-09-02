@@ -96,14 +96,21 @@ The third tab lets you distribute workspaces across monitors. Pick one of three 
 |----------|-------------|----------------|
 | `sequential` | Groups workspaces in chunks (e.g., 1-3 on monitor A, 4-6 on monitor B) | You think of each monitor as having "its own" workspaces |
 | `interleave` | Round-robins workspaces across monitors (1 on A, 2 on B, 3 on A, ...) | You want next/previous workspace to alternate screens |
-| `manual` | You define explicit rules for each workspace | You need full control over exactly which workspace lives where |
+| `manual` | Shows every workspace as an assignment you can move between monitors | You need full control over exactly which workspace lives where |
 
 You can also configure:
 
 - **Workspace rules on/off** -- disable them entirely if you manage workspaces yourself
 - **Max workspaces** -- how many workspaces to generate rules for
 - **Group size** (sequential only) -- how many consecutive workspaces to assign to each monitor before moving to the next. With 2 monitors and a group size of 3, monitor A gets 1-3, monitor B gets 4-6, and so on
-- **Monitor order** -- which monitor gets the first batch of workspaces. Drag to reorder
+- **Monitor order** -- which monitor gets the first batch of generated workspaces
+- **Workspace → display** (manual only) -- select a workspace and press `←` or `→` to assign it to a different monitor
+
+There is no fixed workspace or group-size limit. Select **Max workspaces** or **Group size** and press `Enter` to type an exact count; `←` and `→` still make one-step adjustments.
+
+Long manual lists stay navigable: the mouse wheel scrolls three rows at a time, `Page Up` and `Page Down` move by a visible page, and `Home` and `End` jump to the first or last row. Only the visible assignment rows are rendered.
+
+Switching from a generated strategy to `manual` starts with the plan already on screen, so you can adjust only the exceptional workspaces instead of rebuilding the whole layout. In manual mode, changing **Max workspaces** adds or removes numbered workspace assignments.
 
 The right side previews the result twice: **Workspace Plan** lists which workspaces each monitor owns, and **Monitor Layout** paints those same workspaces onto the monitors themselves. Both update as you change the strategy, so you can see where workspace 1 lands before you save.
 

@@ -461,7 +461,8 @@ func (m Model) workspacePlanRows(rules []profile.WorkspaceRule, outputs []profil
 // workspacePlanPairs pairs each monitor with the workspaces it owns, in the
 // order the rules assign them, so the monitor holding workspace 1 comes first.
 func workspacePlanPairs(rules []profile.WorkspaceRule, outputs []profile.OutputConfig) [][2]string {
-	pairs := make([][2]string, 0, len(outputs))
+	labels := make([]string, 0, len(outputs))
+	values := make([]*strings.Builder, 0, len(outputs))
 	position := make(map[string]int, len(outputs))
 
 	for _, rule := range rules {
@@ -475,14 +476,20 @@ func workspacePlanPairs(rules []profile.WorkspaceRule, outputs []profile.OutputC
 			if label == key && rule.OutputName != "" {
 				label = rule.OutputName
 			}
-			pairs = append(pairs, [2]string{label, ""})
-			idx = len(pairs) - 1
+			labels = append(labels, label)
+			values = append(values, &strings.Builder{})
+			idx = len(labels) - 1
 			position[key] = idx
 		}
-		if pairs[idx][1] != "" {
-			pairs[idx][1] += ", "
+		if values[idx].Len() > 0 {
+			values[idx].WriteString(", ")
 		}
-		pairs[idx][1] += rule.Workspace
+		values[idx].WriteString(rule.Workspace)
+	}
+
+	pairs := make([][2]string, len(labels))
+	for idx := range labels {
+		pairs[idx] = [2]string{labels[idx], values[idx].String()}
 	}
 	return pairs
 }
@@ -532,11 +539,15 @@ func (m Model) renderProfileCanvas(p profile.Profile, width, height int) string 
 // renderWorkspaceCanvas draws the editor's monitors with the workspaces each
 // one would own, so the plan can be read spatially.
 func (m Model) renderWorkspaceCanvas(preview map[string][]string, width, height int) string {
-	// Reordering a monitor in the planner is the one thing on this tab you can
-	// "move", so that monitor takes the accent.
+	// The display affected by the selected list row takes the accent, whether
+	// that row reorders a generated plan or assigns one manual workspace.
 	selectedKey := ""
-	if idx := m.workspaceEdit.SelectedField - len(workspaceFields); idx >= 0 && idx < len(m.workspaceEdit.MonitorOrder) {
-		selectedKey = m.workspaceEdit.MonitorOrder[idx]
+	if idx := m.workspaceEdit.SelectedField - len(workspaceFields); idx >= 0 {
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual && idx < len(m.workspaceEdit.Rules) {
+			selectedKey = m.workspaceEdit.Rules[idx].OutputKey
+		} else if idx < len(m.workspaceEdit.MonitorOrder) {
+			selectedKey = m.workspaceEdit.MonitorOrder[idx]
+		}
 	}
 
 	return m.renderStaticCanvas(m.editOutputs, width, height, func(output editableOutput) canvasCard {
@@ -545,6 +556,9 @@ func (m Model) renderWorkspaceCanvas(preview map[string][]string, width, height 
 			colors = m.canvasCardStyle(output, true)
 		}
 		workspaces := preview[output.Name]
+		if len(workspaces) == 0 {
+			workspaces = preview[output.Key]
+		}
 		return canvasCard{
 			colors: colors,
 			body: func(maxLines, maxWidth int) []cardLine {

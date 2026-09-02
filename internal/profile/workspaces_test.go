@@ -35,6 +35,32 @@ func TestGeneratedSequentialWorkspaceRules(t *testing.T) {
 	}
 }
 
+func TestGeneratedWorkspaceRulesHaveNoLegacyUICeiling(t *testing.T) {
+	monitors := []hypr.Monitor{
+		{Name: "DP-1", Make: "Dell", Model: "U2720Q", Serial: "A1", X: 0},
+		{Name: "HDMI-A-1", Make: "LG", Model: "27GP850", Serial: "B2", X: 1000},
+	}
+	prof := New("many-workspaces", []OutputConfig{
+		{Key: monitors[0].HardwareKey(), Name: monitors[0].Name, Enabled: true, Scale: 1, Mode: "2560x1440@144.00Hz"},
+		{Key: monitors[1].HardwareKey(), Name: monitors[1].Name, Enabled: true, Scale: 1, Mode: "2560x1440@144.00Hz"},
+	})
+	prof.Workspaces = WorkspaceSettings{
+		Enabled:       true,
+		Strategy:      WorkspaceStrategySequential,
+		MaxWorkspaces: 64,
+		GroupSize:     40,
+		MonitorOrder:  []string{monitors[0].HardwareKey(), monitors[1].HardwareKey()},
+	}
+
+	rules := ResolveWorkspaceRules(prof, monitors)
+	if len(rules) != 64 {
+		t.Fatalf("expected all 64 workspace rules, got %d", len(rules))
+	}
+	if rules[39].OutputName != "DP-1" || rules[40].OutputName != "HDMI-A-1" {
+		t.Fatalf("expected group size 40 to be preserved, boundary rules: %+v %+v", rules[39], rules[40])
+	}
+}
+
 func TestNormalizeAssignsUniqueKeysToDuplicateOutputs(t *testing.T) {
 	legacyKey := "vie|c24pulse|0x01010101"
 	prof := Profile{

@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -2598,6 +2599,286 @@ func TestWorkspaceEditorFromSettingsFallsBackToManualRuleOrder(t *testing.T) {
 	}
 }
 
+func TestEnteringManualWorkspaceStrategyMaterializesVisiblePlan(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		editOutputs: []editableOutput{
+			{Key: "dell|desk", Name: "DP-1", Make: "Dell", Model: "Desk", Enabled: true, Scale: 1},
+			{Key: "lg|side", Name: "HDMI-A-1", Make: "LG", Model: "Side", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Enabled:       true,
+			Strategy:      profile.WorkspaceStrategySequential,
+			MaxWorkspaces: 6,
+			GroupSize:     3,
+			MonitorOrder:  []string{"dell|desk", "lg|side"},
+			SelectedField: 1,
+		},
+	}
+
+	m.adjustWorkspaceField(-1)
+
+	if m.workspaceEdit.Strategy != profile.WorkspaceStrategyManual {
+		t.Fatalf("expected manual strategy, got %q", m.workspaceEdit.Strategy)
+	}
+	if !m.workspaceEdit.ManualRulesInitialized || len(m.workspaceEdit.Rules) != 6 {
+		t.Fatalf("expected the visible six-workspace plan to become manual rules, got %+v", m.workspaceEdit)
+	}
+	if m.workspaceEdit.Rules[0].OutputKey != "dell|desk" || m.workspaceEdit.Rules[3].OutputKey != "lg|side" {
+		t.Fatalf("unexpected materialized assignments: %+v", m.workspaceEdit.Rules)
+	}
+	if !m.workspaceEdit.Rules[0].Default || !m.workspaceEdit.Rules[3].Default {
+		t.Fatalf("expected one default workspace per display: %+v", m.workspaceEdit.Rules)
+	}
+	view := strings.Join(m.workspaceSettingsLines(), "\n")
+	for _, want := range []string{"Workspace → display", "Workspace 1", "Dell Desk", "Workspace 4", "LG Side"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected manual planner to include %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestOpeningWorkspaceTabRepairsAnEmptyManualDraft(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		editOutputs: []editableOutput{
+			{Key: "mon-a", Name: "DP-1", Enabled: true, Scale: 1},
+			{Key: "mon-b", Name: "HDMI-A-1", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Enabled:       true,
+			Strategy:      profile.WorkspaceStrategyManual,
+			MaxWorkspaces: 4,
+			GroupSize:     2,
+			MonitorOrder:  []string{"mon-a", "mon-b"},
+		},
+	}
+
+	updated, _ := m.updateMainKeys(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'3'}})
+	got := updated.(Model)
+
+	if got.tab != tabWorkspaces || len(got.workspaceEdit.Rules) != 4 {
+		t.Fatalf("expected an editable four-workspace manual plan, got tab=%d rules=%+v", got.tab, got.workspaceEdit.Rules)
+	}
+	if !got.workspaceEdit.ManualRulesInitialized || !got.dirty {
+		t.Fatalf("expected the repaired draft to be initialized and visibly dirty: %+v", got.workspaceEdit)
+	}
+}
+
+func TestManualWorkspaceAssignmentCyclesSelectedWorkspaceTarget(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		editOutputs: []editableOutput{
+			{Key: "mon-a", Name: "DP-1", Enabled: true, Scale: 1},
+			{Key: "mon-b", Name: "HDMI-A-1", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Enabled:                true,
+			Strategy:               profile.WorkspaceStrategyManual,
+			MaxWorkspaces:          2,
+			MonitorOrder:           []string{"mon-a", "mon-b"},
+			ManualRulesInitialized: true,
+			Rules: []profile.WorkspaceRule{
+				{Workspace: "1", OutputKey: "mon-a", OutputName: "DP-1", Default: true, Persistent: true},
+				{Workspace: "2", OutputKey: "mon-a", OutputName: "DP-1"},
+			},
+			SelectedField: len(workspaceFields) + 1,
+			SelectedOrder: 1,
+		},
+	}
+
+	m.moveManualWorkspaceRule(1)
+
+	rules := m.workspaceEdit.Rules
+	if rules[1].OutputKey != "mon-b" || rules[1].OutputName != "HDMI-A-1" {
+		t.Fatalf("expected workspace 2 on mon-b, got %+v", rules[1])
+	}
+	if !rules[0].Default || !rules[0].Persistent || !rules[1].Default || !rules[1].Persistent {
+		t.Fatalf("expected the first workspace on each display to remain default and persistent: %+v", rules)
+	}
+}
+
+func TestManualWorkspaceCountAddsAndRemovesNumberedAssignments(t *testing.T) {
+	m := Model{
+		editOutputs: []editableOutput{
+			{Key: "mon-a", Name: "DP-1", Enabled: true, Scale: 1},
+			{Key: "mon-b", Name: "HDMI-A-1", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Strategy:      profile.WorkspaceStrategyManual,
+			MaxWorkspaces: 2,
+			MonitorOrder:  []string{"mon-a", "mon-b"},
+			SelectedField: 2,
+			Rules: []profile.WorkspaceRule{
+				{Workspace: "1", OutputKey: "mon-a", OutputName: "DP-1"},
+				{Workspace: "2", OutputKey: "mon-b", OutputName: "HDMI-A-1"},
+				{Workspace: "special:music", OutputKey: "mon-b", OutputName: "HDMI-A-1"},
+			},
+		},
+	}
+
+	m.adjustWorkspaceField(1)
+	if m.workspaceEdit.MaxWorkspaces != 3 || len(m.workspaceEdit.Rules) != 4 {
+		t.Fatalf("expected workspace 3 plus the named rule, got max=%d rules=%+v", m.workspaceEdit.MaxWorkspaces, m.workspaceEdit.Rules)
+	}
+	if m.workspaceEdit.Rules[2].Workspace != "3" || m.workspaceEdit.Rules[2].OutputKey != "mon-a" {
+		t.Fatalf("unexpected new workspace assignment: %+v", m.workspaceEdit.Rules[2])
+	}
+
+	m.adjustWorkspaceField(-1)
+	if m.workspaceEdit.MaxWorkspaces != 2 || len(m.workspaceEdit.Rules) != 3 {
+		t.Fatalf("expected workspace 3 to be removed while preserving the named rule, got %+v", m.workspaceEdit.Rules)
+	}
+	if m.workspaceEdit.Rules[2].Workspace != "special:music" {
+		t.Fatalf("expected named rule to survive resizing, got %+v", m.workspaceEdit.Rules)
+	}
+}
+
+func TestWorkspaceCountsHaveNoLegacyCeilingAndAcceptExactInput(t *testing.T) {
+	m := Model{
+		styles: newStyles(),
+		workspaceEdit: workspaceEditor{
+			Strategy:      profile.WorkspaceStrategySequential,
+			MaxWorkspaces: 30,
+			GroupSize:     10,
+			SelectedField: 2,
+		},
+	}
+
+	m.adjustWorkspaceField(1)
+	if m.workspaceEdit.MaxWorkspaces != 31 {
+		t.Fatalf("workspace count should move past the old ceiling: got %d", m.workspaceEdit.MaxWorkspaces)
+	}
+	m.workspaceEdit.SelectedField = 3
+	m.adjustWorkspaceField(1)
+	if m.workspaceEdit.GroupSize != 11 {
+		t.Fatalf("group size should move past the old ceiling: got %d", m.workspaceEdit.GroupSize)
+	}
+
+	m.workspaceEdit.SelectedField = 2
+	updated, _ := m.updateWorkspaceKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got := updated.(Model)
+	if got.mode != modeNumericInput || got.input == nil || got.input.Kind != numericInputWorkspaceCount {
+		t.Fatalf("Enter should open exact workspace count input, got mode=%v input=%+v", got.mode, got.input)
+	}
+	if got.dirty {
+		t.Fatal("opening exact count input should not dirty the draft")
+	}
+	got.input.Input.SetValue("128")
+	got.commitNumericInput()
+	if got.workspaceEdit.MaxWorkspaces != 128 || !got.dirty || got.mode != modeMain {
+		t.Fatalf("expected exact workspace count 128, got editor=%+v dirty=%v mode=%v", got.workspaceEdit, got.dirty, got.mode)
+	}
+
+	got.dirty = false
+	got.workspaceEdit.SelectedField = 3
+	updated, _ = got.updateWorkspaceKeys(tea.KeyMsg{Type: tea.KeyEnter})
+	got = updated.(Model)
+	if got.mode != modeNumericInput || got.input == nil || got.input.Kind != numericInputWorkspaceGroupSize {
+		t.Fatalf("Enter should open exact group size input, got mode=%v input=%+v", got.mode, got.input)
+	}
+	got.input.Input.SetValue("64")
+	got.commitNumericInput()
+	if got.workspaceEdit.GroupSize != 64 || got.workspaceEdit.LastSequentialGroupSize != 64 || !got.dirty {
+		t.Fatalf("expected exact group size 64, got editor=%+v dirty=%v", got.workspaceEdit, got.dirty)
+	}
+}
+
+func TestLongManualWorkspaceListHasPageAndBoundaryNavigation(t *testing.T) {
+	rules := make([]profile.WorkspaceRule, 1000)
+	for idx := range rules {
+		rules[idx] = profile.WorkspaceRule{
+			Workspace: strconv.Itoa(idx + 1),
+			OutputKey: "mon-a",
+		}
+	}
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 24,
+		tab:    tabWorkspaces,
+		editOutputs: []editableOutput{
+			{Key: "mon-a", Name: "DP-1", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Strategy:      profile.WorkspaceStrategyManual,
+			SelectedField: len(workspaceFields),
+			Rules:         rules,
+		},
+	}
+
+	pageStep := m.workspacePageStep()
+	updated, _ := m.updateWorkspaceKeys(tea.KeyMsg{Type: tea.KeyPgDown})
+	got := updated.(Model)
+	if got.workspaceEdit.SelectedField != len(workspaceFields)+pageStep {
+		t.Fatalf("Page Down selected %d, want %d", got.workspaceEdit.SelectedField, len(workspaceFields)+pageStep)
+	}
+	if got.dirty {
+		t.Fatal("navigation should not dirty the workspace draft")
+	}
+
+	updated, _ = got.updateWorkspaceKeys(tea.KeyMsg{Type: tea.KeyEnd})
+	got = updated.(Model)
+	if got.workspaceEdit.SelectedField != len(workspaceFields)+len(rules)-1 || got.workspaceEdit.SelectedOrder != len(rules)-1 {
+		t.Fatalf("End should select the final workspace, got field=%d order=%d", got.workspaceEdit.SelectedField, got.workspaceEdit.SelectedOrder)
+	}
+	visible := ansi.Strip(strings.Join(got.workspaceSettingsVisibleLines(10), "\n"))
+	if !strings.Contains(visible, "Workspace 1000") || strings.Contains(visible, "Workspace 1 ") {
+		t.Fatalf("expected a virtualized window around the final workspace, got:\n%s", visible)
+	}
+	if lines := len(strings.Split(visible, "\n")); lines > 10 {
+		t.Fatalf("visible workspace window rendered %d lines, want at most 10", lines)
+	}
+
+	updated, _ = got.updateWorkspaceKeys(tea.KeyMsg{Type: tea.KeyHome})
+	got = updated.(Model)
+	if got.workspaceEdit.SelectedField != 0 {
+		t.Fatalf("Home should select the first setting, got %d", got.workspaceEdit.SelectedField)
+	}
+}
+
+func TestWorkspaceMouseWheelScrollsWithoutEditingAssignments(t *testing.T) {
+	rules := make([]profile.WorkspaceRule, 100)
+	for idx := range rules {
+		rules[idx] = profile.WorkspaceRule{
+			Workspace: strconv.Itoa(idx + 1),
+			OutputKey: "mon-a",
+		}
+	}
+	m := Model{
+		styles: newStyles(),
+		width:  120,
+		height: 24,
+		tab:    tabWorkspaces,
+		editOutputs: []editableOutput{
+			{Key: "mon-a", Name: "DP-1", Enabled: true, Scale: 1},
+			{Key: "mon-b", Name: "DP-2", Enabled: true, Scale: 1},
+		},
+		workspaceEdit: workspaceEditor{
+			Strategy:      profile.WorkspaceStrategyManual,
+			SelectedField: len(workspaceFields) + 20,
+			SelectedOrder: 20,
+			Rules:         rules,
+		},
+	}
+	inner := m.workspaceSettingsRect().inner(m.styles.activePane)
+	wheel := tea.MouseMsg{
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonWheelDown,
+		X:      inner.x,
+		Y:      inner.y,
+	}
+
+	updated, _ := m.updateWorkspaceMouse(wheel)
+	got := updated.(Model)
+	if got.workspaceEdit.SelectedField != len(workspaceFields)+23 || got.workspaceEdit.SelectedOrder != 23 {
+		t.Fatalf("mouse wheel should move three rows, got field=%d order=%d", got.workspaceEdit.SelectedField, got.workspaceEdit.SelectedOrder)
+	}
+	if got.workspaceEdit.Rules[20].OutputKey != "mon-a" || got.dirty {
+		t.Fatalf("mouse wheel should not edit the hovered assignment, got rule=%+v dirty=%v", got.workspaceEdit.Rules[20], got.dirty)
+	}
+}
+
 func hasSnapMark(marks []snapMark, outputIndex int, edge snapEdge) bool {
 	for _, mark := range marks {
 		if mark.OutputIndex == outputIndex && mark.Edge == edge {
@@ -3282,5 +3563,15 @@ func TestFooterTellsTheInspectorHowToChangeAValue(t *testing.T) {
 	canvas := Model{tab: tabLayout, layoutFocus: layoutFocusCanvas}.footerHelpText()
 	if !strings.Contains(canvas, "`drag/arrows` move") {
 		t.Fatalf("canvas footer should still describe moving monitors: %s", canvas)
+	}
+
+	workspaces := Model{
+		tab: tabWorkspaces,
+		workspaceEdit: workspaceEditor{
+			Strategy: profile.WorkspaceStrategySequential,
+		},
+	}.footerHelpText()
+	if !strings.Contains(workspaces, "`Enter` type count") {
+		t.Fatalf("workspace footer should advertise exact count entry: %s", workspaces)
 	}
 }

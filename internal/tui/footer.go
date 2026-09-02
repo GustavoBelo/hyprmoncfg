@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/crmne/hyprmoncfg/internal/buildinfo"
+	"github.com/crmne/hyprmoncfg/internal/profile"
 )
 
 const (
@@ -52,7 +53,10 @@ func (m Model) footerHelpText() string {
 		}
 		return "`↑↓` browse | `Enter` apply | `Space` automatic | `l` edit | `e` exec | `d` delete | `?` keys"
 	case tabWorkspaces:
-		return "`↑↓` select | `←→` adjust | `a` apply | `s` save | `?` keys"
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			return "`↑↓` select | `←→` assign | `Enter` type count | `a` apply | `s` save | `?` keys"
+		}
+		return "`↑↓` select | `←→` adjust | `Enter` type count | `a` apply | `s` save | `?` keys"
 	default:
 		return ""
 	}
