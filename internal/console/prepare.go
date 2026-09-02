@@ -3,7 +3,6 @@ package console
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 
@@ -128,7 +127,3 @@ func RestoreAudio(ctx context.Context, stateDir string, logf func(string, ...any
 	}
 	clearPrepared(stateDir)
 }
-
-// ErrNoTVDescription is returned when there is nothing to match the TV's audio
-// against, which is the one case where refusing is better than guessing.
-var ErrNoTVDescription = errors.New("no TV has been chosen, so its audio output cannot be found")

@@ -372,23 +372,3 @@ func TestParseEventIgnoresActiveWindow(t *testing.T) {
 		}
 	}
 }
-
-// Addresses are spliced into a Lua snippet, so they are validated first.
-// hyprctl is the only source for them, but building source text from a value
-// is not something to do on trust.
-func TestWindowAddressRejectsAnythingButAnAddress(t *testing.T) {
-	for _, good := range []string{"0x55d99b4b2f60", "0xAF", "0x0"} {
-		if !windowAddress.MatchString(good) {
-			t.Fatalf("%q is a valid address", good)
-		}
-	}
-	for _, bad := range []string{
-		"", "55d99b4b2f60", "0x", "0xzz",
-		`0x1") end os.execute("touch /tmp/pwned`,
-		"0x1\nhl.dispatch(hl.dsp.exit())",
-	} {
-		if windowAddress.MatchString(bad) {
-			t.Fatalf("%q must be refused", bad)
-		}
-	}
-}

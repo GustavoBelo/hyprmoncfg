@@ -4,76 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
-
-func TestTrackerWaitsForMinimumUsage(t *testing.T) {
-	tracker := &ControllerTracker{}
-	base := time.Unix(1000, 0)
-
-	if tracker.Poll(base, 1) {
-		t.Fatal("first poll with a controller connected must not trigger")
-	}
-	if tracker.UsageSeconds != 0 {
-		t.Fatalf("first poll should not accumulate usage, got %d", tracker.UsageSeconds)
-	}
-
-	if tracker.Poll(base.Add(30*time.Second), 1) {
-		t.Fatal("usage below minimum must not trigger")
-	}
-	if tracker.UsageSeconds != 30 {
-		t.Fatalf("usage = %d, want 30", tracker.UsageSeconds)
-	}
-
-	if tracker.Poll(base.Add(40*time.Second), 0) {
-		t.Fatal("controllers off before minimum usage must not trigger")
-	}
-
-	if tracker.Poll(base.Add(50*time.Second), 1) {
-		t.Fatal("controllers back on must not trigger")
-	}
-	if tracker.UsageSeconds != 40 {
-		t.Fatalf("usage = %d, want 40", tracker.UsageSeconds)
-	}
-}
-
-func TestTrackerDebounce(t *testing.T) {
-	tracker := &ControllerTracker{}
-	base := time.Unix(2000, 0)
-
-	tracker.Poll(base, 1)
-	tracker.Poll(base.Add(ControllerMinUsageSeconds*time.Second), 1)
-	if got := tracker.UsageSeconds; got < ControllerMinUsageSeconds {
-		t.Fatalf("precondition failed: usage %d", got)
-	}
-
-	if tracker.Poll(base.Add(70*time.Second), 0) {
-		t.Fatal("first poll without controllers only starts the debounce window")
-	}
-	if tracker.Poll(base.Add(75*time.Second), 0) {
-		t.Fatal("within debounce window must not trigger")
-	}
-	if !tracker.Poll(base.Add(85*time.Second), 0) {
-		t.Fatal("after debounce window must trigger")
-	}
-}
-
-func TestTrackerControllerReturningResetsDebounce(t *testing.T) {
-	tracker := &ControllerTracker{}
-	base := time.Unix(3000, 0)
-
-	tracker.Poll(base, 1)
-	tracker.Poll(base.Add(60*time.Second), 1)
-	tracker.Poll(base.Add(62*time.Second), 0)
-	tracker.Poll(base.Add(68*time.Second), 0)
-	tracker.Poll(base.Add(69*time.Second), 1)
-	if tracker.Poll(base.Add(72*time.Second), 0) {
-		t.Fatal("controller came back inside the debounce window; timer restarts")
-	}
-	if !tracker.Poll(base.Add(83*time.Second), 0) {
-		t.Fatal("full debounce after reconnect must trigger")
-	}
-}
 
 func TestConnectedControllersNeverNegative(t *testing.T) {
 	if ConnectedControllers() < 0 {

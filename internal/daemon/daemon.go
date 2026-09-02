@@ -205,15 +205,15 @@ func (s *Service) Run(ctx context.Context) error {
 
 	suspendEvents := s.watchSuspend(ctx)
 
-	// One socket2 connection carries both jobs, dispatched by type below.
-	// Two subscriptions would mean two connections to the same socket, and
-	// which one received a given event would depend on connect order.
-	daemonEventTypes := append(append([]hypr.EventType(nil), hypr.MonitorEventTypes...),
-		hypr.EventWindowOpened, hypr.EventWindowTitle, hypr.EventWindowClosed)
-	events, eventErrs := s.client.SubscribeEvents(ctx, daemonEventTypes...)
+	// Only the events that change which displays exist. Window events were
+	// subscribed to for couch mode, which is gone: they are the highest-volume
+	// events Hyprland emits -- every window opened, closed, or retitled, so
+	// every keystroke in a terminal that shows the command in its title -- and
+	// they were read off the socket and thrown away.
+	events, eventErrs := s.client.SubscribeEvents(ctx, hypr.MonitorEventTypes...)
 
-	couchPoll := time.NewTicker(3 * time.Second)
-	defer couchPoll.Stop()
+	controllerPoll := time.NewTicker(3 * time.Second)
+	defer controllerPoll.Stop()
 	var eventRetry <-chan time.Time
 	scheduleEventRetry := func() {
 		if eventRetry == nil {
@@ -279,13 +279,6 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			// Window events only ever fed couch mode. Letting them reach
-			// scheduleMonitorTrigger is what made the daemon re-derive the
-			// layout on every window that opened or changed title.
-			if isWindowEvent(ev.Type) {
-				continue
-			}
-
 			reason := string(ev.Type) + ":" + ev.Value
 			monitors, err := s.client.Monitors(ctx)
 			if err != nil {
@@ -311,7 +304,7 @@ func (s *Service) Run(ctx context.Context) error {
 				}
 			}
 			scheduleMonitorTrigger(reason)
-		case <-couchPoll.C:
+		case <-controllerPoll.C:
 			// Controller hotplug has no Hyprland event, so it is polled --
 			// cheaply, straight from sysfs, and only while idle.
 			if s.console != nil {
@@ -320,7 +313,7 @@ func (s *Service) Run(ctx context.Context) error {
 		case <-eventRetry:
 			eventRetry = nil
 			if events == nil && eventErrs == nil {
-				events, eventErrs = s.client.SubscribeEvents(ctx, daemonEventTypes...)
+				events, eventErrs = s.client.SubscribeEvents(ctx, hypr.MonitorEventTypes...)
 			}
 		case sleeping, ok := <-suspendEvents:
 			if !ok {
@@ -749,37 +742,4 @@ func allDisabledFallbackProfile(monitors []hypr.Monitor) (profile.Profile, bool)
 	fallback.Workspaces = profile.WorkspaceSettings{}
 	fallback.Normalize()
 	return fallback, true
-}
-
-// applyProfileLocked applies a profile through the same engine, write lock and
-// revert path as everything else the daemon does.
-//
-// Console mode used to reach around this with its own copy of the apply logic in
-// the CLI, which is how a session and the daemon ended up writing the monitor
-// config at the same time.
-func (s *Service) applyProfileLocked(ctx context.Context, p profile.Profile) error {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-
-	monitors, err := s.client.Monitors(ctx)
-	if err != nil {
-		return err
-	}
-	if _, err := s.engine.Apply(ctx, p, monitors, apply.ApplyModeNonInteractive); err != nil {
-		return err
-	}
-	s.applied = p.Name
-	return nil
-}
-
-// isWindowEvent separates window activity from the monitor feed. They share one
-// socket2 connection, because two subscriptions would mean two connections to
-// the same socket and which one received a given event would depend on connect
-// order.
-func isWindowEvent(t hypr.EventType) bool {
-	switch t {
-	case hypr.EventWindowOpened, hypr.EventWindowTitle, hypr.EventWindowClosed:
-		return true
-	}
-	return false
 }

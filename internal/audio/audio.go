@@ -522,9 +522,6 @@ func moveStreams(ctx context.Context, target Sink) {
 	}
 }
 
-// Available reports whether this machine can be asked about audio at all.
-func Available() bool { return have("pactl") }
-
 func run(ctx context.Context, name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

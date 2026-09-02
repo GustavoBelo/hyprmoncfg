@@ -5,47 +5,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
-
-const (
-	// ControllerDebounceSeconds is how long a pad has to stay gone before a
-	// disconnect counts, so a flat battery blinking off does not end a session.
-	ControllerDebounceSeconds = 10
-	// ControllerMinUsageSeconds is how long a pad has to have been used before
-	// its disconnect is allowed to mean anything.
-	ControllerMinUsageSeconds = 60
-)
-
-type ControllerTracker struct {
-	UsageSeconds int
-	offSince     time.Time
-	lastPoll     time.Time
-}
-
-func (t *ControllerTracker) Poll(now time.Time, connected int) bool {
-	if !t.lastPoll.IsZero() {
-		delta := int(now.Sub(t.lastPoll).Seconds())
-		if delta > 0 && connected > 0 {
-			t.UsageSeconds += delta
-		}
-	}
-	t.lastPoll = now
-
-	if connected > 0 {
-		t.offSince = time.Time{}
-		return false
-	}
-	if t.UsageSeconds < ControllerMinUsageSeconds {
-		t.offSince = time.Time{}
-		return false
-	}
-	if t.offSince.IsZero() {
-		t.offSince = now
-		return false
-	}
-	return int(now.Sub(t.offSince).Seconds()) >= ControllerDebounceSeconds
-}
 
 // btnGamepad is BTN_SOUTH (0x130), the first button of evdev's gamepad block.
 // A device that advertises it is a gamepad; nothing else claims that bit.
