@@ -28,7 +28,7 @@ type testHandler struct {
 	trigger         string
 	graceMS         int
 	consoleEntered  []string
-	couchStopped    int
+	consoleStopped  int
 	consoleEnterErr error
 	configured      ConsoleConfigureParams
 	disconnected    []string
@@ -506,7 +506,7 @@ func TestConsoleEnterCarriesTheGrace(t *testing.T) {
 }
 
 // Starting without a body is valid: the trigger is informational.
-func TestCouchStartAcceptsAnEmptyTrigger(t *testing.T) {
+func TestConsoleEnterAcceptsAnEmptyTrigger(t *testing.T) {
 	handler := &testHandler{}
 	_, path, _ := runTestServer(t, handler)
 	client, err := Dial(context.Background(), path)

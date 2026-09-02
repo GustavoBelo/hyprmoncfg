@@ -22,6 +22,8 @@ The binary archives contain:
 - `LICENSE`
 - `packaging/applications/hyprmoncfg.desktop`
 - `packaging/applications/hyprmoncfg-omarchy.desktop`
+- `packaging/applications/hyprmoncfg-console.desktop`
+- `packaging/applications/hyprmoncfg-console-omarchy.desktop`
 - `packaging/icons/hyprmoncfg.svg`
 - `packaging/systemd/hyprmoncfgd.service`
 - `packaging/systemd/hyprmoncfgd.local.service`
@@ -76,6 +78,8 @@ Recommended installed files:
 /usr/bin/hyprmoncfgd
 /usr/share/applications/hyprmoncfg.desktop
 /usr/share/applications/hyprmoncfg-omarchy.desktop
+/usr/share/applications/hyprmoncfg-console.desktop
+/usr/share/applications/hyprmoncfg-console-omarchy.desktop
 /usr/share/icons/hicolor/scalable/apps/hyprmoncfg.svg
 /usr/share/licenses/hyprmoncfg/LICENSE
 /usr/share/doc/hyprmoncfg/README.md
@@ -128,6 +132,8 @@ hyprmoncfg --help
 hyprmoncfgd --help
 test -f /usr/share/applications/hyprmoncfg.desktop
 test -f /usr/share/applications/hyprmoncfg-omarchy.desktop
+test -f /usr/share/applications/hyprmoncfg-console.desktop
+test -f /usr/share/applications/hyprmoncfg-console-omarchy.desktop
 test -f /usr/share/icons/hicolor/scalable/apps/hyprmoncfg.svg
 ```
 

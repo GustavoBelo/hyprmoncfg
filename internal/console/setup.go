@@ -123,8 +123,15 @@ func SetupInstructions(lm LoginManager, entryPath, entryName, wrapperCommand str
 	var b strings.Builder
 	file := filepath.Base(entryPath)
 
-	fmt.Fprintf(&b, "1. Install the session entry (needs root):\n\n")
-	fmt.Fprintf(&b, "     sudo install -Dm644 %s \\\n       /usr/local/share/wayland-sessions/%s\n\n", entryPath, file)
+	// Into the user's own directory, not /usr/local/share. The entry's Exec
+	// points at this user's binary -- typically ~/.local/bin/hyprmoncfg -- so a
+	// system-wide install offers every account on the machine a session that
+	// runs a program out of someone else's home. It also needs no root.
+	fmt.Fprintf(&b, "1. Install the session entry:\n\n")
+	fmt.Fprintf(&b, "     install -Dm644 %s \\\n       ~/.local/share/wayland-sessions/%s\n\n", entryPath, file)
+	fmt.Fprintf(&b, "   For every account on this machine instead, put it in\n")
+	fmt.Fprintf(&b, "   /usr/local/share/wayland-sessions/ with sudo -- but only if the\n")
+	fmt.Fprintf(&b, "   command above points at a binary all of them can run.\n\n")
 
 	switch lm.Kind {
 	case LoginSDDM:

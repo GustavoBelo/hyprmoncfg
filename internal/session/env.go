@@ -118,20 +118,38 @@ func Environ() map[string]string {
 }
 
 // candidatePathDirs are directories a login shell has and a user unit does
-// not: hyprmoncfg's own binaries when installed without root, and the Omarchy
-// helper scripts every desktop hook shells out to.
+// not: hyprmoncfg's own binaries when installed without root, and the helper
+// scripts a desktop's hooks shell out to.
+//
+// /usr/share/omarchy/bin is one distribution's, and it is here because it is
+// where that distribution keeps the scripts this daemon calls. It costs nothing
+// anywhere else -- a directory that does not exist is not added -- and
+// PathDirsEnv replaces the whole list for anyone whose desktop keeps them
+// somewhere else.
 var candidatePathDirs = []string{
 	"~/.local/bin",
 	"/usr/share/omarchy/bin",
 	"/usr/local/bin",
 }
 
+// PathDirsEnv names the variable that replaces the built-in list, as a
+// colon-separated path. Empty entries and ~ are handled the same way.
+const PathDirsEnv = "HYPRMONCFG_PATH_DIRS"
+
 // DiscoverPathDirs returns the candidate directories that exist on this
 // machine. A directory that is not there is not worth putting on PATH.
 func DiscoverPathDirs() []string {
+	candidates := candidatePathDirs
+	if configured := strings.TrimSpace(os.Getenv(PathDirsEnv)); configured != "" {
+		candidates = strings.Split(configured, string(os.PathListSeparator))
+	}
 	home, _ := os.UserHomeDir()
-	dirs := make([]string, 0, len(candidatePathDirs))
-	for _, dir := range candidatePathDirs {
+	dirs := make([]string, 0, len(candidates))
+	for _, dir := range candidates {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
 		if strings.HasPrefix(dir, "~/") {
 			if home == "" {
 				continue

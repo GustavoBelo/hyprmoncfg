@@ -125,3 +125,51 @@ func writeFile(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 }
+
+// The built-in list names one distribution's script directory, which is fine
+// where it exists and wrong to impose. Anyone whose desktop keeps its helpers
+// elsewhere replaces the whole list.
+func TestDiscoverPathDirsHonoursTheConfiguredList(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	t.Setenv(PathDirsEnv, first+string(os.PathListSeparator)+second)
+
+	dirs := DiscoverPathDirs()
+
+	if len(dirs) != 2 || dirs[0] != first || dirs[1] != second {
+		t.Fatalf("DiscoverPathDirs = %v, want exactly the configured list in order", dirs)
+	}
+}
+
+// A directory that is not there is not worth putting on PATH, configured or
+// not, and an empty entry from a trailing separator is not a directory.
+func TestDiscoverPathDirsSkipsWhatIsNotThere(t *testing.T) {
+	real := t.TempDir()
+	t.Setenv(PathDirsEnv, real+string(os.PathListSeparator)+"/nonexistent-"+t.Name()+string(os.PathListSeparator))
+
+	dirs := DiscoverPathDirs()
+
+	if len(dirs) != 1 || dirs[0] != real {
+		t.Fatalf("DiscoverPathDirs = %v, want only the directory that exists", dirs)
+	}
+}
+
+// An unset variable leaves the built-in list in charge, which is what every
+// machine that has never heard of this variable relies on.
+func TestDiscoverPathDirsFallsBackToTheBuiltInList(t *testing.T) {
+	t.Setenv(PathDirsEnv, "")
+
+	// Whatever this machine has, every entry must come from the built-in list.
+	home, _ := os.UserHomeDir()
+	allowed := map[string]bool{}
+	for _, dir := range candidatePathDirs {
+		if strings.HasPrefix(dir, "~/") && home != "" {
+			dir = filepath.Join(home, strings.TrimPrefix(dir, "~/"))
+		}
+		allowed[dir] = true
+	}
+	for _, got := range DiscoverPathDirs() {
+		if !allowed[got] {
+			t.Errorf("DiscoverPathDirs returned %q, which is not in the built-in list", got)
+		}
+	}
+}

@@ -170,6 +170,22 @@ and back on the way out.
 
 ## Things worth knowing
 
+**Switching sessions through the login manager does not work.** The obvious
+design is to tell the display manager to start a different session, and every
+route to that ends at a greeter: the old session has to end for the new one to
+begin, and ending it is what brings up the password prompt -- on the desk
+monitor, while you are on the sofa. The hosting session exists because of this.
+One process is started at login, and it runs whichever compositor is wanted;
+the login manager never sees a session end, so nothing asks for a password and
+no autologin setting has to be rewritten.
+
+**WirePlumber will not move the sound for you.** Its policy moves *streams*
+between devices, not the default sink, and it restores the sink it remembers
+whenever a device appears or disappears -- which is exactly what a session
+switch does. The default sink has to be set explicitly, and the profile the
+card is in has to be set first, or the HDMI output does not exist to be
+selected yet.
+
 **Resolution and refresh are not set here.** gamescope takes the connector's
 preferred mode, and Steam changes it per game from its own settings. A
 resolution recorded by hyprmoncfg would be a second, disagreeing source of
