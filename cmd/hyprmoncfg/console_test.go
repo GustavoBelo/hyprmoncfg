@@ -13,6 +13,46 @@ import (
 	"github.com/crmne/hyprmoncfg/internal/console"
 )
 
+// gamescopeEntry and desktopEntry are the two session files every check in this
+// file turns on. The gamescope session is recognised by the DesktopNames it
+// declares, never by a package name or a path, so that is what has to be right.
+const (
+	gamescopeEntry = `[Desktop Entry]
+Name=Gamescope
+Exec=/usr/bin/gamescope-session
+DesktopNames=gamescope
+Type=Application
+`
+	desktopEntry = `[Desktop Entry]
+Name=Hyprland
+Exec=Hyprland
+DesktopNames=Hyprland
+Type=Application
+`
+)
+
+// sessionFixture points session discovery at a directory of .desktop files the
+// test wrote, so what the doctor sees does not depend on what happens to be
+// installed on the machine running it. Two of the real directories are absolute
+// system paths, and this machine has sessions in them.
+//
+// Called with no files it is a machine with no sessions at all, which is what
+// the refusal paths need.
+func sessionFixture(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", t.TempDir())
+	original := console.SessionRoots
+	console.SessionRoots = []string{dir}
+	t.Cleanup(func() { console.SessionRoots = original })
+	return dir
+}
+
 // The status line is the only place a user sees whether a controller will close
 // their desktop. "true" and "false" read as debug output; "on" and "off" read as
 // a setting.

@@ -50,6 +50,14 @@ type Entry struct {
 // File is the entry's basename, which is how a login manager names a session.
 func (e Entry) File() string { return filepath.Base(e.Path) }
 
+// SessionRoots are the system directories session entries are packaged into.
+//
+// It is a variable so a test can point discovery at a fixture. These paths are
+// absolute, so a test asserting that some session is absent would otherwise
+// pass or fail depending on what happens to be installed on the machine running
+// it -- which is not a property of the code under test.
+var SessionRoots = []string{"/usr/local/share/wayland-sessions", "/usr/share/wayland-sessions"}
+
 // SessionDirs lists where session entries live, in the order a login manager
 // reads them: a local override before the packaged one.
 func SessionDirs() []string {
@@ -57,7 +65,7 @@ func SessionDirs() []string {
 	if home, err := os.UserHomeDir(); err == nil {
 		dirs = append(dirs, filepath.Join(home, ".local", "share", "wayland-sessions"))
 	}
-	return append(dirs, "/usr/local/share/wayland-sessions", "/usr/share/wayland-sessions")
+	return append(dirs, SessionRoots...)
 }
 
 // FindEntries reads every session entry in the given directories.

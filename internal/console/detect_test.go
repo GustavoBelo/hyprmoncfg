@@ -123,6 +123,50 @@ func TestParseExecKeepsEmptyQuotedArguments(t *testing.T) {
 	}
 }
 
+// A session installed under $HOME wins over the packaged one of the same name,
+// because that is the one the login manager itself reads first.
+func TestSessionDirsReadsTheLocalOverrideFirst(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	withSessionRoots(t, "/packaged")
+
+	got := SessionDirs()
+	want := []string{filepath.Join(home, ".local", "share", "wayland-sessions"), "/packaged"}
+	if len(got) != len(want) {
+		t.Fatalf("SessionDirs = %q, want %q", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("SessionDirs = %q, want %q", got, want)
+		}
+	}
+}
+
+// The packaged roots are the seam: without it every test that asks what
+// sessions this machine has is really asking what the machine it runs on has
+// installed.
+func TestSessionDirsFollowsTheConfiguredRoots(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	withSessionRoots(t, "/one", "/two")
+
+	got := SessionDirs()
+	if len(got) != 3 || got[1] != "/one" || got[2] != "/two" {
+		t.Errorf("SessionDirs = %q, want the configured roots after the home one", got)
+	}
+	for _, dir := range got {
+		if dir == "/usr/share/wayland-sessions" {
+			t.Error("SessionDirs still reads the real system directory")
+		}
+	}
+}
+
+func withSessionRoots(t *testing.T, roots ...string) {
+	t.Helper()
+	original := SessionRoots
+	SessionRoots = roots
+	t.Cleanup(func() { SessionRoots = original })
+}
+
 func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
