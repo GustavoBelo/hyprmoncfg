@@ -19,6 +19,29 @@ func TestClosestSharpFindsNearbySharpScale(t *testing.T) {
 	}
 }
 
+func TestClosestSharpUsesHyprlandScaleGrid(t *testing.T) {
+	got, ok := ClosestSharp(2560, 1600, 1.5)
+	if !ok {
+		t.Fatal("expected closest sharp scale")
+	}
+	if got != 1.6 {
+		t.Fatalf("expected 2560x1600 at 1.5 to suggest 1.6, got %v", got)
+	}
+}
+
+func TestSharpMatchesHyprlandScaleRules(t *testing.T) {
+	for _, scale := range []float64{1, 1.28, 1.33333, 1.6, 2.66667} {
+		if !Sharp(2560, 1600, scale) {
+			t.Errorf("expected %v to be sharp", scale)
+		}
+	}
+	for _, scale := range []float64{1.42857, 1.77778, 2.85714} {
+		if Sharp(2560, 1600, scale) {
+			t.Errorf("expected %v to be rejected", scale)
+		}
+	}
+}
+
 func TestRoundLeavesNonSharpScaleUnchanged(t *testing.T) {
 	got := Round(1.37)
 	if got != 1.37 {

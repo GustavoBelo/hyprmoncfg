@@ -5,6 +5,7 @@ dist/
 *.tmp
 *.swp
 .DS_Store
+.claude/
 hyprmoncfg
 hyprmoncfgd
 # The patterns above also match the cmd/hyprmoncfg and cmd/hyprmoncfgd

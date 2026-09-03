@@ -40,6 +40,8 @@ const (
 	numericInputICC
 	numericInputFloat
 	numericInputInt
+	numericInputWorkspaceCount
+	numericInputWorkspaceGroupSize
 )
 
 type numericInputState struct {
@@ -407,6 +409,10 @@ func (m *Model) openNumericInput(kind numericInputKind, outputIndex int, title s
 	input.CharLimit = 12
 	if kind == numericInputICC {
 		input.CharLimit = 256
+	} else if kind == numericInputWorkspaceCount || kind == numericInputWorkspaceGroupSize {
+		// Match the native int used by the profile model, without imposing a
+		// smaller UI policy limit.
+		input.CharLimit = len(strconv.Itoa(int(^uint(0) >> 1)))
 	}
 	input.Width = m.numericInputWidthFor(kind)
 	input.TextStyle = m.styles.value
@@ -1107,6 +1113,9 @@ func (m *Model) commitNumericInput() tea.Cmd {
 		m.mode = modeMain
 		return nil
 	}
+	if m.input.Kind == numericInputWorkspaceCount || m.input.Kind == numericInputWorkspaceGroupSize {
+		return m.commitWorkspaceNumericInput()
+	}
 	if m.input.OutputIndex < 0 || m.input.OutputIndex >= len(m.editOutputs) {
 		m.input = nil
 		m.mode = modeMain
@@ -1179,6 +1188,30 @@ func (m *Model) commitNumericInput() tea.Cmd {
 	m.reflowAfterResize(m.input.OutputIndex, oldWidth, oldHeight)
 	m.layoutChanged()
 	m.setStatusOK(status)
+	m.input = nil
+	m.mode = modeMain
+	return nil
+}
+
+func (m *Model) commitWorkspaceNumericInput() tea.Cmd {
+	value, err := strconv.Atoi(strings.TrimSpace(m.input.Input.Value()))
+	if err != nil || value < 1 {
+		m.input.Input.Err = fmt.Errorf("must be a positive integer")
+		return nil
+	}
+
+	if m.input.Kind == numericInputWorkspaceCount {
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			m.resizeManualWorkspaceRules(value)
+		}
+		m.workspaceEdit.MaxWorkspaces = value
+		m.setStatusOK(fmt.Sprintf("Workspace count set to %d", value))
+	} else {
+		m.workspaceEdit.GroupSize = value
+		m.workspaceEdit.LastSequentialGroupSize = value
+		m.setStatusOK(fmt.Sprintf("Workspace group size set to %d", value))
+	}
+	m.markDirty()
 	m.input = nil
 	m.mode = modeMain
 	return nil
@@ -1396,31 +1429,41 @@ func (m Model) updateWorkspaceMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	inner := settingsRect.inner(m.styles.activePane)
-	fieldRow := msg.Y - inner.y
+	if msg.Action == tea.MouseActionPress {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.moveWorkspaceSelection(-3, false)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.moveWorkspaceSelection(3, false)
+			return m, nil
+		}
+	}
+
+	scrollOffset := m.workspaceSettingsScrollOffset(inner.h)
+	fieldRow := msg.Y - inner.y + scrollOffset
 	if fieldRow >= 0 && fieldRow < len(workspaceFields) && msg.Action == tea.MouseActionPress {
 		m.workspaceEdit.SelectedField = fieldRow
 		switch msg.Button {
 		case tea.MouseButtonLeft:
 			m.adjustWorkspaceField(1)
 			m.markDirty()
-		case tea.MouseButtonWheelUp:
-			m.adjustWorkspaceField(1)
-			m.markDirty()
-		case tea.MouseButtonWheelDown:
-			m.adjustWorkspaceField(-1)
-			m.markDirty()
 		}
 		return m, nil
 	}
 
-	// Monitor-order items start after the fields, a blank, and their header.
+	// Strategy-specific items start after the fields, a blank, and their header.
 	orderStart := inner.y + len(workspaceFields) + 2
-	if msg.Action == tea.MouseActionPress && msg.Y >= orderStart {
-		row := msg.Y - orderStart
-		if row >= 0 && row < len(m.workspaceEdit.MonitorOrder) {
+	visualY := msg.Y + scrollOffset
+	if msg.Action == tea.MouseActionPress && visualY >= orderStart {
+		row := visualY - orderStart
+		itemCount := len(m.workspaceEdit.MonitorOrder)
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			itemCount = len(m.workspaceEdit.Rules)
+		}
+		if row >= 0 && row < itemCount {
 			m.workspaceEdit.SelectedField = len(workspaceFields) + row
 			m.workspaceEdit.SelectedOrder = row
-			m.markDirty()
 		}
 	}
 	return m, nil
@@ -1497,13 +1540,11 @@ func (m Model) workspaceSettingsRect() hitRect {
 
 func (m Model) workspaceSettingsLineCount() int {
 	count := len(workspaceFields) + 2
-	if len(m.workspaceEdit.MonitorOrder) == 0 {
+	itemCount := m.workspaceListItemCount()
+	if itemCount == 0 {
 		count++
 	} else {
-		count += len(m.workspaceEdit.MonitorOrder)
-	}
-	if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual && len(m.workspaceEdit.Rules) > 0 {
-		count += 3
+		count += itemCount
 	}
 	return count
 }

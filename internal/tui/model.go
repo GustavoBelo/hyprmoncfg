@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -266,6 +267,7 @@ type workspaceEditor struct {
 	LastSequentialGroupSize int
 	MonitorOrder            []string
 	Rules                   []profile.WorkspaceRule
+	ManualRulesInitialized  bool
 	SelectedField           int
 	SelectedOrder           int
 }
@@ -724,6 +726,13 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "3":
 		m.tab = tabWorkspaces
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual && !m.workspaceEdit.ManualRulesInitialized {
+			m.workspaceEdit.Rules = m.materializeManualWorkspaceRules()
+			m.workspaceEdit.ManualRulesInitialized = len(m.workspaceEdit.Rules) > 0
+			if m.workspaceEdit.ManualRulesInitialized {
+				m.markDirty()
+			}
+		}
 		return m, nil
 	case "4":
 		if !m.consoleAvailable() {
@@ -945,39 +954,78 @@ func (m Model) toggleProfileAutomatic() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateWorkspaceKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	totalItems := len(workspaceFields) + len(m.workspaceEdit.MonitorOrder)
-	inOrder := m.workspaceEdit.SelectedField >= len(workspaceFields)
+	inItems := m.workspaceEdit.SelectedField >= len(workspaceFields)
+	if inItems {
+		m.workspaceEdit.SelectedOrder = m.workspaceEdit.SelectedField - len(workspaceFields)
+	}
 
 	switch msg.String() {
 	case "up":
-		m.workspaceEdit.SelectedField = clampIndex(m.workspaceEdit.SelectedField-1, totalItems)
+		m.moveWorkspaceSelection(-1, true)
+		return m, nil
 	case "down":
-		m.workspaceEdit.SelectedField = clampIndex(m.workspaceEdit.SelectedField+1, totalItems)
+		m.moveWorkspaceSelection(1, true)
+		return m, nil
+	case "pgup":
+		m.moveWorkspaceSelection(-m.workspacePageStep(), false)
+		return m, nil
+	case "pgdown":
+		m.moveWorkspaceSelection(m.workspacePageStep(), false)
+		return m, nil
+	case "home":
+		m.setWorkspaceSelection(0)
+		return m, nil
+	case "end":
+		m.setWorkspaceSelection(m.workspaceItemCount() - 1)
+		return m, nil
 	case "left", "h", "-", "_":
-		if inOrder {
-			m.moveWorkspaceOrder(-1)
+		if inItems {
+			m.adjustWorkspaceItem(-1)
 		} else {
 			m.adjustWorkspaceField(-1)
 		}
 	case "right", "l", "+", "=":
-		if inOrder {
-			m.moveWorkspaceOrder(1)
+		if inItems {
+			m.adjustWorkspaceItem(1)
 		} else {
 			m.adjustWorkspaceField(1)
 		}
-	case " ", "enter":
-		if inOrder {
-			m.moveWorkspaceOrder(1)
+	case "enter":
+		if !inItems {
+			switch m.workspaceEdit.SelectedField {
+			case 2:
+				return m, m.openNumericInput(
+					numericInputWorkspaceCount,
+					-1,
+					"Set Workspace Count",
+					"Type any positive number. Enter applies. Esc cancels.",
+					strconv.Itoa(m.workspaceEdit.MaxWorkspaces),
+				)
+			case 3:
+				if m.workspaceEdit.Strategy == profile.WorkspaceStrategySequential {
+					return m, m.openNumericInput(
+						numericInputWorkspaceGroupSize,
+						-1,
+						"Set Workspace Group Size",
+						"Type any positive number. Enter applies. Esc cancels.",
+						strconv.Itoa(m.workspaceEdit.GroupSize),
+					)
+				}
+			}
+		}
+		if inItems {
+			m.adjustWorkspaceItem(1)
+		} else {
+			m.adjustWorkspaceField(1)
+		}
+	case " ":
+		if inItems {
+			m.adjustWorkspaceItem(1)
 		} else {
 			m.adjustWorkspaceField(1)
 		}
 	default:
 		return m, nil
-	}
-
-	// Keep SelectedOrder in sync for monitor order operations
-	if m.workspaceEdit.SelectedField >= len(workspaceFields) {
-		m.workspaceEdit.SelectedOrder = m.workspaceEdit.SelectedField - len(workspaceFields)
 	}
 
 	m.markDirty()
@@ -1590,22 +1638,25 @@ func (m Model) renderProfileDetailPanes(summaries []profileMatchSummary, width, 
 }
 
 func (m Model) renderWorkspaceView(height int) string {
-	settings := m.workspaceSettingsLines()
 	leftStyle := m.paneStyle(paneToneFocused)
 
 	if m.terminalWidth() < 96 {
 		// Compact: stack vertically, settings get enough room, preview gets the rest
 		width := m.terminalWidth() - m.styles.app.GetHorizontalFrameSize()
-		settingsHeight := clampInt(len(settings)+2, 6, (height*2)/3)
+		settingsHeight := clampInt(m.workspaceSettingsLineCount()+2, 6, (height*2)/3)
 		innerW := max(1, width-leftStyle.GetHorizontalFrameSize())
-		leftBody := fitBlock(strings.Join(settings, "\n"), innerW, max(1, settingsHeight-leftStyle.GetVerticalFrameSize()))
+		innerH := max(1, settingsHeight-leftStyle.GetVerticalFrameSize())
+		settings := m.workspaceSettingsVisibleLines(innerH)
+		leftBody := fitBlock(strings.Join(settings, "\n"), innerW, innerH)
 		left := m.renderTitledPane(paneToneFocused, "Workspace Planner", leftBody, width)
 		right := m.renderWorkspacePreviewPanes(width, max(3, height-settingsHeight))
 		return lipgloss.JoinVertical(lipgloss.Left, left, right)
 	}
 
 	leftWidth, rightWidth := m.sidePaneWidths(35)
-	leftBody := fitBlock(strings.Join(settings, "\n"), max(1, leftWidth-leftStyle.GetHorizontalFrameSize()), max(1, height-leftStyle.GetVerticalFrameSize()))
+	innerH := max(1, height-leftStyle.GetVerticalFrameSize())
+	settings := m.workspaceSettingsVisibleLines(innerH)
+	leftBody := fitBlock(strings.Join(settings, "\n"), max(1, leftWidth-leftStyle.GetHorizontalFrameSize()), innerH)
 	left := m.renderTitledPane(paneToneFocused, "Workspace Planner", leftBody, leftWidth)
 	right := m.renderWorkspacePreviewPanes(rightWidth, height)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", paneGapWidth), right)
@@ -1614,45 +1665,82 @@ func (m Model) renderWorkspaceView(height int) string {
 // workspaceSettingsLines renders the planner form. Its row order is the one
 // workspaceSettingsRect relies on for mouse hits, so keep them in step.
 func (m Model) workspaceSettingsLines() []string {
-	lines := make([]string, 0, len(workspaceFields)+8)
+	lines := make([]string, 0, m.workspaceSettingsLineCount())
+	for line := 0; line < m.workspaceSettingsLineCount(); line++ {
+		lines = append(lines, m.workspaceSettingsLine(line))
+	}
+	return lines
+}
 
-	for idx, field := range workspaceFields {
-		value := m.workspaceFieldValue(idx)
+func (m Model) workspaceSettingsLine(line int) string {
+	if line >= 0 && line < len(workspaceFields) {
+		value := m.workspaceFieldValue(line)
 		prefix := "  "
-		if idx == m.workspaceEdit.SelectedField {
+		if line == m.workspaceEdit.SelectedField {
 			prefix = m.styles.statusOK.Render("> ")
 			value = m.styles.focused.Render(value)
 		} else {
 			value = m.styles.value.Render(value)
 		}
-		lines = append(lines, prefix+m.styles.label.Render(fmt.Sprintf("%-14s", field))+" "+value)
+		return prefix + m.styles.label.Render(fmt.Sprintf("%-14s", workspaceFields[line])) + " " + value
 	}
-
-	lines = append(lines, "")
-	lines = append(lines, m.styles.label.Render("Monitor order")+"  "+m.styles.subtle.Render("←/→ reorders"))
-	if len(m.workspaceEdit.MonitorOrder) == 0 {
-		lines = append(lines, m.styles.subtle.Render("  (none)"))
-	} else {
-		for idx, key := range m.workspaceEdit.MonitorOrder {
-			label := m.outputLabelForKey(key)
-			prefix := "  "
-			orderField := len(workspaceFields) + idx
-			if orderField == m.workspaceEdit.SelectedField {
-				prefix = m.styles.statusOK.Render("> ")
-				label = m.styles.focused.Render(label)
-			} else {
-				label = m.styles.value.Render(label)
-			}
-			lines = append(lines, fmt.Sprintf("%s%s %s", prefix, m.styles.subtle.Render(fmt.Sprintf("%d.", idx+1)), label))
+	if line == len(workspaceFields) {
+		return ""
+	}
+	if line == len(workspaceFields)+1 {
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			return m.styles.label.Render("Workspace → display") + "  " + m.styles.subtle.Render("←/→ assigns")
 		}
+		return m.styles.label.Render("Monitor order") + "  " + m.styles.subtle.Render("←/→ reorders")
 	}
 
-	if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual && len(m.workspaceEdit.Rules) > 0 {
-		lines = append(lines, "")
-		lines = append(lines, m.styles.subtle.Render("Manual rules imported from current state or saved profile."))
-		lines = append(lines, m.styles.subtle.Render("Switch strategy to sequential or interleave to regenerate them."))
+	item := line - len(workspaceFields) - 2
+	if item < 0 || item >= m.workspaceListItemCount() {
+		return m.styles.subtle.Render("  (none)")
+	}
+	if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+		rule := m.workspaceEdit.Rules[item]
+		label := m.manualWorkspaceRuleOutputLabel(rule)
+		prefix := "  "
+		if len(workspaceFields)+item == m.workspaceEdit.SelectedField {
+			prefix = m.styles.statusOK.Render("> ")
+			label = m.styles.focused.Render(label)
+		} else {
+			label = m.styles.value.Render(label)
+		}
+		workspace := m.styles.subtle.Render(fmt.Sprintf("%-14s", "Workspace "+blankFallback(rule.Workspace, "?")))
+		return prefix + workspace + " " + label
 	}
 
+	label := m.outputLabelForKey(m.workspaceEdit.MonitorOrder[item])
+	prefix := "  "
+	if len(workspaceFields)+item == m.workspaceEdit.SelectedField {
+		prefix = m.styles.statusOK.Render("> ")
+		label = m.styles.focused.Render(label)
+	} else {
+		label = m.styles.value.Render(label)
+	}
+	return fmt.Sprintf("%s%s %s", prefix, m.styles.subtle.Render(fmt.Sprintf("%d.", item+1)), label)
+}
+
+func (m Model) workspaceSelectedLine() int {
+	if m.workspaceEdit.SelectedField < len(workspaceFields) {
+		return m.workspaceEdit.SelectedField
+	}
+	return len(workspaceFields) + 2 + m.workspaceEdit.SelectedField - len(workspaceFields)
+}
+
+func (m Model) workspaceSettingsScrollOffset(height int) int {
+	return inspectorScrollOffset(m.workspaceSettingsLineCount(), m.workspaceSelectedLine(), height)
+}
+
+func (m Model) workspaceSettingsVisibleLines(height int) []string {
+	offset := m.workspaceSettingsScrollOffset(height)
+	end := min(m.workspaceSettingsLineCount(), offset+max(1, height))
+	lines := make([]string, 0, max(0, end-offset))
+	for line := offset; line < end; line++ {
+		lines = append(lines, m.workspaceSettingsLine(line))
+	}
 	return lines
 }
 
@@ -1668,7 +1756,10 @@ func (m Model) renderWorkspacePreviewPanes(width, height int) string {
 		settings.Enabled = true
 	}
 	outputs := m.currentProfileOutputs()
-	rules := m.workspacePlan(outputs, settings)
+	rules := settings.Rules
+	if settings.Strategy != profile.WorkspaceStrategyManual && settings.Strategy != "" {
+		rules = m.workspacePlan(outputs, settings)
+	}
 
 	planLines := make([]string, 0, len(outputs)+2)
 	if disabled {
@@ -2007,7 +2098,7 @@ func (m *Model) syncSelections() {
 	m.selectedOutput = clampIndex(m.selectedOutput, len(m.editOutputs))
 	m.selectedProfile = clampIndex(m.selectedProfile, len(m.profiles))
 	m.inspectorField = clampIndex(m.inspectorField, len(layoutFields))
-	workspaceItems := len(workspaceFields) + len(m.workspaceEdit.MonitorOrder)
+	workspaceItems := m.workspaceItemCount()
 	m.workspaceEdit.SelectedField = clampIndex(m.workspaceEdit.SelectedField, workspaceItems)
 	if m.workspaceEdit.SelectedField >= len(workspaceFields) {
 		m.workspaceEdit.SelectedOrder = m.workspaceEdit.SelectedField - len(workspaceFields)
@@ -2442,13 +2533,215 @@ func (m *Model) adjustWorkspaceField(delta int) {
 			}
 			m.workspaceEdit.GroupSize = m.workspaceEdit.LastSequentialGroupSize
 		}
+		if next == profile.WorkspaceStrategyManual && !m.workspaceEdit.ManualRulesInitialized {
+			m.workspaceEdit.Rules = m.materializeManualWorkspaceRules()
+			m.workspaceEdit.ManualRulesInitialized = len(m.workspaceEdit.Rules) > 0
+		}
 		m.workspaceEdit.Strategy = next
 	case 2:
-		m.workspaceEdit.MaxWorkspaces = clampInt(m.workspaceEdit.MaxWorkspaces+delta, 1, 30)
+		next := adjustPositiveInt(m.workspaceEdit.MaxWorkspaces, delta)
+		if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+			m.resizeManualWorkspaceRules(next)
+		}
+		m.workspaceEdit.MaxWorkspaces = next
 	case 3:
-		m.workspaceEdit.GroupSize = clampInt(m.workspaceEdit.GroupSize+delta, 1, 10)
+		if m.workspaceEdit.Strategy != profile.WorkspaceStrategySequential {
+			return
+		}
+		m.workspaceEdit.GroupSize = adjustPositiveInt(m.workspaceEdit.GroupSize, delta)
 		m.workspaceEdit.LastSequentialGroupSize = m.workspaceEdit.GroupSize
 	}
+}
+
+func (m Model) workspaceItemCount() int {
+	return len(workspaceFields) + m.workspaceListItemCount()
+}
+
+func (m Model) workspaceListItemCount() int {
+	if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+		return len(m.workspaceEdit.Rules)
+	}
+	return len(m.workspaceEdit.MonitorOrder)
+}
+
+func (m *Model) setWorkspaceSelection(selected int) {
+	total := m.workspaceItemCount()
+	if total <= 0 {
+		m.workspaceEdit.SelectedField = 0
+		m.workspaceEdit.SelectedOrder = 0
+		return
+	}
+	m.workspaceEdit.SelectedField = clampInt(selected, 0, total-1)
+	if m.workspaceEdit.SelectedField >= len(workspaceFields) {
+		m.workspaceEdit.SelectedOrder = m.workspaceEdit.SelectedField - len(workspaceFields)
+	}
+}
+
+func (m *Model) moveWorkspaceSelection(delta int, wrap bool) {
+	total := m.workspaceItemCount()
+	if total <= 0 {
+		return
+	}
+	next := m.workspaceEdit.SelectedField + delta
+	if wrap {
+		next = wrapIndex(next, total)
+	}
+	m.setWorkspaceSelection(next)
+}
+
+func (m Model) workspacePageStep() int {
+	inner := m.workspaceSettingsRect().inner(m.styles.activePane)
+	return max(1, inner.h-2)
+}
+
+func (m *Model) adjustWorkspaceItem(delta int) {
+	if m.workspaceEdit.Strategy == profile.WorkspaceStrategyManual {
+		m.moveManualWorkspaceRule(delta)
+		return
+	}
+	m.moveWorkspaceOrder(delta)
+}
+
+func (m Model) materializeManualWorkspaceRules() []profile.WorkspaceRule {
+	settings := m.workspaceEdit.settings()
+	settings.Enabled = true
+	if settings.Strategy == profile.WorkspaceStrategyManual || settings.Strategy == "" {
+		settings.Strategy = profile.WorkspaceStrategySequential
+	}
+	p := profile.Profile{Outputs: m.currentProfileOutputs(), Workspaces: settings}
+	return normalizeManualWorkspaceDefaults(profile.ResolveWorkspaceRules(p, nil))
+}
+
+func (m Model) manualWorkspaceOutputKeys() []string {
+	available := make(map[string]bool, len(m.editOutputs))
+	for _, output := range m.editOutputs {
+		if output.Enabled && output.MirrorOf == "" {
+			available[output.Key] = true
+		}
+	}
+
+	keys := make([]string, 0, len(available))
+	seen := make(map[string]bool, len(available))
+	for _, key := range m.workspaceEdit.MonitorOrder {
+		if available[key] && !seen[key] {
+			keys = append(keys, key)
+			seen[key] = true
+		}
+	}
+	for _, output := range m.editOutputs {
+		if available[output.Key] && !seen[output.Key] {
+			keys = append(keys, output.Key)
+			seen[output.Key] = true
+		}
+	}
+	return keys
+}
+
+func (m Model) manualWorkspaceRuleOutputLabel(rule profile.WorkspaceRule) string {
+	if rule.OutputKey != "" {
+		if label := m.outputLabelForKey(rule.OutputKey); label != rule.OutputKey {
+			return label
+		}
+	}
+	return blankFallback(rule.OutputName, rule.OutputKey)
+}
+
+func (m *Model) moveManualWorkspaceRule(delta int) {
+	idx := m.workspaceEdit.SelectedOrder
+	if idx < 0 || idx >= len(m.workspaceEdit.Rules) {
+		return
+	}
+	keys := m.manualWorkspaceOutputKeys()
+	if len(keys) == 0 {
+		return
+	}
+
+	rule := &m.workspaceEdit.Rules[idx]
+	current := -1
+	for pos, key := range keys {
+		if key == rule.OutputKey {
+			current = pos
+			break
+		}
+	}
+	if current < 0 {
+		current = 0
+		if delta < 0 {
+			current = len(keys) - 1
+		}
+	} else {
+		current = wrapIndex(current+delta, len(keys))
+	}
+
+	rule.OutputKey = keys[current]
+	rule.OutputName = outputConnector(keys[current], m.currentProfileOutputs())
+	m.workspaceEdit.Rules = normalizeManualWorkspaceDefaults(m.workspaceEdit.Rules)
+}
+
+func (m *Model) resizeManualWorkspaceRules(maximum int) {
+	byWorkspace := make(map[string]profile.WorkspaceRule, len(m.workspaceEdit.Rules))
+	named := make([]profile.WorkspaceRule, 0, len(m.workspaceEdit.Rules))
+	for _, rule := range m.workspaceEdit.Rules {
+		number, err := strconv.Atoi(strings.TrimSpace(rule.Workspace))
+		if err != nil || number < 1 {
+			named = append(named, rule)
+			continue
+		}
+		if number <= maximum {
+			byWorkspace[strconv.Itoa(number)] = rule
+		}
+	}
+
+	keys := m.manualWorkspaceOutputKeys()
+	rules := make([]profile.WorkspaceRule, 0, maximum+len(named))
+	for number := 1; number <= maximum; number++ {
+		workspace := strconv.Itoa(number)
+		rule, ok := byWorkspace[workspace]
+		if !ok {
+			rule.Workspace = workspace
+			if len(keys) > 0 {
+				rule.OutputKey = keys[0]
+				rule.OutputName = outputConnector(keys[0], m.currentProfileOutputs())
+			}
+		}
+		rules = append(rules, rule)
+	}
+	rules = append(rules, named...)
+	m.workspaceEdit.Rules = normalizeManualWorkspaceDefaults(rules)
+}
+
+func normalizeManualWorkspaceDefaults(rules []profile.WorkspaceRule) []profile.WorkspaceRule {
+	normalized := append([]profile.WorkspaceRule(nil), rules...)
+	sort.SliceStable(normalized, func(i, j int) bool {
+		left, leftErr := strconv.Atoi(strings.TrimSpace(normalized[i].Workspace))
+		right, rightErr := strconv.Atoi(strings.TrimSpace(normalized[j].Workspace))
+		if leftErr == nil && rightErr == nil {
+			return left < right
+		}
+		if leftErr == nil {
+			return true
+		}
+		if rightErr == nil {
+			return false
+		}
+		return normalized[i].Workspace < normalized[j].Workspace
+	})
+
+	seen := make(map[string]bool, len(normalized))
+	for idx := range normalized {
+		target := normalized[idx].OutputKey
+		if target == "" {
+			target = normalized[idx].OutputName
+		}
+		normalized[idx].Default = false
+		normalized[idx].Persistent = false
+		if target != "" && !seen[target] {
+			normalized[idx].Default = true
+			normalized[idx].Persistent = true
+			seen[target] = true
+		}
+	}
+	return normalized
 }
 
 func (m *Model) moveWorkspaceOrder(delta int) {
@@ -3217,6 +3510,9 @@ func (m Model) workspaceFieldValue(field int) string {
 	case 2:
 		return fmt.Sprintf("%d", m.workspaceEdit.MaxWorkspaces)
 	case 3:
+		if m.workspaceEdit.Strategy != profile.WorkspaceStrategySequential {
+			return "—"
+		}
 		return fmt.Sprintf("%d", m.workspaceEdit.GroupSize)
 	default:
 		return ""
@@ -3395,6 +3691,11 @@ func workspaceEditorFromSettings(settings profile.WorkspaceSettings, outputs []e
 	if maxWorkspaces <= 0 {
 		maxWorkspaces = 9
 	}
+	if strategy == profile.WorkspaceStrategyManual {
+		if inferred := numericManualWorkspaceMaximum(settings.Rules); inferred > 0 {
+			maxWorkspaces = inferred
+		}
+	}
 	groupSize := settings.GroupSize
 	if groupSize <= 0 {
 		groupSize = defaultWorkspaceGroupSize
@@ -3412,7 +3713,19 @@ func workspaceEditorFromSettings(settings profile.WorkspaceSettings, outputs []e
 		LastSequentialGroupSize: lastSequentialGroupSize,
 		MonitorOrder:            normalized,
 		Rules:                   append([]profile.WorkspaceRule(nil), settings.Rules...),
+		ManualRulesInitialized:  strategy == profile.WorkspaceStrategyManual && len(settings.Rules) > 0,
 	}
+}
+
+func numericManualWorkspaceMaximum(rules []profile.WorkspaceRule) int {
+	maximum := 0
+	for _, rule := range rules {
+		value, err := strconv.Atoi(strings.TrimSpace(rule.Workspace))
+		if err == nil && value > maximum {
+			maximum = value
+		}
+	}
+	return maximum
 }
 
 func workspaceOrderFromEditorRules(rules []profile.WorkspaceRule, outputs []editableOutput) []string {
@@ -4187,6 +4500,17 @@ func clampInt(value, minValue, maxValue int) int {
 		return maxValue
 	}
 	return value
+}
+
+func adjustPositiveInt(value, delta int) int {
+	maxInt := int(^uint(0) >> 1)
+	if delta > 0 && value > maxInt-delta {
+		return maxInt
+	}
+	if delta < 0 && value < 1-delta {
+		return 1
+	}
+	return max(1, value+delta)
 }
 
 func min(a, b int) int {
