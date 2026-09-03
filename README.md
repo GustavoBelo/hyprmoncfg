@@ -54,7 +54,19 @@ hyprmoncfg is a visual multi-monitor layout editor and automatic profile switche
 
 ## Install
 
-This fork is not packaged anywhere. Console Mode only exists here, so build it:
+No distribution packages this fork — Console Mode only exists here — but every
+[release](https://github.com/GustavoBelo/hyprmoncfg/releases) ships prebuilt
+Linux binaries for amd64 and arm64:
+
+```bash
+version=1.18.0
+curl -fsSL "https://github.com/GustavoBelo/hyprmoncfg/releases/download/v$version/hyprmoncfg_${version}_linux_amd64.tar.gz" \
+  | tar -xz hyprmoncfg hyprmoncfgd
+install -Dm755 hyprmoncfg  ~/.local/bin/hyprmoncfg
+install -Dm755 hyprmoncfgd ~/.local/bin/hyprmoncfgd
+```
+
+Or build it:
 
 ```bash
 git clone https://github.com/GustavoBelo/hyprmoncfg.git
@@ -64,6 +76,9 @@ go build -o bin/hyprmoncfgd ./cmd/hyprmoncfgd
 install -Dm755 bin/hyprmoncfg  ~/.local/bin/hyprmoncfg
 install -Dm755 bin/hyprmoncfgd ~/.local/bin/hyprmoncfgd
 ```
+
+A plain `go build` reports its version as `dev`; [PACKAGING.md](PACKAGING.md)
+has the flags that stamp a real one.
 
 <details>
 <summary>Packages for upstream hyprmoncfg — everything below except Console Mode</summary>
@@ -214,14 +229,18 @@ leaves a machine that will not present a desktop.
 ### Using it
 
 Click **Console Mode** in the panel or the app launcher, press `Enter` on the
-Console page of the TUI, or:
+Console tab of the TUI, or:
 
 ```bash
+hyprmoncfg console status         # what it is set to do
 hyprmoncfg console enter          # warns, waits, hands over
 hyprmoncfg console leave          # ends the session from outside it
 hyprmoncfg console boot last      # start wherever you left off
 hyprmoncfg console trigger on     # a controller switching on starts a session
 ```
+
+The TUI's Console tab is `4`, and it appears only once a gamescope session is
+installed — a tab whose every action would fail is worse than no tab.
 
 Come back from Big Picture: **Steam → Power → Switch to Desktop**.
 
@@ -230,8 +249,10 @@ called off — **click the notification** and the desktop stays. Servers that dr
 action buttons get a **Cancel** button too; most, Omarchy's own included, draw
 none, so the click on the body is the answer that always works. Ten seconds when
 you asked for it, twenty when a controller did, because that one is as often an
-accident as an intention. `hyprmoncfg console cancel` also stops it, and so does
-switching the controller back off.
+accident as an intention. `hyprmoncfg console cancel` stops it from anywhere,
+including over ssh. Switching the controller back off stops it too, but only the
+entry that controller started: a session you asked for by hand is not something
+a pad going to sleep should call off.
 
 ### Worth knowing
 
@@ -334,6 +355,7 @@ You don't commit the generated `~/.config/hypr/hyprmoncfg-monitors.{conf,lua}`. 
 | Safe apply with revert | Yes | Yes | No | Partial (manual rollback) | No | No |
 | Hyprland 0.55 Lua config | Yes | No | No | No | Yes | N/A |
 | Include-chain verification | Yes | No | No | No | No | No |
+| Hand the machine to a gamescope session | Yes *(this fork)* | No | No | No | No | No |
 | Additional runtime dependencies | None | Python + GTK4 + libadwaita | UPower, D-Bus | None | Python + GTK3 | None |
 
 ## Docs
@@ -387,8 +409,9 @@ Console Mode is the whole difference. It was built by measuring, not by
 reasoning: the plan it started from was thrown away after a day on the real
 machine proved that switching sessions through a display manager cannot work,
 that nothing cleans the systemd user manager on the way out of a gamescope
-session, and that WirePlumber does not move sound to the TV on its own. What is
-in `PLAN.md` is the record of what each of those cost to find.
+session, and that WirePlumber does not move sound to the TV on its own. What
+each of those cost to find is written into the comments where the fix lives,
+which is the only place it cannot drift away from the code.
 
 ## License
 
