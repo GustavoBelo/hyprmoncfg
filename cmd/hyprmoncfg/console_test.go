@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -156,6 +157,25 @@ func TestConsoleLoggerAppends(t *testing.T) {
 	}
 	if !strings.HasSuffix(lines[0], "first") || !strings.HasSuffix(lines[1], "second") {
 		t.Errorf("log is out of order:\n%s", data)
+	}
+}
+
+// A command that writes to the process's own stdout cannot be tested, and
+// cannot be redirected by whoever called it. Everything below this line depends
+// on the output arriving through the command.
+func TestConsoleStatusWritesThroughTheCommand(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	dir := t.TempDir()
+
+	cmd := newConsoleStatusCmd(&dir)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("console status: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "Starts in:") {
+		t.Fatalf("nothing was captured through the command:\n%s", out.String())
 	}
 }
 

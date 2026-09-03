@@ -141,6 +141,7 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 		Short: "Close the desktop and start the console session",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
@@ -176,8 +177,8 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 			// -- and this process is about to be closed along with the rest of
 			// the desktop.
 			if enterViaDaemon(ctx, wait) {
-				fmt.Printf("Entering console mode closes your desktop session.\n")
-				fmt.Printf("Click the notification to cancel; `hyprmoncfg console cancel` stops it too.\n")
+				fmt.Fprintf(out, "Entering console mode closes your desktop session.\n")
+				fmt.Fprintf(out, "Click the notification to cancel; `hyprmoncfg console cancel` stops it too.\n")
 				return nil
 			}
 
@@ -190,8 +191,8 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 			notifier := notify.Dial()
 			defer notifier.Close()
 
-			fmt.Printf("Entering console mode closes your desktop session.\n")
-			fmt.Printf("Everything open will be closed. Continuing in %s -- Ctrl-C to stop.\n", wait)
+			fmt.Fprintf(out, "Entering console mode closes your desktop session.\n")
+			fmt.Fprintf(out, "Everything open will be closed. Continuing in %s -- Ctrl-C to stop.\n", wait)
 			if err := console.Countdown(ctx, console.CountdownOpts{
 				Grace:      wait,
 				Display:    cfg.TVName,
@@ -248,6 +249,7 @@ func newConsoleStatusCmd(configDir *string) *cobra.Command {
 		Short: "Show what console mode is configured to do",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
 				return err
@@ -256,11 +258,11 @@ func newConsoleStatusCmd(configDir *string) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("Starts in:       %s\n", cfg.Boot)
-			fmt.Printf("TV display:      %s\n", orNone(cfg.TVName))
-			fmt.Printf("Desktop session: %s\n", orNone(cfg.DesktopSession))
+			fmt.Fprintf(out, "Starts in:       %s\n", cfg.Boot)
+			fmt.Fprintf(out, "TV display:      %s\n", orNone(cfg.TVName))
+			fmt.Fprintf(out, "Desktop session: %s\n", orNone(cfg.DesktopSession))
 			if runtimeDir, err := console.RuntimeDir(); err == nil {
-				fmt.Printf("Hosted session:  %s\n", yesNo(console.Hosted(runtimeDir)))
+				fmt.Fprintf(out, "Hosted session:  %s\n", yesNo(console.Hosted(runtimeDir)))
 			}
 			return nil
 		},
@@ -273,6 +275,7 @@ func newConsoleDoctorCmd(configDir *string) *cobra.Command {
 		Short: "Check that a console session would work",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
@@ -288,27 +291,27 @@ func newConsoleDoctorCmd(configDir *string) *cobra.Command {
 			entries := console.FindEntries(console.SessionDirs())
 			for _, req := range console.Requirements(ctx, cfg, sc, entries, console.ConfigPath(base)) {
 				if req.OK {
-					fmt.Printf("ok    %s\n", req.Have)
+					fmt.Fprintf(out, "ok    %s\n", req.Have)
 					continue
 				}
-				fmt.Printf("PROBLEM %s\n", req.Want)
+				fmt.Fprintf(out, "PROBLEM %s\n", req.Want)
 				ready = false
 			}
 
 			if dirty, why := console.Dirty(ctx, sc); dirty {
-				fmt.Printf("warn  %s\n", why)
+				fmt.Fprintf(out, "warn  %s\n", why)
 			}
 			if cfg.TVDescription == "" {
-				fmt.Printf("warn  the TV has no description recorded, so sound will stay where it is\n")
+				fmt.Fprintf(out, "warn  the TV has no description recorded, so sound will stay where it is\n")
 			}
 			if note := bootLoginNote(ctx, cfg.Boot); note != "" {
-				fmt.Printf("warn  %s\n", note)
+				fmt.Fprintf(out, "warn  %s\n", note)
 			}
 
 			if !ready {
 				return fmt.Errorf("console mode is not ready")
 			}
-			fmt.Println("\nReady for a console session.")
+			fmt.Fprintln(out, "\nReady for a console session.")
 			return nil
 		},
 	}
@@ -323,6 +326,7 @@ func newConsoleSetupCmd(configDir *string) *cobra.Command {
 			"been tested, so the decision stays with you.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
@@ -347,7 +351,7 @@ func newConsoleSetupCmd(configDir *string) *cobra.Command {
 					if err := console.SaveConfig(base, cfg); err != nil {
 						return err
 					}
-					fmt.Printf("Recorded %s as the desktop to come back to.\n\n", cfg.DesktopSession)
+					fmt.Fprintf(out, "Recorded %s as the desktop to come back to.\n\n", cfg.DesktopSession)
 				}
 			}
 			desktop, ok := console.FindEntryByFile(entries, cfg.DesktopSession)
@@ -373,9 +377,9 @@ func newConsoleSetupCmd(configDir *string) *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Login manager: %s\n\n", lm.Kind)
-			fmt.Printf("Wrote the session entry to %s\n\n", staged)
-			fmt.Print(console.SetupInstructions(lm, staged, name, wrapper))
+			fmt.Fprintf(out, "Login manager: %s\n\n", lm.Kind)
+			fmt.Fprintf(out, "Wrote the session entry to %s\n\n", staged)
+			fmt.Fprint(out, console.SetupInstructions(lm, staged, name, wrapper))
 			return nil
 		},
 	}
@@ -390,6 +394,7 @@ func newConsoleTVCmd(configDir *string) *cobra.Command {
 		Short: "Choose the display the console plays on, or list the candidates",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			client, err := hypr.NewClient()
 			if err != nil {
@@ -410,7 +415,7 @@ func newConsoleTVCmd(configDir *string) *cobra.Command {
 					if m.Name == cfg.TVName {
 						mark = "* "
 					}
-					fmt.Printf("%s%-12s %s\n", mark, m.Name, m.Description)
+					fmt.Fprintf(out, "%s%-12s %s\n", mark, m.Name, m.Description)
 				}
 				return nil
 			}
@@ -432,7 +437,7 @@ func newConsoleTVCmd(configDir *string) *cobra.Command {
 				if err := console.SaveConfig(base, cfg); err != nil {
 					return err
 				}
-				fmt.Printf("The console will play on %s (%s).\n", m.Name, m.Description)
+				fmt.Fprintf(out, "The console will play on %s (%s).\n", m.Name, m.Description)
 				return nil
 			}
 			return fmt.Errorf("no connected display is called %q", args[0])
@@ -451,6 +456,7 @@ func newConsoleLeaveCmd() *cobra.Command {
 		Short: "End the console session and bring the desktop back",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			runtimeDir, err := console.RuntimeDir()
 			if err != nil {
@@ -466,7 +472,7 @@ func newConsoleLeaveCmd() *cobra.Command {
 				console.ClearRequest(runtimeDir)
 				return err
 			}
-			fmt.Println("The console session is ending; the desktop is coming back.")
+			fmt.Fprintln(out, "The console session is ending; the desktop is coming back.")
 			return nil
 		},
 	}
@@ -484,6 +490,7 @@ func newConsoleCancelCmd() *cobra.Command {
 		Short: "Call off an entry that is counting down",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
 			ctx := cmd.Context()
 			runtimeDir, err := console.RuntimeDir()
 			if err != nil {
@@ -494,13 +501,13 @@ func newConsoleCancelCmd() *cobra.Command {
 			// file left behind used to call off the *next* entry, silently, up
 			// to half a minute later. Ask the daemon what is actually pending.
 			if armed, known := entryIsArmed(ctx); known && !armed {
-				fmt.Println("Nothing is counting down, so there was nothing to call off.")
+				fmt.Fprintln(out, "Nothing is counting down, so there was nothing to call off.")
 				return nil
 			}
 			if err := console.RequestCancel(runtimeDir); err != nil {
 				return err
 			}
-			fmt.Println("The desktop will stay.")
+			fmt.Fprintln(out, "The desktop will stay.")
 			return nil
 		},
 	}
@@ -541,6 +548,7 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"on", "off"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
 				return err
@@ -550,7 +558,7 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			if len(args) == 0 {
-				fmt.Printf("Enter on controller connect: %s\n", onOff(cfg.EnterOnControllerConnect))
+				fmt.Fprintf(out, "Enter on controller connect: %s\n", onOff(cfg.EnterOnControllerConnect))
 				return nil
 			}
 			cfg.EnterOnControllerConnect = args[0] == "on"
@@ -558,12 +566,12 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			if cfg.EnterOnControllerConnect {
-				fmt.Println("Switching a controller on will now close your desktop session.")
-				fmt.Println("You get 20 seconds and a notification you can click to call it off;")
-				fmt.Println("switching the controller back off stops it too, and so does")
-				fmt.Println("`hyprmoncfg console cancel`.")
+				fmt.Fprintln(out, "Switching a controller on will now close your desktop session.")
+				fmt.Fprintln(out, "You get 20 seconds and a notification you can click to call it off;")
+				fmt.Fprintln(out, "switching the controller back off stops it too, and so does")
+				fmt.Fprintln(out, "`hyprmoncfg console cancel`.")
 			} else {
-				fmt.Println("Controllers no longer start a console session.")
+				fmt.Fprintln(out, "Controllers no longer start a console session.")
 			}
 			return nil
 		},
@@ -582,6 +590,7 @@ func newConsoleBootCmd(configDir *string) *cobra.Command {
 		Args:      cobra.MaximumNArgs(1),
 		ValidArgs: []string{"desktop", "console", "last"},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			out := cmd.OutOrStdout()
 			base, err := config.EnsureBaseDir(*configDir)
 			if err != nil {
 				return err
@@ -591,10 +600,10 @@ func newConsoleBootCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			if len(args) == 0 {
-				fmt.Printf("Starts in: %s\n", cfg.Boot)
-				fmt.Println("\n  desktop  always the desktop")
-				fmt.Println("  console  always the console, the way a games machine does")
-				fmt.Println("  last     wherever the last session ended")
+				fmt.Fprintf(out, "Starts in: %s\n", cfg.Boot)
+				fmt.Fprintln(out, "\n  desktop  always the desktop")
+				fmt.Fprintln(out, "  console  always the console, the way a games machine does")
+				fmt.Fprintln(out, "  last     wherever the last session ended")
 				return nil
 			}
 			mode := console.BootMode(args[0])
@@ -606,18 +615,18 @@ func newConsoleBootCmd(configDir *string) *cobra.Command {
 				return err
 			}
 			if note := bootLoginNote(cmd.Context(), mode); note != "" {
-				fmt.Printf("\nNote: %s\n", note)
+				fmt.Fprintf(out, "\nNote: %s\n", note)
 			}
 			switch mode {
 			case console.BootConsole:
-				fmt.Println("The machine will start in console mode.")
-				fmt.Println("Leave it from Big Picture: Steam -> Power -> Switch to Desktop.")
+				fmt.Fprintln(out, "The machine will start in console mode.")
+				fmt.Fprintln(out, "Leave it from Big Picture: Steam -> Power -> Switch to Desktop.")
 			case console.BootLast:
-				fmt.Println("The machine will start wherever the last session ended.")
+				fmt.Fprintln(out, "The machine will start wherever the last session ended.")
 			default:
-				fmt.Println("The machine will start at the desktop.")
+				fmt.Fprintln(out, "The machine will start at the desktop.")
 			}
-			fmt.Println("\nIf the console cannot start, the desktop comes up instead.")
+			fmt.Fprintln(out, "\nIf the console cannot start, the desktop comes up instead.")
 			return nil
 		},
 	}
