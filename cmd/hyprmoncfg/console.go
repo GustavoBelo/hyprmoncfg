@@ -561,6 +561,13 @@ func newConsoleTriggerCmd(configDir *string) *cobra.Command {
 				fmt.Fprintf(out, "Enter on controller connect: %s\n", onOff(cfg.EnterOnControllerConnect))
 				return nil
 			}
+			// ValidArgs drives completion but does not gate anything: cobra
+			// only enforces it through OnlyValidArgs, and Args is set here. So
+			// a typo used to fall through to the comparison below, turn the
+			// trigger off, and confirm an action nobody asked for.
+			if args[0] != "on" && args[0] != "off" {
+				return fmt.Errorf("unknown setting %q: use on or off", args[0])
+			}
 			cfg.EnterOnControllerConnect = args[0] == "on"
 			if err := console.SaveConfig(base, cfg); err != nil {
 				return err

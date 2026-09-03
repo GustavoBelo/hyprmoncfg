@@ -373,32 +373,30 @@ func TestConsoleTriggerOffPersists(t *testing.T) {
 	}
 }
 
-// BUG (cmd/hyprmoncfg/console.go:541-542, :556): the command declares ValidArgs
-// but sets Args as well, and cobra only enforces ValidArgs through
-// OnlyValidArgs. So a word that is neither "on" nor "off" falls through to
-// `args[0] == "on"`, silently turns the trigger off, and confirms an action
-// nobody asked for. This test pins the behaviour as it is today; see the commit
-// that replaces it with TestConsoleTriggerRejectsAnythingElse.
-func TestConsoleTriggerTreatsAnUnknownWordAsOff(t *testing.T) {
+// A typo used to turn the trigger off and confirm it, because cobra enforces
+// ValidArgs only through OnlyValidArgs and this command sets Args as well. The
+// user got the confirmation of an action they had not asked for, and the
+// setting they thought they were changing went the other way.
+func TestConsoleTriggerRejectsAnythingElse(t *testing.T) {
 	dir, _ := consoleEnv(t, nil)
 	if err := console.SaveConfig(dir, console.Config{EnterOnControllerConnect: true}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
 
 	got, err := runConsoleCmd(t, newConsoleTriggerCmd(&dir), "maybe")
-	if err != nil {
-		t.Fatalf("console trigger maybe: %v", err)
+	if err == nil {
+		t.Fatalf("console trigger maybe was accepted:\n%s", got)
 	}
-	if !strings.Contains(got, "no longer start a console session") {
-		t.Errorf("expected the current, wrong behaviour:\n%s", got)
+	if !strings.Contains(err.Error(), `unknown setting "maybe"`) || !strings.Contains(err.Error(), "on or off") {
+		t.Errorf("error = %q, want it to name the problem and the choices", err)
 	}
 
 	cfg, err := console.LoadConfig(dir)
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
-	if cfg.EnterOnControllerConnect {
-		t.Error("the bug this pins has changed shape; rewrite the test")
+	if !cfg.EnterOnControllerConnect {
+		t.Error("a rejected word still changed the setting")
 	}
 }
 
@@ -421,32 +419,27 @@ func TestConsoleBootWithoutArgumentsListsTheChoices(t *testing.T) {
 	}
 }
 
-// BUG (internal/console/config.go:44-50): LoadConfig returns a bare Config{}
-// when the file does not exist, skipping the Normalize() that every other path
-// runs -- so Boot is "" instead of "desktop". The machine still boots to the
-// desktop; it just declines to say so, and only on a machine that has never
-// configured console mode. Both `console boot` and `console status` print the
-// blank. Saving anything at all repairs it, because SaveConfig normalizes.
-func TestConsoleBootLeavesTheModeBlankOnAFreshMachine(t *testing.T) {
+// A machine that has never configured console mode still starts at the desktop,
+// and has to say so. It used to print a blank here, because LoadConfig skipped
+// the Normalize that every other path runs -- so the one machine least able to
+// tell a default from a broken program was the one shown the empty line.
+func TestConsoleBootNamesTheDefaultOnAFreshMachine(t *testing.T) {
 	dir, _ := consoleEnv(t, nil)
 
 	fresh, err := runConsoleCmd(t, newConsoleBootCmd(&dir))
 	if err != nil {
 		t.Fatalf("console boot: %v", err)
 	}
-	if !strings.Contains(fresh, "Starts in: \n") {
-		t.Errorf("the bug this pins has changed shape; rewrite the test:\n%s", fresh)
+	if !strings.Contains(fresh, "Starts in: desktop") {
+		t.Errorf("boot did not name the default:\n%s", fresh)
 	}
 
-	if err := console.SaveConfig(dir, console.Config{}); err != nil {
-		t.Fatalf("save config: %v", err)
-	}
-	saved, err := runConsoleCmd(t, newConsoleBootCmd(&dir))
+	status, err := runConsoleCmd(t, newConsoleStatusCmd(&dir))
 	if err != nil {
-		t.Fatalf("console boot: %v", err)
+		t.Fatalf("console status: %v", err)
 	}
-	if !strings.Contains(saved, "Starts in: desktop") {
-		t.Errorf("a saved config must report the mode it normalized to:\n%s", saved)
+	if !strings.Contains(status, "Starts in:       desktop") {
+		t.Errorf("status did not name the default:\n%s", status)
 	}
 }
 
