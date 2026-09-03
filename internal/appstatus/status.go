@@ -1,7 +1,6 @@
 package appstatus
 
 import (
-	"math"
 	"sort"
 	"time"
 
@@ -204,21 +203,21 @@ func BuildEditorDraft(draft profile.Profile) EditorDraft {
 }
 
 func editorScaleOptions(width, height int, current float64) []float64 {
-	wanted := []float64{1, 1.25, 4.0 / 3.0, 1.5, 5.0 / 3.0, 1.75, 2, 2.5, 3, 4, current}
-	seen := make(map[int]bool, len(wanted))
-	options := make([]float64, 0, len(wanted))
-	for _, value := range wanted {
-		candidate, ok := scaling.ClosestSharp(width, height, value)
+	options := scaling.GridScales(width, height, 1, scaling.MaxScale)
+	candidate := scaling.Round(current)
+	if !scaling.Sharp(width, height, candidate) {
+		var ok bool
+		candidate, ok = scaling.ClosestSharp(width, height, candidate)
 		if !ok {
-			continue
+			return options
 		}
-		key := int(math.Round(candidate * 100000))
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		options = append(options, candidate)
 	}
+	for _, option := range options {
+		if option == candidate {
+			return options
+		}
+	}
+	options = append(options, candidate)
 	sort.Float64s(options)
 	return options
 }

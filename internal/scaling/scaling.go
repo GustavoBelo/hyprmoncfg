@@ -10,9 +10,8 @@ const (
 	MinScale = 0.25
 	MaxScale = 4.0
 
-	precision        = 5
-	integerTolerance = 0.01
-	maxDenominator   = 10
+	precision          = 5
+	hyprlandScaleSteps = 120
 )
 
 func Clamp(value float64) float64 {
@@ -43,7 +42,14 @@ func Sharp(width, height int, value float64) bool {
 	if width <= 0 || height <= 0 {
 		return true
 	}
-	return nearlyInteger(float64(width)/value) && nearlyInteger(float64(height)/value)
+	if exactInteger(float64(width)/value) && exactInteger(float64(height)/value) {
+		return true
+	}
+	numerator := int(math.Round(value * hyprlandScaleSteps))
+	if numerator <= 0 || Round(float64(numerator)/hyprlandScaleSteps) != value {
+		return false
+	}
+	return sharpAtNumerator(width, height, numerator)
 }
 
 func ClosestSharp(width, height int, value float64) (float64, bool) {
@@ -51,6 +57,29 @@ func ClosestSharp(width, height int, value float64) (float64, bool) {
 		return 0, false
 	}
 	return nearestSharpScale(width, height, Round(value))
+}
+
+// GridScales returns the scales on Hyprland's 1/120 correction grid that
+// produce integer logical dimensions for the requested mode.
+func GridScales(width, height int, minScale, maxScale float64) []float64 {
+	if width <= 0 || height <= 0 || math.IsNaN(minScale) || math.IsNaN(maxScale) || minScale > maxScale {
+		return nil
+	}
+	minScale = math.Max(minScale, MinScale)
+	maxScale = math.Min(maxScale, MaxScale)
+	if minScale > maxScale {
+		return nil
+	}
+
+	minNumerator := int(math.Ceil(minScale * hyprlandScaleSteps))
+	maxNumerator := int(math.Floor(maxScale * hyprlandScaleSteps))
+	scales := make([]float64, 0, maxNumerator-minNumerator+1)
+	for numerator := minNumerator; numerator <= maxNumerator; numerator++ {
+		if sharpAtNumerator(width, height, numerator) {
+			scales = append(scales, Round(float64(numerator)/hyprlandScaleSteps))
+		}
+	}
+	return scales
 }
 
 func LogicalSize(width, height int, scale float64) (float64, float64) {
@@ -76,23 +105,12 @@ func Round(value float64) float64 {
 func nearestSharpScale(width, height int, value float64) (float64, bool) {
 	best := 0.0
 	bestDistance := math.Inf(1)
-	bestDenominator := 0
 
-	for denominator := 1; denominator <= maxDenominator; denominator++ {
-		minNumerator := int(math.Ceil(MinScale * float64(denominator)))
-		maxNumerator := int(math.Floor(MaxScale * float64(denominator)))
-		for numerator := minNumerator; numerator <= maxNumerator; numerator++ {
-			candidate := float64(numerator) / float64(denominator)
-			if !Sharp(width, height, candidate) {
-				continue
-			}
-
-			distance := math.Abs(candidate - value)
-			if distance < bestDistance || (distance == bestDistance && denominator < bestDenominator) {
-				best = candidate
-				bestDistance = distance
-				bestDenominator = denominator
-			}
+	for _, candidate := range GridScales(width, height, MinScale, MaxScale) {
+		distance := math.Abs(candidate - value)
+		if distance < bestDistance {
+			best = candidate
+			bestDistance = distance
 		}
 	}
 
@@ -102,8 +120,12 @@ func nearestSharpScale(width, height int, value float64) (float64, bool) {
 	return Round(best), true
 }
 
-func nearlyInteger(value float64) bool {
-	return math.Abs(value-math.Round(value)) <= integerTolerance
+func sharpAtNumerator(width, height, numerator int) bool {
+	return (hyprlandScaleSteps*width)%numerator == 0 && (hyprlandScaleSteps*height)%numerator == 0
+}
+
+func exactInteger(value float64) bool {
+	return value == math.Round(value)
 }
 
 func round(value float64, places int) float64 {

@@ -2,6 +2,7 @@ package appstatus
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -176,5 +177,21 @@ func TestBuildEditorSuggestsWithoutClaimingCustomLayout(t *testing.T) {
 	}
 	if document.Profile.Outputs[0].ICC != "/profiles/laptop.icc" {
 		t.Fatalf("best-match hidden settings were not preserved: %+v", document.Profile.Outputs[0])
+	}
+}
+
+func TestEditorScaleOptionsMatchHyprlandScaleGrid(t *testing.T) {
+	want := []float64{1, 1.06667, 1.25, 1.33333, 1.6, 1.66667, 2, 2.13333, 2.5, 2.66667, 3.2, 3.33333, 4}
+	got := editorScaleOptions(2560, 1600, 1.33333)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("scale options = %v, want %v", got, want)
+	}
+}
+
+func TestEditorScaleOptionsPreserveValidCurrentScaleOutsideGrid(t *testing.T) {
+	want := []float64{1, 1.06667, 1.25, 1.28, 1.33333, 1.6, 1.66667, 2, 2.13333, 2.5, 2.66667, 3.2, 3.33333, 4}
+	got := editorScaleOptions(2560, 1600, 1.28)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("scale options = %v, want %v", got, want)
 	}
 }
