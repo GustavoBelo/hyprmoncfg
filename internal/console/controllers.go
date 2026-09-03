@@ -11,11 +11,13 @@ import (
 // A device that advertises it is a gamepad; nothing else claims that bit.
 const btnGamepad = 0x130
 
-// inputClassRoot and legacyJoystickGlob are variables so tests can point them
-// at fixtures.
+// InputClassRoot and LegacyJoystickGlob are variables so tests can point them
+// at fixtures. They are exported because the daemon's controller trigger is
+// tested from its own package, and how many pads are attached is otherwise a
+// property of the machine running the test rather than of the code.
 var (
-	inputClassRoot     = "/sys/class/input"
-	legacyJoystickGlob = "/dev/input/js*"
+	InputClassRoot     = "/sys/class/input"
+	LegacyJoystickGlob = "/dev/input/js*"
 )
 
 // ConnectedControllers counts attached gamepads.
@@ -29,7 +31,7 @@ func ConnectedControllers() int {
 	if count, ok := gamepadsFromSysfs(); ok {
 		return count
 	}
-	matches, err := filepath.Glob(legacyJoystickGlob)
+	matches, err := filepath.Glob(LegacyJoystickGlob)
 	if err != nil {
 		return 0
 	}
@@ -37,7 +39,7 @@ func ConnectedControllers() int {
 }
 
 func gamepadsFromSysfs() (int, bool) {
-	entries, err := os.ReadDir(inputClassRoot)
+	entries, err := os.ReadDir(InputClassRoot)
 	if err != nil {
 		return 0, false
 	}
@@ -46,7 +48,7 @@ func gamepadsFromSysfs() (int, bool) {
 		if !strings.HasPrefix(entry.Name(), "event") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(inputClassRoot, entry.Name(), "device", "capabilities", "key"))
+		data, err := os.ReadFile(filepath.Join(InputClassRoot, entry.Name(), "device", "capabilities", "key"))
 		if err != nil {
 			continue
 		}

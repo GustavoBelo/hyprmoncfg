@@ -54,10 +54,10 @@ func TestConnectedControllersCountsEvdevGamepads(t *testing.T) {
 	write("event2", "1000000000000 0 0 0 0")                                            // second gamepad
 	write("mouse0", "1000000000000 0 0 0 0")                                            // not an event node
 
-	oldRoot, oldGlob := inputClassRoot, legacyJoystickGlob
-	inputClassRoot = root
-	legacyJoystickGlob = filepath.Join(root, "nonexistent-js*")
-	defer func() { inputClassRoot, legacyJoystickGlob = oldRoot, oldGlob }()
+	oldRoot, oldGlob := InputClassRoot, LegacyJoystickGlob
+	InputClassRoot = root
+	LegacyJoystickGlob = filepath.Join(root, "nonexistent-js*")
+	defer func() { InputClassRoot, LegacyJoystickGlob = oldRoot, oldGlob }()
 
 	if got := ConnectedControllers(); got != 2 {
 		t.Fatalf("expected 2 gamepads, got %d", got)
@@ -75,10 +75,10 @@ func TestConnectedControllersFallsBackToLegacyNodes(t *testing.T) {
 		}
 	}
 
-	oldRoot, oldGlob := inputClassRoot, legacyJoystickGlob
-	inputClassRoot = filepath.Join(root, "missing")
-	legacyJoystickGlob = filepath.Join(jsDir, "js*")
-	defer func() { inputClassRoot, legacyJoystickGlob = oldRoot, oldGlob }()
+	oldRoot, oldGlob := InputClassRoot, LegacyJoystickGlob
+	InputClassRoot = filepath.Join(root, "missing")
+	LegacyJoystickGlob = filepath.Join(jsDir, "js*")
+	defer func() { InputClassRoot, LegacyJoystickGlob = oldRoot, oldGlob }()
 
 	if got := ConnectedControllers(); got != 2 {
 		t.Fatalf("expected the legacy fallback to find 2, got %d", got)
