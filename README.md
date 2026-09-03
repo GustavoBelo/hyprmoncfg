@@ -59,7 +59,7 @@ No distribution packages this fork — Console Mode only exists here — but eve
 Linux binaries for amd64 and arm64:
 
 ```bash
-version=1.18.0
+version=1.18.1
 curl -fsSL "https://github.com/GustavoBelo/hyprmoncfg/releases/download/v$version/hyprmoncfg_${version}_linux_amd64.tar.gz" \
   | tar -xz hyprmoncfg hyprmoncfgd
 install -Dm755 hyprmoncfg  ~/.local/bin/hyprmoncfg
