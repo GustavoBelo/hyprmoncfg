@@ -194,6 +194,7 @@ func newConsoleEnterCmd(configDir *string) *cobra.Command {
 			fmt.Printf("Everything open will be closed. Continuing in %s -- Ctrl-C to stop.\n", wait)
 			if err := console.Countdown(ctx, console.CountdownOpts{
 				Grace:      wait,
+				Display:    cfg.TVName,
 				RuntimeDir: runtimeDir,
 				Notifier:   notifier,
 				Logf:       func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) },

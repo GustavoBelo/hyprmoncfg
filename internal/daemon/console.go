@@ -197,6 +197,7 @@ func (c *consoleController) arm(ctx context.Context, announce string, grace time
 		if err := console.Countdown(armCtx, console.CountdownOpts{
 			Grace:      grace,
 			Trigger:    announce,
+			Display:    c.chosenDisplay(),
 			RuntimeDir: runtimeDir,
 			Notifier:   notifier,
 			Logf:       c.svc.cfg.Logf,
@@ -219,6 +220,25 @@ func (c *consoleController) arm(ctx context.Context, announce string, grace time
 			c.sayItFailed(armCtx, notifier, firstLine(string(out)))
 		}
 	}()
+}
+
+// chosenDisplay names the display the console is about to take over.
+//
+// Read here, as the entry is announced, rather than passed in by whoever asked:
+// the panel, the command line and a controller all arm the same countdown, and
+// the one that matters is what the file says now. The wrapper reads the same
+// file again when it actually switches, so announcing anything else would be
+// promising a screen the machine is not going to use.
+func (c *consoleController) chosenDisplay() string {
+	base, err := config.EnsureBaseDir(c.svc.cfg.ConfigDir)
+	if err != nil {
+		return ""
+	}
+	cfg, err := console.LoadConfig(base)
+	if err != nil {
+		return ""
+	}
+	return cfg.TVName
 }
 
 // sayItFailed tells the user that the console did not start.

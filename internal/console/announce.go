@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/crmne/hyprmoncfg/internal/notify"
@@ -41,6 +42,12 @@ type CountdownOpts struct {
 	// Trigger is what asked, in a form that can start a sentence: "A controller
 	// connected". Empty when nothing is worth saying.
 	Trigger string
+	// Display is the connector the console is about to take over, named the
+	// way the user chose it. It is the one thing about an entry that cannot be
+	// undone by looking: the desktop closes, and if it comes back on the wrong
+	// screen there is nothing left on the right one to say so. Empty leaves the
+	// sentence without it rather than guessing.
+	Display string
 	// RuntimeDir is where the cancel file lives. Empty skips that channel.
 	RuntimeDir string
 	// Notifier is where the announcement goes. Nil counts down silently, which
@@ -78,7 +85,7 @@ func Countdown(ctx context.Context, opts CountdownOpts) error {
 
 	var handle notify.Handle
 	if opts.Notifier != nil {
-		shown, err := opts.Notifier.Show(ctx, armedNotification(opts.Trigger, opts.Grace, opts.Notifier.Actions()))
+		shown, err := opts.Notifier.Show(ctx, armedNotification(opts.Trigger, opts.Display, opts.Grace, opts.Notifier.Actions()))
 		if err != nil {
 			logf("console: could not announce the entry: %v", err)
 		} else {
@@ -146,7 +153,7 @@ func Countdown(ctx context.Context, opts CountdownOpts) error {
 			// short life, so it goes on its own wherever close is ignored.
 			if handle != nil {
 				replaceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-				if err := handle.Replace(replaceCtx, enteringNotification()); err != nil {
+				if err := handle.Replace(replaceCtx, enteringNotification(opts.Display)); err != nil {
 					logf("console: could not update the notification: %v", err)
 				}
 				cancel()
@@ -166,12 +173,13 @@ func reason(f func() string) string {
 	return "cancelled"
 }
 
-func armedNotification(trigger string, grace time.Duration, actions bool) notify.Notification {
+func armedNotification(trigger, display string, grace time.Duration, actions bool) notify.Notification {
 	body := ""
 	if trigger != "" {
 		body = trigger + ". "
 	}
-	body += fmt.Sprintf("Entering console mode in %s. The desktop and everything open on it will close. ", inSeconds(grace))
+	body += fmt.Sprintf("Entering console mode%s in %s. The desktop and everything open on it will close. ",
+		onDisplay(display), inSeconds(grace))
 	if actions {
 		body += "Click here to cancel."
 	} else {
@@ -204,10 +212,10 @@ func armedNotification(trigger string, grace time.Duration, actions bool) notify
 
 // enteringNotification is what the countdown leaves behind once it has run
 // out: the entry is happening, and there is nothing left to click.
-func enteringNotification() notify.Notification {
+func enteringNotification(display string) notify.Notification {
 	return notify.Notification{
 		Summary: "Console mode",
-		Body:    "Entering console mode. The desktop is closing.",
+		Body:    "Entering console mode" + onDisplay(display) + ". The desktop is closing.",
 		Icon:    "input-gaming",
 		Timeout: 5 * time.Second,
 	}
@@ -220,6 +228,17 @@ func calledOffNotification(why string) notify.Notification {
 		Icon:    "input-gaming",
 		Timeout: 5 * time.Second,
 	}
+}
+
+// onDisplay names where the console is going, for the middle of a sentence.
+// A machine with no display chosen never reaches a countdown -- the entry paths
+// refuse first -- so this is empty only when something failed to read it, and
+// then saying nothing beats naming the wrong screen.
+func onDisplay(display string) string {
+	if display = strings.TrimSpace(display); display == "" {
+		return ""
+	}
+	return " on " + display
 }
 
 func inSeconds(d time.Duration) string {

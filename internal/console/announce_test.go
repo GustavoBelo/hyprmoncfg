@@ -69,6 +69,12 @@ func (h *fakeHandle) Close() {
 	h.mu.Unlock()
 }
 
+func (h *fakeHandle) announcement() notify.Notification {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.shown
+}
+
 func (h *fakeHandle) lastReplacement(t *testing.T) notify.Notification {
 	t.Helper()
 	h.mu.Lock()
@@ -194,7 +200,7 @@ func TestCountdownWithNowhereToAnnounce(t *testing.T) {
 }
 
 func TestArmedNotificationSaysHowToCancel(t *testing.T) {
-	withButtons := armedNotification("", TriggerGrace, true)
+	withButtons := armedNotification("", "DP-1", TriggerGrace, true)
 	if !strings.Contains(withButtons.Body, "Click here to cancel") {
 		t.Errorf("body = %q, want it to invite a click", withButtons.Body)
 	}
@@ -211,7 +217,7 @@ func TestArmedNotificationSaysHowToCancel(t *testing.T) {
 		t.Error("the only warning the user gets must not expire on the server's schedule")
 	}
 
-	withoutButtons := armedNotification("", TriggerGrace, false)
+	withoutButtons := armedNotification("", "DP-1", TriggerGrace, false)
 	if !strings.Contains(withoutButtons.Body, "hyprmoncfg console cancel") {
 		t.Errorf("body = %q, want it to name the command instead", withoutButtons.Body)
 	}
@@ -223,12 +229,12 @@ func TestArmedNotificationSaysHowToCancel(t *testing.T) {
 // The trigger used to be hard-coded, so a countdown the user started from the
 // TUI told them a controller had connected.
 func TestArmedNotificationLeadsWithTheTrigger(t *testing.T) {
-	withTrigger := armedNotification("A controller connected", TriggerGrace, true).Body
-	if !strings.HasPrefix(withTrigger, "A controller connected. Entering console mode in 20 seconds.") {
+	withTrigger := armedNotification("A controller connected", "HDMI-A-1", TriggerGrace, true).Body
+	if !strings.HasPrefix(withTrigger, "A controller connected. Entering console mode on HDMI-A-1 in 20 seconds.") {
 		t.Errorf("body = %q, want it to lead with the controller", withTrigger)
 	}
-	asked := armedNotification("", DefaultGrace, true).Body
-	if !strings.HasPrefix(asked, "Entering console mode in 10 seconds.") {
+	asked := armedNotification("", "HDMI-A-1", DefaultGrace, true).Body
+	if !strings.HasPrefix(asked, "Entering console mode on HDMI-A-1 in 10 seconds.") {
 		t.Errorf("body = %q, want no lead when the user asked outright", asked)
 	}
 }
@@ -245,6 +251,55 @@ func TestInSeconds(t *testing.T) {
 		if got := inSeconds(tc.in); got != tc.want {
 			t.Errorf("inSeconds(%s) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The announcement has to name the display. Entering closes the desktop, so if
+// it comes back on the wrong screen there is nothing left on the right one to
+// say what happened -- and the countdown is the last moment anyone can look.
+func TestCountdownNamesTheDisplay(t *testing.T) {
+	notifier := &fakeNotifier{actions: true}
+
+	if err := Countdown(context.Background(), CountdownOpts{
+		Grace:      10 * time.Millisecond,
+		Display:    "DP-1",
+		RuntimeDir: t.TempDir(),
+		Notifier:   notifier,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	armed := notifier.shown().announcement()
+	if !strings.Contains(armed.Body, "DP-1") {
+		t.Errorf("announcement = %q, want it to name the display", armed.Body)
+	}
+	// And again once it has run out: the replacement is what is on screen for
+	// the last moment before the desktop goes.
+	if last := notifier.shown().lastReplacement(t); !strings.Contains(last.Body, "DP-1") {
+		t.Errorf("replacement = %q, want it to name the display", last.Body)
+	}
+}
+
+// A countdown that could not read the display still has to read as a sentence,
+// rather than trailing an "on" with nothing after it.
+func TestCountdownWithNoDisplayReadsAsASentence(t *testing.T) {
+	notifier := &fakeNotifier{actions: true}
+
+	if err := Countdown(context.Background(), CountdownOpts{
+		Grace:      10 * time.Millisecond,
+		RuntimeDir: t.TempDir(),
+		Notifier:   notifier,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	armed := notifier.shown().announcement().Body
+	if !strings.HasPrefix(armed, "Entering console mode in ") {
+		t.Errorf("announcement = %q, want the display left out cleanly", armed)
+	}
+	replaced := notifier.shown().lastReplacement(t).Body
+	if !strings.HasPrefix(replaced, "Entering console mode. ") {
+		t.Errorf("replacement = %q, want the display left out cleanly", replaced)
 	}
 }
 
