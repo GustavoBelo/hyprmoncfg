@@ -135,8 +135,21 @@ func Countdown(ctx context.Context, opts CountdownOpts) error {
 		case <-deadline:
 			// Nothing to argue with any more, and a notification still offering
 			// to cancel would be a lie.
+			//
+			// Replaced rather than only closed, because closing it is not
+			// enough on every server. Omarchy's shell gives a critical popup no
+			// lifetime at all, ignores the sender's CloseNotification, and
+			// restores whatever is still on screen when the desktop comes back
+			// -- so a countdown that was merely closed sat there for ever and
+			// returned with every login, still offering to cancel an entry that
+			// had already happened. The replacement is ordinary urgency with a
+			// short life, so it goes on its own wherever close is ignored.
 			if handle != nil {
-				handle.Close()
+				replaceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+				if err := handle.Replace(replaceCtx, enteringNotification()); err != nil {
+					logf("console: could not update the notification: %v", err)
+				}
+				cancel()
 			}
 			return nil
 		}
@@ -187,6 +200,17 @@ func armedNotification(trigger string, grace time.Duration, actions bool) notify
 		}
 	}
 	return note
+}
+
+// enteringNotification is what the countdown leaves behind once it has run
+// out: the entry is happening, and there is nothing left to click.
+func enteringNotification() notify.Notification {
+	return notify.Notification{
+		Summary: "Console mode",
+		Body:    "Entering console mode. The desktop is closing.",
+		Icon:    "input-gaming",
+		Timeout: 5 * time.Second,
+	}
 }
 
 func calledOffNotification(why string) notify.Notification {

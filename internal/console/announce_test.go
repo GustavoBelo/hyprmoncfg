@@ -79,22 +79,11 @@ func (h *fakeHandle) lastReplacement(t *testing.T) notify.Notification {
 	return h.replaced[len(h.replaced)-1]
 }
 
-func (h *fakeHandle) wasClosed() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.closed
-}
-
 func TestCountdownRunningOutMeansGoAhead(t *testing.T) {
 	n := &fakeNotifier{actions: true}
 	err := Countdown(context.Background(), CountdownOpts{Grace: 30 * time.Millisecond, Notifier: n})
 	if err != nil {
 		t.Fatalf("Countdown = %v, want the grace to run out", err)
-	}
-	// A notification still offering to cancel, after the moment to cancel has
-	// gone, would be a lie.
-	if !n.shown().wasClosed() {
-		t.Error("the countdown left its notification on screen after the grace ran out")
 	}
 }
 
@@ -256,5 +245,36 @@ func TestInSeconds(t *testing.T) {
 		if got := inSeconds(tc.in); got != tc.want {
 			t.Errorf("inSeconds(%s) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// The countdown that ran out must not leave a notification still offering to
+// cancel it. Closing alone is not enough: Omarchy's shell gives a critical
+// popup no lifetime, ignores the sender's close, and restores what is still on
+// screen when the desktop comes back -- so the stale countdown returned with
+// every login, offering to call off an entry that had already happened.
+func TestCountdownReplacesTheAnnouncementWhenItRunsOut(t *testing.T) {
+	notifier := &fakeNotifier{actions: true}
+
+	if err := Countdown(context.Background(), CountdownOpts{
+		Grace:      10 * time.Millisecond,
+		RuntimeDir: t.TempDir(),
+		Notifier:   notifier,
+	}); err != nil {
+		t.Fatalf("Countdown = %v, want the grace to have run out", err)
+	}
+
+	last := notifier.shown().lastReplacement(t)
+	if strings.Contains(strings.ToLower(last.Body), "cancel") {
+		t.Errorf("body = %q, still offers to cancel an entry that is happening", last.Body)
+	}
+	if last.Critical {
+		t.Error("the replacement is critical, so a server that never expires those keeps it for ever")
+	}
+	if last.Timeout <= 0 {
+		t.Errorf("timeout = %v, want a life short enough to leave on its own", last.Timeout)
+	}
+	if len(last.Actions) != 0 {
+		t.Errorf("actions = %v, want none: there is nothing left to click", last.Actions)
 	}
 }
