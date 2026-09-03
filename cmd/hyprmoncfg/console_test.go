@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -504,5 +505,136 @@ func TestConsoleCancelWithoutADaemonLeavesTheRequest(t *testing.T) {
 	}
 	if _, err := os.Stat(console.CancelPath(runtimeDir)); err != nil {
 		t.Errorf("cancel left no request behind: %v", err)
+	}
+}
+
+// A list that only ever says what is broken cannot tell "everything is fine"
+// from "nothing was checked", so the doctor prints the good news too.
+func TestConsoleDoctorPrintsTheGoodNewsToo(t *testing.T) {
+	dir, _ := consoleEnv(t, map[string]string{"gamescope.desktop": gamescopeEntry})
+
+	got, _ := runConsoleCmd(t, newConsoleDoctorCmd(&dir))
+
+	if !strings.Contains(got, "ok    the gamescope session is installed") {
+		t.Errorf("doctor did not report what this machine has:\n%s", got)
+	}
+	if !strings.Contains(got, "PROBLEM") {
+		t.Errorf("doctor did not report what this machine is missing:\n%s", got)
+	}
+}
+
+// Refusing here is the whole point: every entry path checks the same list, so a
+// doctor that passed a machine the daemon would refuse would be worse than no
+// doctor at all.
+func TestConsoleDoctorRefusesAMachineWithNoGamescopeSession(t *testing.T) {
+	dir, _ := consoleEnv(t, map[string]string{"hyprland.desktop": desktopEntry})
+
+	got, err := runConsoleCmd(t, newConsoleDoctorCmd(&dir))
+	if err == nil {
+		t.Fatal("doctor passed a machine with no gamescope session")
+	}
+	if !strings.Contains(err.Error(), "console mode is not ready") {
+		t.Errorf("error = %q, want it to say the machine is not ready", err)
+	}
+	if !strings.Contains(got, "PROBLEM no gamescope session is installed") {
+		t.Errorf("doctor did not name the missing session:\n%s", got)
+	}
+}
+
+// "Set desktop_session" is not actionable without saying which file to set it
+// in: there is one per user and the path is not one anybody has memorised.
+func TestConsoleDoctorNamesTheConfigFileToEdit(t *testing.T) {
+	dir, _ := consoleEnv(t, map[string]string{"gamescope.desktop": gamescopeEntry})
+
+	got, _ := runConsoleCmd(t, newConsoleDoctorCmd(&dir))
+
+	if !strings.Contains(got, console.ConfigPath(dir)) {
+		t.Errorf("doctor did not name %q:\n%s", console.ConfigPath(dir), got)
+	}
+}
+
+// The description is what finds the display's HDMI audio pin. Without it the
+// console plays on the TV with the sound still coming out of the desk speakers,
+// which is a confusing way to find out something is missing.
+func TestConsoleDoctorWarnsWhenTheTVHasNoDescription(t *testing.T) {
+	dir, _ := consoleEnv(t, map[string]string{"gamescope.desktop": gamescopeEntry})
+	if err := console.SaveConfig(dir, console.Config{TVName: "HDMI-A-1"}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	got, _ := runConsoleCmd(t, newConsoleDoctorCmd(&dir))
+
+	if !strings.Contains(got, "warn  the TV has no description recorded") {
+		t.Errorf("doctor did not warn about the missing description:\n%s", got)
+	}
+}
+
+// This is the bug the requirement check exists to prevent. Before it, a machine
+// with no gamescope announced a countdown, ended the desktop session with
+// everything open on it, failed inside the wrapper, and came back to an empty
+// desktop with nothing said anywhere the user would look.
+//
+// consoleEnv leaves no gamescope session installed and no hosting marker in the
+// runtime directory, so this refuses long before anything is closed.
+func TestConsoleEnterRefusesBeforeClosingAnything(t *testing.T) {
+	dir, runtimeDir := consoleEnv(t, map[string]string{"hyprland.desktop": desktopEntry})
+
+	_, err := runConsoleCmd(t, newConsoleEnterCmd(&dir))
+	if err == nil {
+		t.Fatal("enter did not refuse a machine that cannot host a console session")
+	}
+	if !strings.Contains(err.Error(), "console mode is not ready") || !strings.Contains(err.Error(), "the desktop stays") {
+		t.Errorf("error = %q, want it to say the desktop stays", err)
+	}
+	if _, statErr := os.Stat(console.RequestPath(runtimeDir)); !os.IsNotExist(statErr) {
+		t.Fatal("enter left a switch request behind after refusing")
+	}
+}
+
+// One problem per line, all of them at once. Discovering the next missing piece
+// one reboot at a time is how a five minute setup becomes an evening.
+func TestConsoleEnterListsEverythingThatIsMissing(t *testing.T) {
+	dir, _ := consoleEnv(t, nil)
+
+	_, err := runConsoleCmd(t, newConsoleEnterCmd(&dir))
+	if err == nil {
+		t.Fatal("enter did not refuse an unconfigured machine")
+	}
+	if got := strings.Count(err.Error(), "\n  - "); got < 2 {
+		t.Errorf("error listed %d problems, want every one of them:\n%s", got, err)
+	}
+	if !strings.Contains(err.Error(), "console doctor") {
+		t.Errorf("error = %q, want it to name where the whole list is", err)
+	}
+}
+
+// The second return is the one that matters. With no daemon there is nobody to
+// ask, and answering "nothing is armed" would make `console cancel` throw away
+// a legitimate stand-down meant for a countdown in another process.
+func TestEntryIsArmedIsUnknownWithoutADaemon(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	armed, known := entryIsArmed(context.Background())
+	if armed || known {
+		t.Errorf("entryIsArmed = (%v, %v), want the answer to be unknown", armed, known)
+	}
+}
+
+func TestEntryIsArmedIsUnknownWithoutARuntimeDir(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+
+	armed, known := entryIsArmed(context.Background())
+	if armed || known {
+		t.Errorf("entryIsArmed = (%v, %v), want the answer to be unknown", armed, known)
+	}
+}
+
+// Handing the countdown to a daemon that is not there has to fail, not hang:
+// the caller falls back to counting down in its own process.
+func TestEnterViaDaemonIsFalseWithoutADaemon(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	if enterViaDaemon(context.Background(), 0) {
+		t.Error("enterViaDaemon claimed a daemon took the request")
 	}
 }
