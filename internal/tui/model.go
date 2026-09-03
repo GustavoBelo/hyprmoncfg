@@ -738,6 +738,13 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "R":
 		return m, m.restartDaemonCmd()
 	case "r":
+		// The Console tab has its own draft, and the tab says so: "s saves them,
+		// r puts them back". Both keys were caught here first, so neither ever
+		// reached it -- and since the reset below leaves consoleDirty alone, a
+		// tab with unsaved changes could not be saved, discarded, or started.
+		if m.tab == tabConsole {
+			return m.discardConsole()
+		}
 		m.resetRequested = true
 		m.draftProfileName = ""
 		m.matchedProfileName = ""
@@ -745,6 +752,9 @@ func (m Model) updateMainKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.markClean()
 		return m, m.refreshCmd(false)
 	case "s":
+		if m.tab == tabConsole {
+			return m.saveConsole()
+		}
 		if m.tab == tabProfiles {
 			if len(m.profiles) == 0 {
 				m.setStatusErr("No profiles to save")
