@@ -14,11 +14,11 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -27,10 +27,14 @@ jobs:
         run: go test ./...
 
       - name: Goreleaser
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         with:
           distribution: goreleaser
-          version: latest
+          # Pinned to the major the config file declares. "latest" would move
+          # to GoReleaser 3 the day it ships and stop reading a .goreleaser.yml
+          # that says version: 2 -- and it would do it during a release, which
+          # is the worst moment to find out.
+          version: '~> v2'
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -42,7 +46,7 @@ jobs:
     env:
       RELEASE_VERSION: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: main
 
