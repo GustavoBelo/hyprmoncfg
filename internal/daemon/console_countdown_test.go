@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +49,13 @@ func armFixture(t *testing.T, entry string) (*consoleController, *logRecorder, s
 	t.Setenv("CONSOLE_CALLS", calls)
 	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/nonexistent")
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+
+	// No sessions installed anywhere the code can see, so what the requirement
+	// check refuses is the same on every machine.
+	t.Setenv("HOME", t.TempDir())
+	roots := console.SessionRoots
+	console.SessionRoots = []string{t.TempDir()}
+	t.Cleanup(func() { console.SessionRoots = roots })
 
 	rec := &logRecorder{}
 	svc := &Service{cfg: Config{ConfigDir: t.TempDir(), Logf: rec.logf}}
@@ -197,5 +205,111 @@ func TestChosenDisplayIsReadWhenTheEntryIsAnnounced(t *testing.T) {
 	}
 	if got := c.chosenDisplay(); got != "DP-2" {
 		t.Errorf("chosenDisplay = %q, want the file as it is now, not as it was", got)
+	}
+}
+
+// controllerFixture points controller detection at a directory of fake evdev
+// nodes, so how many pads are attached is a property of the test rather than of
+// the machine running it.
+func controllerFixture(t *testing.T, pads int) {
+	t.Helper()
+	root := t.TempDir()
+	for i := 0; i < pads; i++ {
+		dir := filepath.Join(root, "event"+strconv.Itoa(i), "device", "capabilities")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// BTN_SOUTH set, which is what makes a device a gamepad.
+		if err := os.WriteFile(filepath.Join(dir, "key"), []byte("1000000000000 0 0 0 0\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	oldRoot, oldGlob := console.InputClassRoot, console.LegacyJoystickGlob
+	console.InputClassRoot = root
+	console.LegacyJoystickGlob = filepath.Join(root, "nonexistent-js*")
+	t.Cleanup(func() { console.InputClassRoot, console.LegacyJoystickGlob = oldRoot, oldGlob })
+}
+
+// The trigger is off by default and has to stay off until it is asked for:
+// switching a pad on is not a request to end the desktop session.
+func TestAControllerDoesNotEnterWhenTheTriggerIsOff(t *testing.T) {
+	c, _, calls := armFixture(t, recordingEntry)
+	controllerFixture(t, 1)
+	if err := console.SaveConfig(c.svc.cfg.ConfigDir, console.Config{
+		TVName:                   "HDMI-A-1",
+		EnterOnControllerConnect: false,
+	}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	c.observeControllers(context.Background())
+
+	if c.Arming() {
+		t.Fatal("a controller armed an entry with the trigger off")
+	}
+	if got := entryCalls(t, calls); got != "" {
+		t.Fatalf("a controller closed the desktop with the trigger off: %q", got)
+	}
+}
+
+// Nothing about this was asked for out loud -- a pad was switched on -- so the
+// bar is the whole requirement list. Without gamescope or a way back, entering
+// strands the user rather than moving them.
+func TestAControllerDoesNotEnterAMachineThatIsNotReady(t *testing.T) {
+	c, rec, calls := armFixture(t, recordingEntry)
+	controllerFixture(t, 1)
+	if err := console.SaveConfig(c.svc.cfg.ConfigDir, console.Config{
+		TVName:                   "HDMI-A-1",
+		EnterOnControllerConnect: true,
+	}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	c.observeControllers(context.Background())
+
+	if c.Arming() {
+		t.Fatal("a controller armed an entry on a machine that cannot host one")
+	}
+	if !rec.contains("console mode is not ready") {
+		t.Errorf("the log did not say why it refused:\n%s", rec.all())
+	}
+	if got := entryCalls(t, calls); got != "" {
+		t.Fatalf("a refused entry still closed the desktop: %q", got)
+	}
+}
+
+// Switching the pad off again is the cheapest way to say no.
+func TestSwitchingThePadOffCallsOffTheEntryItStarted(t *testing.T) {
+	c, _, _ := armFixture(t, recordingEntry)
+	controllerFixture(t, 0)
+	stopped := false
+	c.controllers, c.armed, c.byController, c.cancel = 1, true, true, func() { stopped = true }
+
+	c.observeControllers(context.Background())
+
+	if !stopped {
+		t.Fatal("switching the pad off did not call off the entry it started")
+	}
+	if got := c.calledOffReason(); got != "the controller was disconnected" {
+		t.Errorf("calledOffReason = %q, want the controller named", got)
+	}
+}
+
+// A machine with no controller sits at zero for ever. A level test here called
+// off every countdown within one poll -- from the launcher, the panel, the
+// command line -- and blamed a controller that was never plugged in.
+func TestAnEntryTheUserAskedForSurvivesAMachineWithNoController(t *testing.T) {
+	c, _, _ := armFixture(t, recordingEntry)
+	controllerFixture(t, 0)
+	stopped := false
+	c.controllers, c.armed, c.byController, c.cancel = 0, true, false, func() { stopped = true }
+
+	c.observeControllers(context.Background())
+
+	if stopped {
+		t.Fatal("an entry the user asked for was called off by a controller that was never there")
+	}
+	if !c.Arming() {
+		t.Error("the entry stopped being armed")
 	}
 }
