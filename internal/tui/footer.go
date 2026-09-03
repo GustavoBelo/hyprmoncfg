@@ -58,7 +58,7 @@ func (m Model) footerHelpText() string {
 		}
 		return "`↑↓` select | `←→` adjust | `Enter` type count | `a` apply | `s` save | `?` keys"
 	case tabConsole:
-		return "`↑↓` select | `←→` adjust | `s` save | `r` discard | `Enter` start | `e` apps | `?` keys"
+		return "`↑↓` select | `←→` adjust | `s` save | `r` discard | `Enter` start | `?` keys"
 	default:
 		return ""
 	}
