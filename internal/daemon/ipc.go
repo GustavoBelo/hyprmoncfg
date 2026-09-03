@@ -675,11 +675,10 @@ func (s *Service) ConsoleConfigure(params ipc.ConsoleConfigureParams) error {
 		found := false
 		for _, m := range monitors {
 			if m.Name == *params.TVName {
-				// The identity is taken from the live display, not from the
-				// name alone: the EDID key is what survives a replug into a
-				// different connector, and the description is what finds the
-				// display's audio.
-				cfg.TVName, cfg.TVKey, cfg.TVDescription = m.Name, m.HardwareKey(), m.Description
+				// The description is taken from the live display rather than
+				// from the client, because it is what finds the display's
+				// audio and only the connected monitor knows its own EDID.
+				cfg.TVName, cfg.TVDescription = m.Name, m.Description
 				found = true
 				break
 			}

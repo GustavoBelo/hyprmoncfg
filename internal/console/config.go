@@ -19,9 +19,6 @@ import (
 // which display, which desktop to come back to, and what to close on the way.
 type Config struct {
 	Enabled bool `json:"enabled"`
-	// TVKey identifies the display by EDID, so it survives being replugged into
-	// a different connector.
-	TVKey string `json:"tv_key,omitempty"`
 	// TVName is the connector, which is what gamescope takes as OUTPUT_CONNECTOR.
 	TVName string `json:"tv_name,omitempty"`
 	// TVDescription is the EDID description, matched against ALSA's ELD to find
@@ -73,7 +70,6 @@ func SaveConfig(baseDir string, cfg Config) error {
 }
 
 func (c *Config) Normalize() {
-	c.TVKey = strings.TrimSpace(c.TVKey)
 	c.TVName = strings.TrimSpace(c.TVName)
 	c.TVDescription = strings.TrimSpace(c.TVDescription)
 	c.DesktopSession = strings.TrimSpace(c.DesktopSession)
@@ -99,7 +95,6 @@ func MigrateFromCouch(baseDir string) (Config, bool) {
 	var old struct {
 		Enabled bool `json:"enabled"`
 		Layout  struct {
-			TVKey  string `json:"tv_key"`
 			TVName string `json:"tv_name"`
 		} `json:"layout"`
 		EnterOnControllerConnect bool `json:"enter_on_controller_connect"`
@@ -112,7 +107,6 @@ func MigrateFromCouch(baseDir string) (Config, bool) {
 	}
 	return Config{
 		Enabled: old.Enabled,
-		TVKey:   old.Layout.TVKey,
 		TVName:  old.Layout.TVName,
 		// Deliberately not carried over: entering now ends the desktop session,
 		// so this has to be chosen again with that in mind.

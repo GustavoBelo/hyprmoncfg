@@ -13,7 +13,6 @@ func TestConfigRoundTrips(t *testing.T) {
 	dir := t.TempDir()
 	want := Config{
 		Enabled:                  true,
-		TVKey:                    "technical concepts ltd|25g64",
 		TVName:                   "DP-1",
 		TVDescription:            "Technical Concepts Ltd 25G64",
 		DesktopSession:           "omarchy.desktop",
@@ -85,7 +84,7 @@ func TestMigrateFromCouchCarriesTheDisplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TVName != "HDMI-A-1" || cfg.TVKey != "sam|q80" {
+	if cfg.TVName != "HDMI-A-1" {
 		t.Errorf("cfg = %+v, want the couch TV carried over", cfg)
 	}
 }

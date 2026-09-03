@@ -427,7 +427,6 @@ func newConsoleTVCmd(configDir *string) *cobra.Command {
 					return err
 				}
 				cfg.TVName = m.Name
-				cfg.TVKey = m.HardwareKey()
 				cfg.TVDescription = m.Description
 				if err := console.SaveConfig(base, cfg); err != nil {
 					return err

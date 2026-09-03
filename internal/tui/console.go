@@ -175,7 +175,6 @@ func (m Model) enableConsoleFromLayout() (tea.Model, tea.Cmd) {
 	}
 	cfg := m.ensureConsoleConfig()
 	cfg.TVName = monitor.Name
-	cfg.TVKey = monitor.HardwareKey()
 	cfg.TVDescription = monitor.Description
 	if cfg.DesktopSession == "" {
 		// Whatever the user is logged into, which is the only sane default for
@@ -249,7 +248,6 @@ func (m Model) adjustConsoleField(cfg *console.Config, dir int) (tea.Model, tea.
 		cfg.TVName = cycleValue(names, cfg.TVName, dir)
 		for _, mon := range m.monitors {
 			if mon.Name == cfg.TVName {
-				cfg.TVKey = mon.HardwareKey()
 				cfg.TVDescription = mon.Description
 			}
 		}
