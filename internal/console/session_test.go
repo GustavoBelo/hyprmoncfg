@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -211,6 +212,72 @@ func TestConsoleExitWithNoRequestReturnsToTheDesktop(t *testing.T) {
 	want := []string{"start-gamescope-session", "desktop-compositor"}
 	if strings.Join(launched, ",") != strings.Join(want, ",") {
 		t.Fatalf("launched %v, want the console to hand back to the desktop", launched)
+	}
+}
+
+// The regression. The wrapper is started once by the login manager and hosts
+// every session until logout, so a display chosen from the desktop it is hosting
+// has to be the display it hands over -- reading the file at login meant the TUI
+// said DP-1, the file said DP-1, and the television lit up.
+func TestConsoleUsesTheDisplayChosenSinceLogin(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+	w.Choices = Config{TVName: "HDMI-A-1", TVDescription: "a television"}
+	w.Reload = func() (Config, error) {
+		return Config{TVName: "DP-1", TVDescription: "a desk monitor"}, nil
+	}
+	if err := Request(w.RuntimeDir, ModeConsole); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	sc := w.Systemctl.(*fakeRunner)
+	if !sc.called("set-environment OUTPUT_CONNECTOR=DP-1") {
+		t.Errorf("systemctl calls %v, want gamescope pointed at the display chosen since login", sc.calls)
+	}
+	if sc.called("OUTPUT_CONNECTOR=HDMI-A-1") {
+		t.Error("gamescope was pointed at the display chosen at login")
+	}
+}
+
+// A configuration that cannot be re-read is stale at worst. Refusing over it
+// would turn an unreadable file into no console at all.
+func TestConsoleFallsBackToLoginChoicesWhenTheReReadFails(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+	w.Choices = Config{TVName: "HDMI-A-1"}
+	w.Reload = func() (Config, error) { return Config{}, errors.New("unreadable") }
+	if err := Request(w.RuntimeDir, ModeConsole); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if sc := w.Systemctl.(*fakeRunner); !sc.called("set-environment OUTPUT_CONNECTOR=HDMI-A-1") {
+		t.Errorf("systemctl calls %v, want the login choice to have stood", sc.calls)
+	}
+	if len(launched) == 0 || launched[0] != "start-gamescope-session" {
+		t.Errorf("launched %v, want the console to have started anyway", launched)
+	}
+}
+
+// The way back has to exist. A desktop session chosen since login but no longer
+// installed must not strand the user, so the entry validated at startup stands.
+func TestDesktopFallsBackToTheEntryValidatedAtLogin(t *testing.T) {
+	launched := []string{}
+	w := testWrapper(t, &launched, nil)
+	w.DesktopSession = "hyprland.desktop"
+	w.Reload = func() (Config, error) {
+		return Config{DesktopSession: "a-session-that-was-uninstalled.desktop"}, nil
+	}
+	if err := w.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launched) != 1 || launched[0] != "desktop-compositor" {
+		t.Fatalf("launched %v, want the desktop validated at login", launched)
 	}
 }
 

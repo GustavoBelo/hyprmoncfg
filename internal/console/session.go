@@ -17,8 +17,13 @@ type Launcher func(ctx context.Context, argv []string, extraEnv []string) error
 // Wrapper hosts both compositors in one login session.
 type Wrapper struct {
 	// DesktopExec is the user's own compositor command, taken from the session
-	// entry they normally log into.
+	// entry they normally log into and validated before the loop starts. It is
+	// the way back that always exists, so it stands whenever a later re-read
+	// cannot produce one.
 	DesktopExec []string
+	// DesktopSession is the file DesktopExec came from, so a re-read can tell
+	// whether the user has since chosen a different one.
+	DesktopSession string
 	// ConsoleExec is the gamescope session's own entry point. Reusing it rather
 	// than reimplementing matters: that script does environment plumbing --
 	// dbus-update-activation-environment, XDG_DESKTOP_PORTAL_DIR, reset-failed --
@@ -29,15 +34,24 @@ type Wrapper struct {
 	ConsoleSessionName string
 
 	// Boot says where a fresh login starts. A pending request always wins over
-	// it, so `console enter` is not fighting a preference.
+	// it, so `console enter` is not fighting a preference. It is read once, at
+	// the top of Run, because "where a login starts" has already happened by the
+	// time anyone could edit it -- unlike everything in Choices.
 	Boot BootMode
 
-	StateDir      string
-	RuntimeDir    string
-	TVDescription string
-	// TVConnector is the DRM connector gamescope should drive. It reaches
-	// gamescope as OUTPUT_CONNECTOR, which its session script passes to -O.
-	TVConnector string
+	StateDir   string
+	RuntimeDir string
+
+	// Choices is the configuration as it was at login, and what stands if a
+	// re-read fails.
+	Choices Config
+	// Reload re-reads the configuration. It is a function rather than a value
+	// because the wrapper is started once, by the login manager, and then
+	// outlives every edit made from the desktop it hosts -- a login session
+	// lasts days. Reading once meant the display chosen an hour ago was not the
+	// one gamescope drove: the TUI said DP-1, the file said DP-1, and the
+	// television lit up.
+	Reload func() (Config, error)
 
 	Systemctl Runner
 	Launch    Launcher
@@ -181,35 +195,75 @@ func (w *Wrapper) Run(ctx context.Context) error {
 	return nil
 }
 
+// choices is the configuration as it is now, not as it was at login.
+//
+// A re-read that fails is not a reason to refuse a session: the values from
+// login are stale at worst, and a console on the wrong display beats no console
+// at all. Reload is nil in tests, which is what keeps them off the real file.
+func (w *Wrapper) choices() Config {
+	if w.Reload == nil {
+		return w.Choices
+	}
+	cfg, err := w.Reload()
+	if err != nil {
+		w.logf("console: could not re-read the configuration, using the one from login: %v", err)
+		return w.Choices
+	}
+	return cfg
+}
+
+// desktopCommand is the session to come back to, as chosen now.
+//
+// The entry validated before the loop started is the floor. A way back that
+// might not exist is worse than one that is out of date, so anything the re-read
+// cannot resolve -- a session that has been uninstalled, an entry that would
+// host itself -- falls back to it rather than failing.
+func (w *Wrapper) desktopCommand(cfg Config) []string {
+	if cfg.DesktopSession == "" || cfg.DesktopSession == w.DesktopSession {
+		return w.DesktopExec
+	}
+	entry, ok := FindEntryByFile(FindEntries(SessionDirs()), cfg.DesktopSession)
+	if !ok || len(entry.Exec) == 0 || HostsConsole(entry) {
+		w.logf("console: cannot come back to %s, using %s", cfg.DesktopSession, w.DesktopSession)
+		return w.DesktopExec
+	}
+	return entry.Exec
+}
+
 // commandFor prepares the machine for a mode and returns what to run.
 func (w *Wrapper) commandFor(ctx context.Context, mode Mode) ([]string, []string, error) {
+	cfg := w.choices()
 	if mode != ModeConsole {
 		RestoreAudio(ctx, w.StateDir, w.logf)
-		return w.DesktopExec, nil, nil
+		return w.desktopCommand(cfg), nil, nil
 	}
 	if len(w.ConsoleExec) == 0 {
 		return nil, nil, errors.New("no gamescope session is installed")
 	}
-	if w.TVDescription != "" {
-		if err := PrepareAudio(ctx, w.StateDir, w.TVDescription, w.logf); err != nil {
+	if cfg.TVDescription != "" {
+		if err := PrepareAudio(ctx, w.StateDir, cfg.TVDescription, w.logf); err != nil {
 			// Sound on the wrong speakers is a poor console, but it is not a
 			// reason to refuse to start one.
 			w.logf("console: audio stays where it is: %v", err)
 		}
 	}
-	// gamescope enumerates connectors once and never looks again, so handing it
-	// the machine before the displays have presented themselves leaves it
-	// running with nothing selected and no way to recover.
-	if w.TVConnector != "" {
-		AwaitConnector(ctx, w.TVConnector, connectorWait, w.logf)
-	}
-
 	// gamescope picks its output from OUTPUT_CONNECTOR. Setting it on the user
 	// manager rather than writing a drop-in keeps it transient -- no file, no
 	// daemon-reload -- and Sanitize clears it again on the way out.
-	if w.TVConnector != "" {
-		if err := w.Systemctl.Run(ctx, "set-environment", "OUTPUT_CONNECTOR="+w.TVConnector); err != nil {
-			w.logf("console: could not point gamescope at %s: %v", w.TVConnector, err)
+	//
+	// Said out loud because this is the one thing about a console session that
+	// nothing else reports: the display it came up on is the whole point, and
+	// when it was wrong there was no line anywhere that said so.
+	if cfg.TVName == "" {
+		w.logf("console: no display has been chosen, so gamescope will pick one")
+	} else {
+		// gamescope enumerates connectors once and never looks again, so handing
+		// it the machine before the displays have presented themselves leaves it
+		// running with nothing selected and no way to recover.
+		AwaitConnector(ctx, cfg.TVName, connectorWait, w.logf)
+		w.logf("console: pointing gamescope at %s", cfg.TVName)
+		if err := w.Systemctl.Run(ctx, "set-environment", "OUTPUT_CONNECTOR="+cfg.TVName); err != nil {
+			w.logf("console: could not point gamescope at %s: %v", cfg.TVName, err)
 		}
 	}
 

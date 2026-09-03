@@ -111,13 +111,18 @@ func newConsoleSessionCmd(configDir *string) *cobra.Command {
 			logf := consoleLogger(stateDir)
 
 			w := &console.Wrapper{
-				DesktopExec:   desktop.Exec,
-				StateDir:      stateDir,
-				RuntimeDir:    runtimeDir,
-				TVDescription: cfg.TVDescription,
-				TVConnector:   cfg.TVName,
-				Boot:          cfg.Boot,
-				Logf:          logf,
+				DesktopExec:    desktop.Exec,
+				DesktopSession: desktop.File(),
+				StateDir:       stateDir,
+				RuntimeDir:     runtimeDir,
+				Choices:        cfg,
+				Boot:           cfg.Boot,
+				Logf:           logf,
+				// This process is started once, by the login manager, and then
+				// hosts every session until the user logs out. Everything it
+				// was told above was true at login; the settings it acts on
+				// have to be the ones in the file now.
+				Reload: func() (console.Config, error) { return console.LoadConfig(base) },
 			}
 			if hasGamescope {
 				w.ConsoleExec = gamescope.Exec
