@@ -704,8 +704,19 @@ func (s *Service) ConsoleConfigure(params ipc.ConsoleConfigureParams) error {
 	if err := console.SaveConfig(base, cfg); err != nil {
 		return err
 	}
+	// The memoised requirements quote the settings that just changed -- "the
+	// display to hand over is X" -- so leaving them would have a panel read back
+	// the previous choice for the rest of the TTL, right after saving a new one.
+	s.forgetConsoleRequirements()
 	s.signalChange()
 	return nil
+}
+
+// forgetConsoleRequirements drops the memoised check so the next read is fresh.
+func (s *Service) forgetConsoleRequirements() {
+	s.consoleReqMu.Lock()
+	defer s.consoleReqMu.Unlock()
+	s.consoleReqs, s.consoleReqAt = nil, time.Time{}
 }
 
 func (s *Service) ConsoleCancel() error {
