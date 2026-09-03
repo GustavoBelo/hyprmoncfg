@@ -43,11 +43,15 @@ func LoadConfig(baseDir string) (Config, error) {
 		// A machine upgrading from couch mode has its TV recorded in the file
 		// this one replaces. Seeding from it beats making the user choose the
 		// same display a second time; it is not written back until something
-		// else saves.
-		if migrated, ok := MigrateFromCouch(baseDir); ok {
-			return migrated, nil
-		}
-		return Config{}, nil
+		// else saves. With nothing to migrate from this is the blank config.
+		cfg, _ := MigrateFromCouch(baseDir)
+		// Normalized like every other load. Skipping it here left Boot empty
+		// on a machine that had never configured console mode, so `console
+		// boot` and `console status` printed a blank where every other machine
+		// says "desktop" -- which reads as a broken program rather than as the
+		// default, and only on the machine least able to tell the difference.
+		cfg.Normalize()
+		return cfg, nil
 	}
 	if err != nil {
 		return Config{}, err
