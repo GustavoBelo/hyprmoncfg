@@ -638,3 +638,24 @@ func TestEnterViaDaemonIsFalseWithoutADaemon(t *testing.T) {
 		t.Error("enterViaDaemon claimed a daemon took the request")
 	}
 }
+
+// A subcommand that is written but never added to the tree does not exist, and
+// nothing else in the build says so.
+func TestConsoleCmdOffersEverySubcommand(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newConsoleCmd(&dir)
+
+	registered := map[string]bool{}
+	for _, sub := range cmd.Commands() {
+		registered[sub.Name()] = true
+		if !sub.SilenceUsage {
+			t.Errorf("%q still prints its usage on failure", sub.Name())
+		}
+	}
+
+	for _, name := range []string{"session", "enter", "status", "doctor", "setup", "tv", "leave", "cancel", "trigger", "boot"} {
+		if !registered[name] {
+			t.Errorf("console %s is not reachable", name)
+		}
+	}
+}
